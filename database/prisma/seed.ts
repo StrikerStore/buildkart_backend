@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 // process.cwd(), which is packages/database when npm runs this script, so the
 // path is pinned to this file's own location instead.
 loadEnv({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'), quiet: true });
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../src/client.ts';
@@ -21,8 +22,18 @@ import { DEFAULT_GST_RATES, MENU_HANDLES, MENU_LABELS, allDefaultSettings } from
  * safely, on a live instance.
  */
 
-const OWNER_EMAIL = (process.env.SEED_OWNER_EMAIL ?? 'owner@buildkart.co').toLowerCase();
+const packageJson = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'),
+) as { seedOwner?: { email?: string; password?: string } };
+
+const OWNER_EMAIL = (
+  process.env.SEED_OWNER_EMAIL ??
+  packageJson.seedOwner?.email ??
+  'owner@buildkart.co'
+).toLowerCase();
 const OWNER_NAME = process.env.SEED_OWNER_NAME ?? 'BuildKart Owner';
+const OWNER_PASSWORD =
+  process.env.SEED_OWNER_PASSWORD ?? packageJson.seedOwner?.password ?? null;
 
 async function seedOwner() {
   const existing = await prisma.adminUser.findUnique({
@@ -35,10 +46,9 @@ async function seedOwner() {
     return;
   }
 
-  // A supplied password is used as-is; otherwise generate one and print it once.
-  // Never a hardcoded default: this account can edit every price in the store.
-  const generated = !process.env.SEED_OWNER_PASSWORD;
-  const password = process.env.SEED_OWNER_PASSWORD ?? randomBytes(12).toString('base64url');
+  // Prefer package.json `seedOwner` / SEED_OWNER_PASSWORD; otherwise generate once.
+  const generated = !OWNER_PASSWORD;
+  const password = OWNER_PASSWORD ?? randomBytes(12).toString('base64url');
 
   await prisma.adminUser.create({
     data: {

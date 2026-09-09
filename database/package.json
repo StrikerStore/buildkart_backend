@@ -9,6 +9,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "seedOwner": {
+    "email": "buildkart@plexzuu.com",
+    "password": "Ecosport@DL10CJ8584"
+  },
   "scripts": {
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",

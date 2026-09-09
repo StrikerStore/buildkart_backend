@@ -13,6 +13,10 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "seedOwner": {
+    "email": "buildkart@plexzuu.com",
+    "password": "Ecosport@DL10CJ8584"
+  },
   "scripts": {
     "build": "turbo run build",
     "dev": "npm run dev --workspace @buildkart/api",
