@@ -28,7 +28,12 @@ import { appRouter } from './routers/index.ts';
 const backendDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 loadEnv({ path: join(backendDir, '.env'), override: false, quiet: true });
 
-const PORT = Number(process.env.API_PORT ?? 3002);
+/*
+ * Railway injects `PORT` for the public proxy. Prefer that when set so
+ * `api.buildkart.co` reaches this process; fall back to `API_PORT` for local
+ * and private-network callers that still target :3002.
+ */
+const PORT = Number(process.env.PORT ?? process.env.API_PORT ?? 3002);
 
 const handler = createHTTPHandler({
   router: appRouter,
@@ -69,8 +74,8 @@ const server = createServer((req, res) => {
     });
 });
 
-server.listen(PORT, () => {
-  console.log(`[api] listening on :${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[api] listening on 0.0.0.0:${PORT}`);
   if (!process.env.SERVICE_TOKEN) {
     // Not a warning to be tidied away: without it every request is untrusted
     // and the whole surface refuses, which looks like a broken deploy.
