@@ -1,15 +1,15 @@
 -- DropForeignKey
-ALTER TABLE `category` DROP FOREIGN KEY `Category_autoTagId_fkey`;
+ALTER TABLE `Category` DROP FOREIGN KEY `Category_autoTagId_fkey`;
 
 -- DropIndex
-DROP INDEX `Category_autoTagId_fkey` ON `category`;
+DROP INDEX `Category_autoTagId_fkey` ON `Category`;
 
 -- AlterTable
-ALTER TABLE `category` DROP COLUMN `autoTagId`,
+ALTER TABLE `Category` DROP COLUMN `autoTagId`,
     ADD COLUMN `autoMatch` ENUM('ALL', 'ANY') NOT NULL DEFAULT 'ALL';
 
 -- AlterTable
-ALTER TABLE `tag` ALTER COLUMN `updatedAt` DROP DEFAULT;
+ALTER TABLE `Tag` ALTER COLUMN `updatedAt` DROP DEFAULT;
 
 -- CreateTable
 CREATE TABLE `CategoryTagRule` (
