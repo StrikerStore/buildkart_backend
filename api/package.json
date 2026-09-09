@@ -1,0 +1,34 @@
+{
+  "name": "@buildkart/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The deployable: tRPC routers over @buildkart/core. Thin — validate, resolve the actor, call core.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types --watch src/server.ts",
+    "start": "node --experimental-strip-types src/server.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "clean": "rimraf .turbo"
+  },
+  "dependencies": {
+    "@buildkart/core": "*",
+    "@buildkart/database": "*",
+    "@buildkart/shared": "*",
+    "@trpc/server": "11.18.0",
+    "csv-stringify": "6.8.3",
+    "dotenv": "17.4.2",
+    "jose": "6.2.10",
+    "zod": "4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
+  }
+}

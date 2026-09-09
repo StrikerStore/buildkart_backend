@@ -1,0 +1,28 @@
+{
+  "name": "@buildkart/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free types, zod schemas, money/slug/locale helpers. No React, ever.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas/index.ts",
+    "./csv": "./src/csv/index.ts",
+    "./metafields": "./src/metafields/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "clean": "rimraf .turbo"
+  },
+  "dependencies": {
+    "zod": "4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
+  }
+}

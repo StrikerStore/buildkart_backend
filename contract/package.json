@@ -1,0 +1,41 @@
+{
+  "name": "@buildkart/contract",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Everything a BuildKart client needs: the shared vocabulary, the wire format, and the API's type. Published from the backend repo; consumed by admin and website.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs",
+    "clean": "rimraf dist .build .turbo"
+  },
+  "dependencies": {
+    "@trpc/server": "11.18.0",
+    "zod": "4.5.1"
+  },
+  "devDependencies": {
+    "@buildkart/api": "*",
+    "@buildkart/shared": "*",
+    "@trpc/client": "11.18.0",
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StrikerStore/buildkart-backend.git"
+  }
+}

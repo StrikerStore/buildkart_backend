@@ -1,0 +1,1871 @@
+// BuildKart — admin data model.
+//
+// Target: MySQL 8 on Railway. Rules applied throughout this file:
+//
+//   * No scalar lists. MySQL has no array type, so every list is a join table
+//     or a JSON column — never a delimited string.
+//   * Every column in a unique or compound key carries an explicit length.
+//     InnoDB caps an index at 3072 bytes and utf8mb4 costs 4 bytes/char, so the
+//     budget is 768 characters; Prisma's String default of VARCHAR(191) is only
+//     safe by accident and is stated explicitly wherever it matters.
+//   * Money is Decimal(10,2). Aggregates stay exact and CSV round-trips are
+//     byte-identical. Note that Prisma.Decimal is a class instance and cannot
+//     cross the React Server Component boundary — see apps/admin/lib/dto.ts.
+//   * Enum values are only ever APPENDED. In MySQL 8 appending is an instant
+//     in-place ALTER; inserting or reordering rewrites the whole table.
+//   * Translated content uses side-by-side `*En` / `*Hi` columns. English is
+//     required, Hindi is nullable and falls back at read time.
+//   * Anything an order can reference is deactivated, never deleted. An order
+//     slip from six months ago must still render.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated"
+}
+
+// Prisma 7 no longer accepts `url` here. The connection string for migrate and
+// introspect lives in prisma.config.ts; the runtime client gets a driver adapter
+// instead (see src/client.ts).
+datasource db {
+  provider = "mysql"
+}
+
+// ---------------------------------------------------------------------------
+// Auth & operations
+// ---------------------------------------------------------------------------
+
+/// Phase 1 has a single OWNER. `role` exists from the first migration so that
+/// adding staff in phase 2 costs new rows and a permission-matrix entry rather
+/// than a migration against a live table.
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique @db.VarChar(191)
+  passwordHash String    @db.VarChar(255)
+  name         String    @db.VarChar(191)
+  role         AdminRole @default(OWNER)
+  isActive     Boolean   @default(true)
+
+  /// Bumped on password change or deactivation. The value is embedded in the
+  /// session JWT as `sv`; requireAdmin compares the two on every request, which
+  /// invalidates live cookies immediately without a server-side session table.
+  sessionVersion Int @default(1)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  auditLogs      AdminAuditLog[]
+  uploadedMedia  Media[]
+  priceChanges   PriceHistory[]
+  statusChanges  OrderStatusEvent[]
+  importJobs     ImportJob[]
+  paymentRecords PaymentTransaction[]
+  supportReplies SupportMessage[]
+
+  @@index([isActive])
+}
+
+/// Written by every mutating server action. For a single-owner system with
+/// destructive bulk operations (CSV import, bulk variant edit) this is the
+/// cheapest insurance available.
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  adminUserId String?
+  action      String   @db.VarChar(64)
+  entityType  String   @db.VarChar(64)
+  entityId    String   @db.VarChar(64)
+  diff        Json?
+  ip          String?  @db.VarChar(45)
+  createdAt   DateTime @default(now())
+
+  adminUser AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([adminUserId, createdAt])
+  @@index([createdAt])
+  /// The change log filters by action group ("product.%") with no entity in
+  /// hand, which the three indexes above cannot serve.
+  @@index([action, createdAt])
+}
+
+/// Backs login rate limiting. Keyed on email + IP so neither a password-spray
+/// against one account nor a spray from one address can run unbounded.
+model LoginAttempt {
+  id          String   @id @default(cuid())
+  email       String   @db.VarChar(191)
+  ip          String   @db.VarChar(45)
+  succeeded   Boolean
+  attemptedAt DateTime @default(now())
+
+  @@index([email, attemptedAt])
+  @@index([ip, attemptedAt])
+}
+
+/// A one-time code sent to a customer's phone.
+///
+/// A table rather than a cache entry because this is the only record that a
+/// sign-in was attempted at all: the storefront has no password to audit and no
+/// session history, so the rate limit, the attempt count and the abuse trail all
+/// live here.
+///
+/// The code is **hashed**, never stored plain. A one-time code is a credential
+/// for the six minutes it lives, and a database dump that hands over live
+/// sign-in codes for every customer mid-flow is the same incident as leaking
+/// passwords, only shorter.
+model CustomerOtp {
+  id    String @id @default(cuid())
+  phone String @db.VarChar(20)
+
+  /// SHA-256 of the code plus a per-row salt. See `core/src/write/customer-auth.ts`.
+  codeHash String @db.VarChar(64)
+  salt     String @db.VarChar(32)
+
+  expiresAt  DateTime
+  /// Wrong guesses so far. A code dies after a handful, so six digits cannot be
+  /// walked through at leisure.
+  attempts   Int       @default(0)
+  /// Set the moment it is spent, so a correct code cannot be replayed.
+  consumedAt DateTime?
+
+  /// Kept for the rate limit and for spotting a number being sprayed at.
+  ip String? @db.VarChar(45)
+
+  createdAt DateTime @default(now())
+
+  /// The lookup: newest live code for a phone.
+  @@index([phone, createdAt])
+  /// The nightly sweep of expired rows.
+  @@index([expiresAt])
+}
+
+/// Key/value store for store configuration, so adding a setting never requires
+/// a migration. Values are validated and defaulted by the zod registry in
+/// @buildkart/shared (src/settings.ts) — the database itself is untyped here.
+model Setting {
+  key       String   @id @db.VarChar(64)
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Media
+// ---------------------------------------------------------------------------
+
+/// One stored object in Cloudflare R2. Referenced by many products, which is
+/// what makes the media library a library rather than a per-product uploader.
+model Media {
+  id        String @id @default(cuid())
+  r2Key     String @unique @db.VarChar(255)
+  filename  String @db.VarChar(255)
+  mimeType  String @db.VarChar(64)
+  sizeBytes Int
+  width     Int?
+  height    Int?
+
+  altTextEn String? @db.VarChar(512)
+  altTextHi String? @db.VarChar(512)
+
+  checksumSha256 String? @db.VarChar(64)
+
+  /// The original Shopify CDN URL, kept so a re-run of the same import reuses
+  /// the object instead of downloading it again. Too long to index directly at
+  /// utf8mb4, hence the companion hash below carries the unique constraint.
+  sourceUrl     String? @db.VarChar(1024)
+  sourceUrlHash String? @unique @db.VarChar(64)
+
+  /// PENDING until the browser confirms the upload landed. A row that never
+  /// reaches READY is swept by the nightly GC — which is the entire reason the
+  /// upload is a two-step handshake rather than a single trusted callback.
+  status MediaStatus @default(PENDING)
+  source MediaSource @default(UPLOAD)
+
+  uploadedByAdminId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  uploadedBy     AdminUser?        @relation(fields: [uploadedByAdminId], references: [id], onDelete: SetNull)
+  productImages  ProductImage[]
+  categories     Category[]
+  brands         Brand[]
+  bannersDesktop Banner[]          @relation("BannerDesktop")
+  bannersMobile  Banner[]          @relation("BannerMobile")
+  blogCovers     BlogPost[]
+  importTasks    ImportImageTask[]
+
+  @@index([status, createdAt])
+  @@index([source, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Category {
+  id            String  @id @default(cuid())
+  slug          String  @unique @db.VarChar(191)
+  nameEn        String  @db.VarChar(255)
+  nameHi        String? @db.VarChar(255)
+  descriptionEn String? @db.Text
+  descriptionHi String? @db.Text
+
+  imageMediaId String?
+
+  /// Self-relation. Restrict rather than Cascade: deleting a parent must not
+  /// silently take its children and their products with it.
+  parentId String?
+
+  /// Gapped integers (100, 200, 300) so a drag-reorder is a single UPDATE on
+  /// the moved row, with a renumber pass only when a gap closes.
+  position Int @default(0)
+
+  isActive Boolean @default(true)
+
+  /// Marks the category as one whose prices move daily (cement, sariya). Drives
+  /// which products default into the Today's Rates screen.
+  isRateVolatile Boolean @default(false)
+
+  seoTitle       String? @db.VarChar(255)
+  seoDescription String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// How the INCLUDE conditions below combine. Ignored when there are none.
+  autoMatch CategoryMatch @default(ALL)
+
+  parent          Category?          @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children        Category[]         @relation("CategoryTree")
+  image           Media?             @relation(fields: [imageMediaId], references: [id], onDelete: SetNull)
+  products        Product[]
+  autoRules       CategoryTagRule[]
+  discountTargets DiscountCategory[]
+
+  @@index([parentId, position])
+  @@index([isActive, position])
+}
+
+/// One condition in a category's automatic-membership rule.
+///
+/// Relational rather than a JSON blob so a tag cannot be deleted out from under
+/// a rule and leave it silently matching nothing — the foreign key makes that
+/// dependency visible, and the tag delete guard reads it.
+model CategoryTagRule {
+  id         String          @id @default(cuid())
+  categoryId String
+  tagId      String
+  operator   TagRuleOperator @default(INCLUDES)
+
+  createdAt DateTime @default(now())
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  /// The same tag can appear once as an include and once as an exclude, which
+  /// is contradictory but harmless — the exclude wins, as it does everywhere.
+  @@unique([categoryId, tagId, operator])
+  @@index([tagId])
+}
+
+enum CategoryMatch {
+  /// A product must carry every included tag.
+  ALL
+  /// Carrying any one included tag is enough.
+  ANY
+}
+
+enum TagRuleOperator {
+  INCLUDES
+  EXCLUDES
+}
+
+/// Shopify's `Vendor` column maps here. Auto-created on import by normalised
+/// name — which is why the dry run warns about near-duplicates before commit.
+model Brand {
+  id          String  @id @default(cuid())
+  slug        String  @unique @db.VarChar(191)
+  nameEn      String  @db.VarChar(191)
+  nameHi      String? @db.VarChar(191)
+  logoMediaId String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logo     Media?    @relation(fields: [logoMediaId], references: [id], onDelete: SetNull)
+  products Product[]
+
+  @@index([isActive])
+}
+
+/// A named GST rate the owner configures once and picks from a dropdown on
+/// every product.
+///
+/// A table rather than an entry in `Setting` because products point at it: an
+/// FK is what makes "which products are at 18%?" a query rather than a scan of
+/// JSON, and what stops a rate being renamed out from under a hundred products.
+model TaxRate {
+  id String @id @default(cuid())
+
+  /// "GST 18%". Free text — the owner names these, not the code.
+  name String @unique @db.VarChar(64)
+
+  /// 0, 5, 12, 18, 28. Decimal rather than a float because a percent stored as
+  /// a float eventually prices something at 17.999999, and Decimal(5,2) leaves
+  /// room for the handful of fractional rates that exist.
+  percent Decimal @db.Decimal(5, 2)
+
+  /// What a new product starts on. At most one row may be true, enforced in the
+  /// write — a partial unique index on a boolean is not portable to MySQL.
+  isDefault Boolean @default(false)
+
+  /// Retired rates are deactivated rather than deleted: live products and past
+  /// orders still name them.
+  isActive Boolean @default(true)
+  position Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@index([isActive, position])
+}
+
+/// A flexible label. Tags group products across categories, drive admin filters
+/// and bulk actions, mark merchandising states like Bestseller, and carry
+/// internal workflow states like Needs Review — without adding a fixed field
+/// for each one.
+model Tag {
+  id     String  @id @default(cuid())
+  slug   String  @unique @db.VarChar(191)
+  nameEn String  @db.VarChar(191)
+  nameHi String? @db.VarChar(191)
+
+  description String? @db.VarChar(500)
+
+  /// The load-bearing distinction. INTERNAL tags are admin-only and must never
+  /// reach a customer: "Needs Review" or "Pending Update" appearing on a
+  /// product page would be an incident, not a cosmetic bug. Every storefront
+  /// query filters on this, so it defaults to INTERNAL — a tag becomes public
+  /// only by an explicit decision.
+  scope TagScope @default(INTERNAL)
+
+  /// Renders as a badge on the storefront product card. Only meaningful for
+  /// PUBLIC tags; the admin refuses to set it on an internal one.
+  showAsBadge  Boolean @default(false)
+  badgeLabelEn String? @db.VarChar(64)
+  badgeLabelHi String? @db.VarChar(64)
+  badgeTone    TagTone @default(NEUTRAL)
+
+  /// Ordering for the admin list and for badge precedence when a product
+  /// carries several badge tags.
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products        ProductTag[]
+  discountTargets DiscountTag[]
+  categoryRules   CategoryTagRule[]
+
+  @@index([scope, position])
+  @@index([showAsBadge, isActive])
+}
+
+enum TagScope {
+  /// Admin-only: filters, workflow, reporting. Never leaves the admin.
+  INTERNAL
+  /// Safe to expose on the storefront.
+  PUBLIC
+}
+
+/// Badge colours, named by meaning rather than by colour so the palette can
+/// change without rewriting every tag.
+enum TagTone {
+  NEUTRAL
+  BRAND
+  SUCCESS
+  WARNING
+  CRITICAL
+  INFO
+}
+
+/// The join table that stands in for MySQL's missing String[].
+model ProductTag {
+  productId String
+  tagId     String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@index([tagId])
+}
+
+model Product {
+  id String @id @default(cuid())
+
+  /// The Shopify `Handle`. This is the CSV upsert key, so it must stay stable:
+  /// changing how handles are generated would make an existing catalog import
+  /// as brand-new products rather than updates.
+  handle String @unique @db.VarChar(191)
+
+  nameEn String  @db.VarChar(255)
+  nameHi String? @db.VarChar(255)
+
+  /// Shopify's `Body (HTML)` is unbounded and arrives as arbitrary markup.
+  /// Sanitised on write, never on read.
+  bodyHtmlEn String? @db.LongText
+  bodyHtmlHi String? @db.LongText
+
+  /// Questions this product gets asked, and their answers, as sanitised HTML.
+  ///
+  /// One block rather than a structured list, because that is how the shop
+  /// writes them: the owner pastes a page of questions and answers in one go,
+  /// and a repeater demanding four inputs per question turns that paste into
+  /// twenty tab presses. Edited and rendered exactly like `returnPolicy*`.
+  ///
+  /// The trade-off is real and worth knowing: nothing here can tell a question
+  /// from an answer, so the storefront cannot emit FAQPage structured data for
+  /// Google off the back of it.
+  faqsEn String? @db.Text
+  faqsHi String? @db.Text
+
+  /// This product's return and exchange terms, as sanitised HTML.
+  ///
+  /// Per product because they genuinely differ: cement is not returnable once
+  /// the bag is opened, a bathroom fitting is returnable sealed within a week.
+  /// A shop-wide policy page cannot say both, and the customer is deciding on
+  /// this product's page.
+  returnPolicyEn String? @db.Text
+  returnPolicyHi String? @db.Text
+
+  status             ProductStatus @default(DRAFT)
+  publishedAt        DateTime?
+  scheduledPublishAt DateTime?
+
+  categoryId String?
+  brandId    String?
+
+  /// Shopify `Type`.
+  productType String? @db.VarChar(191)
+
+  /// Shopify `Product Category` (their Google-taxonomy string). Stored verbatim
+  /// for round-trip; BuildKart does not interpret it.
+  googleProductCategory String? @db.VarChar(255)
+
+  hasVariants    Boolean @default(false)
+  isRateVolatile Boolean @default(false)
+  isGiftCard     Boolean @default(false)
+
+  seoTitle         String? @db.VarChar(255)
+  seoDescriptionEn String? @db.Text
+  seoDescriptionHi String? @db.Text
+
+  /// Hand-entered synonyms ("saria", "sariya", "rebar"). MySQL has no pg_trgm,
+  /// so tolerant storefront search is built on this plus a FULLTEXT index added
+  /// later in a hand-written migration.
+  searchKeywords String? @db.Text
+
+  /// Every CSV column we deliberately do not model — Shopify's own taxonomy
+  /// metafields, the shopify--discovery blobs, tax codes, unit-price measures.
+  /// Export replays it verbatim, so a Shopify round trip is lossless without
+  /// importing Shopify's entire product taxonomy.
+  rawImportJson Json?
+
+  sourceImportJobId String?
+
+  /// The preset this product was put on, or null when `taxPercent` below was
+  /// typed by hand. SetNull rather than Restrict: losing the *label* a rate came
+  /// from must never be able to change what the product is taxed at, and
+  /// `taxPercent` is what pricing actually reads.
+  taxRateId String?
+
+  /// The GST rate every line of this product is charged at, as a percent.
+  ///
+  /// Copied from the preset on save and rewritten whenever that preset changes,
+  /// so pricing reads one column and never a join. Not nullable: 0 is a real
+  /// answer — plenty of building material is nil-rated — and a null here would
+  /// be indistinguishable from "nobody has decided yet" at the till.
+  ///
+  /// Invariant: `taxRateId != null` implies this mirrors that preset's percent.
+  taxPercent Decimal @default(0) @db.Decimal(5, 2)
+
+  /// True when `ProductVariant.price` already contains the tax above; false
+  /// when the tax is added on top at checkout.
+  ///
+  /// Per product rather than per variant, because it is a decision about how
+  /// this shop *quotes* this product. A catalog where the 50 kg bag is quoted
+  /// inclusive and the 25 kg bag exclusive is a data-entry accident, never an
+  /// intent, and the schema should not make it expressible.
+  ///
+  /// Defaults true, and that default is load-bearing: existing prices were
+  /// entered as what the customer pays, so defaulting false would silently add
+  /// 18% to every price in the catalogue on the day this ships.
+  taxInclusive Boolean @default(true)
+
+  /// HSN code, printed on the invoice. Free text because HSN comes in 4-, 6-
+  /// and 8-digit forms and the shop writes whichever its CA asked for.
+  hsnCode String? @db.VarChar(16)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  taxRate          TaxRate?          @relation(fields: [taxRateId], references: [id], onDelete: SetNull)
+  category         Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand            Brand?            @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  options          ProductOption[]
+  variants         ProductVariant[]
+  images           ProductImage[]
+  tags             ProductTag[]
+  orderItems       OrderItem[]
+  discountTargets  DiscountProduct[]
+  importImageTasks ImportImageTask[]
+
+  @@index([status, publishedAt])
+  @@index([categoryId, status])
+  @@index([brandId])
+  @@index([scheduledPublishAt])
+  @@index([isRateVolatile, status])
+  @@index([updatedAt])
+  @@index([taxRateId])
+  @@index([nameEn(length: 100)])
+}
+
+/// One option axis: Size, Grade, Colour. Names and values are entirely
+/// admin-defined free text — nothing is predefined in code.
+model ProductOption {
+  id        String @id @default(cuid())
+  productId String
+  name      String @db.VarChar(191)
+
+  /// 1, 2 or 3 — Shopify allows at most three axes and so do we.
+  position Int
+
+  /// Shopify's `OptionN Linked To`, e.g. product.metafields.shopify.shoe-size.
+  /// Stored so export reproduces it; BuildKart does not act on it.
+  linkedMetafieldNamespace String? @db.VarChar(64)
+  linkedMetafieldKey       String? @db.VarChar(64)
+
+  product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values  ProductOptionValue[]
+
+  @@unique([productId, position])
+  @@index([productId])
+}
+
+/// A table rather than a JSON array so option values stay queryable — the
+/// storefront will facet on them.
+model ProductOptionValue {
+  id       String @id @default(cuid())
+  optionId String
+  value    String @db.VarChar(191)
+  position Int
+
+  option ProductOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([optionId, value])
+  @@index([optionId, position])
+}
+
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  sku       String? @db.VarChar(64)
+
+  /// Option values joined by U+001F. The stable identity of a combination, and
+  /// the key both the matrix editor and the CSV importer upsert on. The unit
+  /// separator is used because it cannot occur in an admin-typed value, unlike
+  /// "-" or "/" which certainly will ("5-5", "1/2 inch").
+  matrixKey String @db.VarChar(255)
+
+  /// Denormalised for display and CSV export without three joins.
+  option1Value String? @db.VarChar(191)
+  option2Value String? @db.VarChar(191)
+  option3Value String? @db.VarChar(191)
+
+  price          Decimal  @db.Decimal(10, 2)
+  /// MRP, shown struck through when higher than price. Shopify `Compare At Price`.
+  compareAtPrice Decimal? @db.Decimal(10, 2)
+  /// Applied automatically once the cart subtotal crosses the store-wide cutoff.
+  bulkPrice      Decimal? @db.Decimal(10, 2)
+  /// Shopify `Cost per item`. Never shown to customers.
+  costPerItem    Decimal? @db.Decimal(10, 2)
+
+  unitLabelEn String? @db.VarChar(32)
+  unitLabelHi String? @db.VarChar(32)
+
+  stockQty          Int             @default(0)
+  lowStockThreshold Int             @default(0)
+  inventoryPolicy   InventoryPolicy @default(DENY)
+  inventoryTracked  Boolean         @default(true)
+
+  weightGrams Int?
+  weightUnit  String? @db.VarChar(8)
+  barcode     String? @db.VarChar(64)
+
+  requiresShipping Boolean @default(true)
+
+  /// Read by `priceOrder`: false zeroes the GST on this line whatever rate the
+  /// product carries. Arrives from Shopify's `Variant Taxable` column, and is
+  /// honoured rather than merely round-tripped — a CSV that says a variant is
+  /// exempt means it.
+  taxable Boolean @default(true)
+
+  imageId String?
+
+  /// Removed combinations are deactivated rather than deleted whenever an order
+  /// references them.
+  isActive Boolean @default(true)
+  position Int     @default(0)
+
+  /// Stamped on every price change; powers the storefront "Rate updated today"
+  /// freshness badge.
+  priceUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product      Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  image        ProductImage?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  priceHistory PriceHistory[]
+  adjustments  InventoryAdjustment[]
+  orderItems   OrderItem[]
+
+  @@unique([productId, matrixKey])
+  /// Scoped to the product, not global. Shopify does not enforce global SKU
+  /// uniqueness and the fixture CSV would fail on import if we did; the dry run
+  /// warns about cross-product collisions instead.
+  @@unique([productId, sku])
+  @@index([productId, position])
+  @@index([sku])
+  @@index([isActive, stockQty])
+}
+
+/// Append-only price ledger. Cheap, and it makes the daily rate routine
+/// auditable — "why did cement jump ₹40 on Tuesday" has an answer.
+model PriceHistory {
+  id        String @id @default(cuid())
+  variantId String
+
+  price     Decimal  @db.Decimal(10, 2)
+  bulkPrice Decimal? @db.Decimal(10, 2)
+
+  changedByAdminId String?
+  source           PriceChangeSource
+  createdAt        DateTime          @default(now())
+
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  changedBy AdminUser?     @relation(fields: [changedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([variantId, createdAt])
+  @@index([createdAt])
+}
+
+/// The ledger behind ProductVariant.stockQty. Every movement is recorded so a
+/// discrepancy can be traced rather than guessed at.
+model InventoryAdjustment {
+  id        String @id @default(cuid())
+  variantId String
+
+  delta   Int
+  reason  InventoryReason
+  orderId String?
+  note    String?         @db.VarChar(255)
+
+  createdAt DateTime @default(now())
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  order   Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([variantId, createdAt])
+  @@index([orderId])
+}
+
+/// Join between a product and a stored image. Having this as its own model is
+/// what lets one Media row appear on many products.
+model ProductImage {
+  id        String @id @default(cuid())
+  productId String
+  mediaId   String
+  position  Int    @default(0)
+
+  /// Per-use override; falls back to Media.altText when null.
+  altTextEn String? @db.VarChar(512)
+  altTextHi String? @db.VarChar(512)
+
+  product  Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media    Media            @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  variants ProductVariant[]
+
+  @@unique([productId, mediaId])
+  @@index([productId, position])
+  @@index([mediaId])
+}
+
+// ---------------------------------------------------------------------------
+// Metafields (admin-defined custom fields)
+// ---------------------------------------------------------------------------
+
+model MetafieldDefinition {
+  id        String             @id @default(cuid())
+  ownerType MetafieldOwnerType
+  namespace String             @db.VarChar(64)
+  key       String             @db.VarChar(64)
+
+  nameEn      String  @db.VarChar(191)
+  nameHi      String? @db.VarChar(191)
+  description String? @db.Text
+
+  type        MetafieldType
+  /// min/max/choices/regex, interpreted by the shared type registry.
+  validations Json?
+
+  isRequired   Boolean @default(false)
+  isFilterable Boolean @default(false)
+  position     Int     @default(0)
+
+  /// True when the CSV importer invented this definition by inferring a type.
+  /// Surfaces a "review auto-created fields" banner so inferred types get a
+  /// human check before they harden.
+  autoCreated Boolean @default(false)
+
+  /// The human label from the CSV header — "Stud Type" out of
+  /// "Stud Type (product.metafields.custom.stud_type)" — so export reproduces
+  /// the original header string exactly.
+  csvColumnLabel String? @db.VarChar(191)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  metafields Metafield[]
+
+  @@unique([ownerType, namespace, key])
+  @@index([ownerType, position])
+}
+
+model Metafield {
+  id        String             @id @default(cuid())
+  ownerType MetafieldOwnerType
+  /// Polymorphic and deliberately without a foreign key, so one table serves
+  /// products, variants, categories and customers. The cost is orphan rows on
+  /// delete, handled by the delete actions plus the nightly GC.
+  ownerId   String             @db.VarChar(64)
+
+  definitionId String?
+  namespace    String        @db.VarChar(64)
+  key          String        @db.VarChar(64)
+  type         MetafieldType
+
+  /// Always JSON: scalars as JSON scalars, lists as JSON arrays. This is the
+  /// single mechanism replacing MySQL's missing arrays, and it is where the
+  /// "; " versus ", " separator hazard is settled — the *type* decides how a
+  /// CSV cell is split, never the shape of the value.
+  value Json
+
+  /// Denormalised, indexable copy of single-line values so filtering by a
+  /// metafield is a plain indexed query rather than JSON path extraction.
+  valueText String? @db.VarChar(512)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  definition MetafieldDefinition? @relation(fields: [definitionId], references: [id], onDelete: SetNull)
+
+  @@unique([ownerType, ownerId, namespace, key])
+  @@index([namespace, key])
+  @@index([valueText])
+}
+
+// ---------------------------------------------------------------------------
+// Customers & orders
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id    String  @id @default(cuid())
+  /// Phone is the identity: this audience logs in by OTP and has no email.
+  phone String  @unique @db.VarChar(20)
+  name  String? @db.VarChar(191)
+  email String? @db.VarChar(191)
+
+  locale String  @default("en") @db.VarChar(2)
+  notes  String? @db.Text
+
+  /// Last GSTIN this customer gave at checkout, so a contractor who buys weekly
+  /// types it once. Only ever a default for the next order's frozen copy —
+  /// `Order.buyerGstin` is what an invoice is raised under.
+  gstin String? @db.VarChar(15)
+
+  isBlocked Boolean @default(false)
+
+  /// Denormalised so the customers list is one query rather than a subquery per
+  /// row. Recomputed inside the order transaction that changes them.
+  totalOrders Int       @default(0)
+  totalSpend  Decimal   @default(0) @db.Decimal(12, 2)
+  lastOrderAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses      Address[]
+  orders         Order[]
+  redemptions    DiscountRedemption[]
+  supportTickets SupportTicket[]
+
+  @@index([createdAt])
+  @@index([lastOrderAt])
+}
+
+model Address {
+  id         String @id @default(cuid())
+  customerId String
+
+  label    String? @db.VarChar(64)
+  line1    String  @db.VarChar(255)
+  line2    String? @db.VarChar(255)
+  landmark String? @db.VarChar(255)
+  city     String  @db.VarChar(100)
+  state    String  @db.VarChar(100)
+  pincode  String  @db.VarChar(10)
+
+  /// Decimal, not Float. A rider navigates to this point, and float drift at
+  /// the seventh decimal is metres on the ground.
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([pincode])
+}
+
+model Order {
+  id String @id @default(cuid())
+
+  /// Human-facing "BK-1001", generated from a Setting counter inside the create
+  /// transaction so two simultaneous orders cannot collide.
+  ///
+  /// 32 rather than 20 because the owner sets a prefix, a suffix and a padding
+  /// width, and a truncated order number is a collision. `commerceSettingsSchema`
+  /// refuses a format that could exceed this, so the column is never the thing
+  /// that has to say no.
+  orderNumber String @unique @db.VarChar(32)
+
+  customerId String
+
+  status        OrderStatus   @default(PLACED)
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+
+  subtotal       Decimal @db.Decimal(10, 2)
+  discountTotal  Decimal @default(0) @db.Decimal(10, 2)
+  deliveryCharge Decimal @default(0) @db.Decimal(10, 2)
+  grandTotal     Decimal @db.Decimal(10, 2)
+
+  bulkPricingApplied Boolean @default(false)
+
+  /// Every rupee of GST on this order, whether it sat inside the prices or was
+  /// added to them. Frozen: a rate change next April must not rewrite what was
+  /// charged in March.
+  taxTotal Decimal @default(0) @db.Decimal(10, 2)
+
+  /// The part of `taxTotal` that was added on top of the line prices — the only
+  /// part inside `grandTotal` that `subtotal` does not already contain. Stored
+  /// rather than rederived from a boolean and a sum, because rederiving it is
+  /// how the two drift.
+  taxAddedTotal Decimal @default(0) @db.Decimal(10, 2)
+
+  /// Per-rate GST summary: [{ percent, taxableAmount, taxAmount }]. Frozen as an
+  /// array so a reprinted invoice matches the one that went out with the goods
+  /// to the paisa, even after the product moved to a different rate.
+  taxBreakdown Json?
+
+  /// Whether the prices on this order already contained their tax. Decides the
+  /// invoice's wording and nothing arithmetic.
+  taxInclusive Boolean @default(true)
+
+  /// The buyer's own GSTIN, asked for at checkout and frozen here.
+  ///
+  /// Frozen rather than joined from the customer for the same reason as the
+  /// address: a contractor who registers a new firm next year must not have
+  /// last year's invoices reissued under it. Null is the ordinary case — most
+  /// of this shop's customers are individuals.
+  buyerGstin String? @db.VarChar(15)
+
+  /// True when the delivery state matched the state in the shop's own GSTIN, so
+  /// the tax prints as CGST + SGST rather than IGST.
+  ///
+  /// Resolved once at write and frozen, because `addressSnapshot.state` is a
+  /// free-typed name: improving the state-name table with a later deploy must
+  /// not silently re-split an invoice that has already been issued.
+  taxIntraState Boolean @default(true)
+
+  discountId   String?
+  discountCode String? @db.VarChar(64)
+
+  /// Frozen copy of the delivery address. The customer editing their saved
+  /// address must not rewrite where a past order went.
+  addressSnapshot Json
+
+  customerNote String? @db.Text
+  internalNote String? @db.Text
+  cancelReason String? @db.Text
+
+  /// Denormalised current payment state, so the orders list and the detail
+  /// header render without joining the transaction ledger below. The ledger
+  /// remains the record of what actually happened; these are a cache of its
+  /// outcome, rewritten whenever a transaction is recorded.
+  paymentGateway    PaymentGateway?
+  paymentInstrument PaymentInstrument?
+
+  /// The id anyone would quote when chasing this money — a gateway payment id,
+  /// a UPI reference, an NEFT UTR. 191 chars because gateway ids vary wildly
+  /// and this carries an index for the orders search.
+  paymentReference String? @db.VarChar(191)
+
+  /// When the money actually arrived, which is not when the order was placed
+  /// and not when it was delivered.
+  paidAt DateTime?
+
+  /// Summed from the ledger. Held here so "is this fully paid?" is one read,
+  /// and so a part payment is visible rather than rounded to a status word.
+  amountPaid     Decimal @default(0) @db.Decimal(10, 2)
+  amountRefunded Decimal @default(0) @db.Decimal(10, 2)
+
+  placedAt    DateTime  @default(now())
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  discount       Discount?             @relation(fields: [discountId], references: [id], onDelete: SetNull)
+  items          OrderItem[]
+  statusEvents   OrderStatusEvent[]
+  transactions   PaymentTransaction[]
+  adjustments    InventoryAdjustment[]
+  redemptions    DiscountRedemption[]
+  supportTickets SupportTicket[]
+
+  @@index([status, placedAt])
+  @@index([customerId, placedAt])
+  @@index([paymentStatus, paymentMethod])
+  @@index([paymentReference])
+  @@index([placedAt])
+}
+
+model OrderItem {
+  id      String @id @default(cuid())
+  orderId String
+
+  /// Both nullable and SetNull: the order must survive its product being
+  /// deleted outright, which is what the snapshot below guarantees.
+  productId String?
+  variantId String?
+
+  /// Name in both languages, SKU, option values, unit label and image URL as
+  /// they were when the order was placed. An order slip renders from this, not
+  /// from the live catalog.
+  variantSnapshot Json
+
+  unitPrice    Decimal @db.Decimal(10, 2)
+  wasBulkPrice Boolean @default(false)
+  quantity     Int
+  lineTotal    Decimal @db.Decimal(10, 2)
+
+  /// The GST rate this line was charged at, frozen with the line.
+  taxPercent Decimal @default(0) @db.Decimal(5, 2)
+
+  /// True when `unitPrice` already contains the tax.
+  taxInclusive Boolean @default(true)
+
+  /// This line's share of a cart-level discount, allocated in proportion to
+  /// `lineTotal`. Stored because `taxableAmount` cannot be rederived without it,
+  /// and a tax figure nobody can rederive is a tax figure nobody can defend.
+  discountShare Decimal @default(0) @db.Decimal(10, 2)
+
+  /// `lineTotal` minus `discountShare` minus `taxAmount`: the value GST was
+  /// charged on.
+  taxableAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  /// Summed across lines this is exactly `Order.taxTotal` — rounded per line
+  /// and then summed, never the other way round.
+  taxAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([variantId])
+  @@index([productId])
+}
+
+/// One movement of money against an order.
+///
+/// A ledger rather than a set of columns, because a gateway, a reference id, a
+/// status and a time are facts about an *attempt*, not about the order: a UPI
+/// payment that fails and is retried has two of each, and a refund has its own.
+/// Collapsing them onto the order would lose the failed attempt, which is
+/// exactly the row someone is looking for when a customer says they were
+/// debited.
+model PaymentTransaction {
+  id      String @id @default(cuid())
+  orderId String
+
+  type   PaymentTransactionType
+  status PaymentTransactionStatus
+
+  gateway    PaymentGateway
+  instrument PaymentInstrument?
+
+  /// Always positive. `type` carries the direction, so a refund is not a
+  /// negative payment — the two are read and totalled separately.
+  amount Decimal @db.Decimal(10, 2)
+
+  /// The gateway's payment or refund id, or a UPI/NEFT reference typed in by
+  /// hand. Indexed, because "the customer gave me this number" is how a
+  /// payment query usually starts.
+  reference String? @db.VarChar(191)
+
+  /// The gateway's own order/intent id, which is a different value from the
+  /// payment id and is what its dashboard is usually searched by.
+  gatewayOrderId String? @db.VarChar(191)
+
+  /// Populated only on FAILED, straight from the gateway where there is one.
+  failureReason String? @db.VarChar(255)
+
+  /// Whatever identifies the instrument without being able to charge it: a UPI
+  /// VPA, a card's last four and network, a bank name. Never full card data —
+  /// this table is not, and must not become, PCI scope.
+  instrumentDetail Json?
+
+  note String? @db.VarChar(255)
+
+  /// When the money moved, which is not when the row was written: a payment
+  /// reconciled the next morning happened yesterday.
+  occurredAt DateTime @default(now())
+
+  /// Null for anything a gateway webhook recorded on its own.
+  recordedByAdminId String?
+
+  createdAt DateTime @default(now())
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  recordedBy AdminUser? @relation(fields: [recordedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, occurredAt])
+  @@index([reference])
+  @@index([status, occurredAt])
+}
+
+model OrderStatusEvent {
+  id      String @id @default(cuid())
+  orderId String
+
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+  note       String?      @db.VarChar(255)
+
+  changedByAdminId String?
+  createdAt        DateTime @default(now())
+
+  order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy AdminUser? @relation(fields: [changedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Growth: discounts, delivery areas, storefront content
+// ---------------------------------------------------------------------------
+
+model Discount {
+  id String @id @default(cuid())
+
+  /// Null for automatic discounts, which need no code.
+  code    String?         @unique @db.VarChar(64)
+  trigger DiscountTrigger @default(CODE)
+  type    DiscountType
+  value   Decimal         @db.Decimal(10, 2)
+
+  minOrderValue     Decimal? @db.Decimal(10, 2)
+  /// Caps a percentage discount in absolute rupees.
+  maxDiscountAmount Decimal? @db.Decimal(10, 2)
+
+  usageLimit       Int?
+  perCustomerLimit Int?
+  usageCount       Int  @default(0)
+
+  startsAt DateTime  @default(now())
+  endsAt   DateTime?
+
+  isActive     Boolean @default(true)
+  /// When false, the join tables below narrow what the discount applies to.
+  appliesToAll Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categories  DiscountCategory[]
+  products    DiscountProduct[]
+  tags        DiscountTag[]
+  redemptions DiscountRedemption[]
+  orders      Order[]
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([trigger, isActive])
+}
+
+model DiscountCategory {
+  discountId String
+  categoryId String
+
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, categoryId])
+  @@index([categoryId])
+}
+
+model DiscountProduct {
+  discountId String
+  productId  String
+
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, productId])
+  @@index([productId])
+}
+
+model DiscountTag {
+  discountId String
+  tagId      String
+
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, tagId])
+  @@index([tagId])
+}
+
+/// One row per use. Makes the per-customer limit a single indexed count rather
+/// than a scan of orders.
+model DiscountRedemption {
+  id         String @id @default(cuid())
+  discountId String
+  orderId    String
+  customerId String
+
+  amount    Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+
+  discount Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([discountId, orderId])
+  @@index([discountId, customerId])
+}
+
+/// Adding a row here expands the delivery area immediately — no deploy.
+model ServiceablePincode {
+  id      String @id @default(cuid())
+  pincode String @unique @db.VarChar(10)
+
+  areaNameEn String  @db.VarChar(191)
+  areaNameHi String? @db.VarChar(191)
+  city       String  @db.VarChar(100)
+
+  deliveryCharge    Decimal  @default(0) @db.Decimal(10, 2)
+  freeDeliveryAbove Decimal? @db.Decimal(10, 2)
+
+  /// The promise shown to customers, per area — a far suburb may honestly be 6.
+  promiseHours Int     @default(4)
+  /// "18:00" — orders after this deliver next morning, stated up front.
+  cutoffTime   String? @db.VarChar(5)
+
+  isActive Boolean @default(true)
+  position Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, position])
+}
+
+/// "Notify me when you deliver here." Grouped by pincode in the admin, this is
+/// the expansion signal ranked by real demand.
+model PincodeRequest {
+  id      String @id @default(cuid())
+  pincode String @db.VarChar(10)
+  phone   String @db.VarChar(20)
+
+  count            Int      @default(1)
+  firstRequestedAt DateTime @default(now())
+  lastRequestedAt  DateTime @default(now())
+  isNotified       Boolean  @default(false)
+
+  @@unique([pincode, phone])
+  @@index([pincode, lastRequestedAt])
+  @@index([isNotified])
+}
+
+model Banner {
+  id      String  @id @default(cuid())
+  titleEn String? @db.VarChar(191)
+  titleHi String? @db.VarChar(191)
+
+  /// Separate artwork per breakpoint: a 3:1 desktop hero crops badly on a
+  /// phone, and this audience is overwhelmingly on phones.
+  mediaIdDesktop String
+  mediaIdMobile  String?
+
+  linkUrl   String?         @db.VarChar(512)
+  placement BannerPlacement @default(HOME_HERO)
+  position  Int             @default(0)
+
+  isActive Boolean   @default(true)
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mediaDesktop Media  @relation("BannerDesktop", fields: [mediaIdDesktop], references: [id], onDelete: Restrict)
+  mediaMobile  Media? @relation("BannerMobile", fields: [mediaIdMobile], references: [id], onDelete: SetNull)
+
+  @@index([placement, position])
+  @@index([isActive, startsAt, endsAt])
+}
+
+/// `type` is a String with a zod union rather than an enum: section kinds will
+/// churn as the storefront evolves, and every enum change is an ALTER TABLE.
+model HomepageSection {
+  id      String  @id @default(cuid())
+  type    String  @db.VarChar(64)
+  titleEn String? @db.VarChar(191)
+  titleHi String? @db.VarChar(191)
+
+  /// Category ids, product ids, or a tag — shape depends on `type`.
+  configJson Json
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, position])
+}
+
+/// A standalone page: About us, Contact, and the policies a payment gateway
+/// asks to see before it will approve a merchant account.
+///
+/// Separate from `HomepageSection` because a page is a destination with its own
+/// URL and its own SEO, not a band of the home page.
+model Page {
+  id   String @id @default(cuid())
+  slug String @unique @db.VarChar(191)
+
+  /// STANDARD (about, contact) or POLICY (privacy, terms, refund, shipping).
+  /// A VarChar plus a zod union rather than an enum, for the same reason
+  /// `HomepageSection.type` is: page kinds will churn, and every MySQL enum
+  /// change is an ALTER on a live table.
+  kind String @default("STANDARD") @db.VarChar(32)
+
+  titleEn String  @db.VarChar(255)
+  titleHi String? @db.VarChar(255)
+
+  /// Sanitised on write by `sanitizeHtml`, never on read — see the note on
+  /// Product.bodyHtmlEn. LongText because a terms page runs long.
+  bodyHtmlEn String? @db.LongText
+  bodyHtmlHi String? @db.LongText
+
+  seoTitle       String? @db.VarChar(255)
+  seoDescription String? @db.VarChar(320)
+
+  /// Renders on the storefront only when published. A half-written refund
+  /// policy must never be the one a customer is held to.
+  isPublished Boolean   @default(false)
+  publishedAt DateTime?
+
+  /// Ordering within the footer, where policies are usually listed.
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind, position])
+  @@index([isPublished, position])
+}
+
+/// A named list of links — "header", "footer", "mobile". The storefront asks
+/// for one by handle, so the handle is the contract and the name is decoration.
+model Menu {
+  id     String  @id @default(cuid())
+  handle String  @unique @db.VarChar(64)
+  nameEn String  @db.VarChar(191)
+  nameHi String? @db.VarChar(191)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items MenuItem[]
+}
+
+/// One link in a menu, optionally with children one level deep.
+model MenuItem {
+  id     String @id @default(cuid())
+  menuId String
+
+  /// One level of nesting, matching Category. A third level is a navigation
+  /// problem rather than a data one, and the guard lives in the write.
+  parentId String?
+
+  labelEn String  @db.VarChar(191)
+  labelHi String? @db.VarChar(191)
+
+  /// CATEGORY | PAGE | BLOG | PRODUCT | URL. VarChar plus a zod union, as above.
+  targetKind String @db.VarChar(32)
+
+  /// The id of the linked record; null for a hand-typed URL. Deliberately not a
+  /// foreign key: it points at four different tables depending on `targetKind`,
+  /// and `url` below is what actually renders.
+  targetId String? @db.VarChar(64)
+
+  /// The resolved href. Stored rather than derived so the storefront renders a
+  /// menu in one query instead of four joins — and so a link keeps working for
+  /// the moment between a category being renamed and the menu being re-saved.
+  url String @db.VarChar(512)
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  menu     Menu       @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  parent   MenuItem?  @relation("MenuTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children MenuItem[] @relation("MenuTree")
+
+  @@index([menuId, parentId, position])
+}
+
+/// A blog post. Ordered by `publishedAt` rather than `createdAt`, so a post
+/// drafted in January and published in March reads as a March post.
+model BlogPost {
+  id   String @id @default(cuid())
+  slug String @unique @db.VarChar(191)
+
+  titleEn String  @db.VarChar(255)
+  titleHi String? @db.VarChar(255)
+
+  excerptEn String? @db.VarChar(500)
+  excerptHi String? @db.VarChar(500)
+
+  bodyHtmlEn String? @db.LongText
+  bodyHtmlHi String? @db.LongText
+
+  coverMediaId String?
+  authorName   String? @db.VarChar(191)
+
+  seoTitle       String? @db.VarChar(255)
+  seoDescription String? @db.VarChar(320)
+
+  isPublished Boolean @default(false)
+
+  /// Set on the first publish and kept through later edits: fixing a typo must
+  /// not jump a post back to the top of the blog.
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cover Media? @relation(fields: [coverMediaId], references: [id], onDelete: SetNull)
+
+  @@index([isPublished, publishedAt])
+}
+
+/// One message the shop would send, for one event on one channel in one
+/// language.
+///
+/// Nothing sends these yet. The table exists now so the wording, the DLT
+/// registration ids and the on/off decisions are settled before a provider is
+/// wired up — writing twelve messages is a slower job than calling an API.
+model NotificationTemplate {
+  id String @id @default(cuid())
+
+  /// Matches NOTIFICATION_EVENTS in @buildkart/shared. A VarChar plus a zod
+  /// union rather than an enum: the event list will churn far faster than the
+  /// schema should, and every MySQL enum change is an ALTER on a live table.
+  event   String              @db.VarChar(64)
+  channel NotificationChannel
+
+  /// "en" or "hi" — one row per language, so a Hindi customer is not sent
+  /// English because nobody wrote the other one.
+  locale String @default("en") @db.VarChar(5)
+
+  /// Email only; ignored for SMS and WhatsApp.
+  subject String? @db.VarChar(255)
+
+  body String @db.Text
+
+  /// The provider's own registered id — DLT for Indian SMS, an approved
+  /// template name for WhatsApp. Without it the message is accepted and never
+  /// delivered, which is why it is captured before anything can send.
+  providerTemplateId String? @db.VarChar(128)
+
+  /// Off by default. A template nobody has read should not be the first thing a
+  /// customer receives.
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([event, channel, locale])
+  @@index([event])
+  @@index([isActive])
+}
+
+// ---------------------------------------------------------------------------
+// Support
+// ---------------------------------------------------------------------------
+
+/// A conversation between one customer and the shop.
+///
+/// Opened from the footer as a general question, or from an order's tracking
+/// page — which is why `orderId` is nullable rather than a second table. The
+/// customer must be signed in, so there is no guest branch to model: every
+/// ticket has a phone, a name and an order history behind it, which is the
+/// whole reason the owner can answer one quickly.
+model SupportTicket {
+  id String @id @default(cuid())
+
+  /// "S-1001", from a Setting counter inside the create transaction — the same
+  /// mechanism as Order.orderNumber, because a customer on the phone needs
+  /// something they can read out. 32 for the same reason: the prefix is
+  /// configurable and a truncated number is a collision.
+  ticketNumber String @unique @db.VarChar(32)
+
+  customerId String
+  /// Set when the chat was opened from an order. Null for a general question.
+  orderId    String?
+
+  /// Matches SUPPORT_TOPICS in @buildkart/shared. VarChar plus a zod union
+  /// rather than an enum, on the same reasoning as MenuItem.targetKind: the
+  /// topic list will churn faster than the schema should, and every MySQL enum
+  /// change is an ALTER on a live table.
+  topic  String              @db.VarChar(32)
+  status SupportTicketStatus @default(OPEN)
+
+  /// Denormalised so the inbox is one ordered query rather than a subquery per
+  /// row — the same reason Customer.totalOrders exists. Written by every
+  /// message, inside the transaction that creates it.
+  lastMessageAt   DateTime
+  lastMessageFrom SupportAuthor
+
+  /// Drives the customer's unread dot. The admin's badge deliberately does not
+  /// use `adminLastReadAt`: "awaiting reply" is `status != RESOLVED &&
+  /// lastMessageFrom = CUSTOMER`, which needs no read tracking and cannot drift
+  /// out of step with what the owner actually still owes an answer to.
+  customerLastReadAt DateTime?
+  adminLastReadAt    DateTime?
+
+  resolvedAt        DateTime?
+  resolvedByAdminId String?   @db.VarChar(64)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  order    Order?           @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  messages SupportMessage[]
+
+  /// The inbox, in the order it is worked: awaiting reply first, newest first.
+  @@index([status, lastMessageFrom, lastMessageAt])
+  /// The customer's own list, and the open-ticket cap.
+  @@index([customerId, lastMessageAt])
+  /// "Is there a conversation about this order?"
+  @@index([orderId])
+}
+
+/// One message in a ticket, from either side.
+model SupportMessage {
+  /// A ULID assigned in application code, not a cuid.
+  ///
+  /// The poll asks for "everything after id X" and orders by id. That is only
+  /// correct if ids sort by creation time — ULID guarantees it, cuid does not.
+  /// Sorting by createdAt instead would need a tiebreak for two messages in the
+  /// same millisecond, which is exactly the case a busy thread produces.
+  id       String @id @db.VarChar(26)
+  ticketId String
+
+  authorRole    SupportAuthor
+  /// Which staff member replied. Null for a customer message, and SetNull so a
+  /// removed admin does not take their answers with them.
+  authorAdminId String?
+
+  /// Empty only when the message is an attachment alone; the schema in
+  /// @buildkart/shared refuses one that is neither.
+  body String @db.Text
+
+  /// Columns rather than a Media row. The media library is a catalogue tool,
+  /// and filling it with photos of dented cement bags would make the product
+  /// image picker unusable.
+  attachmentR2Key     String? @db.VarChar(255)
+  attachmentMime      String? @db.VarChar(64)
+  attachmentSizeBytes Int?
+  attachmentWidth     Int?
+  attachmentHeight    Int?
+
+  createdAt DateTime @default(now())
+
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorAdmin AdminUser?    @relation(fields: [authorAdminId], references: [id], onDelete: SetNull)
+
+  /// Serves both the first render and the "after this id" poll.
+  @@index([ticketId, id])
+}
+
+/// A reply the owner sends often enough to be worth not retyping.
+///
+/// Bilingual like every other piece of customer-facing copy: `bodyHi` is
+/// nullable and falls back to English at read time.
+model SupportCannedReply {
+  id     String  @id @default(cuid())
+  title  String  @db.VarChar(191)
+  bodyEn String  @db.Text
+  bodyHi String? @db.Text
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, position])
+}
+
+// ---------------------------------------------------------------------------
+// CSV import jobs
+// ---------------------------------------------------------------------------
+
+model ImportJob {
+  id       String @id @default(cuid())
+  filename String @db.VarChar(255)
+  /// The uploaded CSV lives in R2, so a job can be re-read, re-run and debugged
+  /// long after the request that created it.
+  r2Key    String @db.VarChar(255)
+
+  status ImportJobStatus @default(UPLOADED)
+  mode   ImportMode      @default(DRY_RUN)
+
+  /// removeMissingVariants, publishNew, and anything added later.
+  options Json?
+
+  totalRows     Int @default(0)
+  totalProducts Int @default(0)
+  createdCount  Int @default(0)
+  updatedCount  Int @default(0)
+  skippedCount  Int @default(0)
+  errorCount    Int @default(0)
+  warningCount  Int @default(0)
+  imagesTotal   Int @default(0)
+  imagesDone    Int @default(0)
+  imagesFailed  Int @default(0)
+
+  /// Resume point. Advanced outside the per-product transaction so a crash
+  /// restarts at the next handle rather than replaying the whole file.
+  cursorHandle String? @db.VarChar(191)
+
+  summaryJson Json?
+
+  /// A job whose heartbeat has gone stale is reclaimed by another runner.
+  heartbeatAt DateTime?
+  attempts    Int       @default(0)
+  lastError   String?   @db.Text
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  createdByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdBy  AdminUser?        @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  issues     ImportJobIssue[]
+  imageTasks ImportImageTask[]
+
+  @@index([status, createdAt])
+  @@index([status, heartbeatAt])
+}
+
+model ImportJobIssue {
+  id    String @id @default(cuid())
+  jobId String
+
+  rowNumber Int
+  handle    String? @db.VarChar(191)
+  column    String? @db.VarChar(191)
+
+  severity ImportIssueSeverity
+  code     String              @db.VarChar(64)
+  message  String              @db.Text
+  rawValue String?             @db.Text
+
+  job ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, severity, rowNumber])
+}
+
+/// One row per image to fetch. A table rather than an in-memory queue, which is
+/// exactly what lets ingestion survive a Railway redeploy mid-import.
+model ImportImageTask {
+  id        String  @id @default(cuid())
+  jobId     String
+  productId String?
+
+  sourceUrl     String  @db.VarChar(1024)
+  sourceUrlHash String  @db.VarChar(64)
+  position      Int     @default(0)
+  altText       String? @db.VarChar(512)
+
+  /// Set when the row came from Shopify's `Variant Image` column.
+  variantMatrixKey String? @db.VarChar(255)
+
+  status   ImportImageStatus @default(PENDING)
+  mediaId  String?
+  attempts Int               @default(0)
+  error    String?           @db.Text
+  lockedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  job     ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  product Product?  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media   Media?    @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, status])
+  @@index([status, lockedAt])
+  @@index([sourceUrlHash])
+}
+
+// ---------------------------------------------------------------------------
+// Enums — values are APPENDED, never reordered or inserted mid-list.
+// ---------------------------------------------------------------------------
+
+enum AdminRole {
+  OWNER
+  STAFF
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum InventoryPolicy {
+  /// Stop selling at zero.
+  DENY
+  /// Allow overselling — used for made-to-order or drop-shipped lines.
+  CONTINUE
+}
+
+enum MediaStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum MediaSource {
+  UPLOAD
+  IMPORT
+}
+
+enum MetafieldOwnerType {
+  PRODUCT
+  VARIANT
+  CATEGORY
+  CUSTOMER
+  ORDER
+}
+
+enum MetafieldType {
+  SINGLE_LINE_TEXT
+  MULTI_LINE_TEXT
+  NUMBER_INTEGER
+  NUMBER_DECIMAL
+  BOOLEAN
+  DATE
+  DATE_TIME
+  JSON
+  URL
+  COLOR
+  DIMENSION
+  WEIGHT
+  VOLUME
+  RICH_TEXT
+  LIST_SINGLE_LINE_TEXT
+  LIST_NUMBER_INTEGER
+  LIST_NUMBER_DECIMAL
+  LIST_DATE
+  LIST_URL
+  LIST_COLOR
+}
+
+enum OrderStatus {
+  PLACED
+  CONFIRMED
+  PACKED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  COD
+  SNAPMINT
+  /// Appended, never inserted. MySQL stores an ENUM value as its ordinal, so
+  /// adding a member at the end is an instant metadata change while inserting
+  /// one in the middle rewrites the table and silently remaps every row.
+  PAYU
+}
+
+enum PaymentTransactionType {
+  PAYMENT
+  REFUND
+}
+
+enum PaymentTransactionStatus {
+  PENDING
+  AUTHORIZED
+  SUCCESS
+  FAILED
+}
+
+/// Where the money went through. Distinct from PaymentMethod, which is what the
+/// customer chose at checkout: a COD order is settled through CASH, and a
+/// prepaid order may be UPI paid straight to the shop rather than to a gateway.
+enum PaymentGateway {
+  RAZORPAY
+  SNAPMINT
+  CASH
+  UPI_DIRECT
+  BANK_TRANSFER
+  /// Appended for the same reason as PaymentMethod.PAYU above.
+  PAYU
+}
+
+/// The instrument behind the payment. Razorpay reports this per payment, and it
+/// is the difference between "UPI failed again" and "their card was declined".
+enum PaymentInstrument {
+  UPI
+  CARD
+  NETBANKING
+  WALLET
+  EMI
+  CASH
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED_AMOUNT
+  FREE_DELIVERY
+}
+
+enum DiscountTrigger {
+  CODE
+  AUTOMATIC
+}
+
+enum BannerPlacement {
+  HOME_HERO
+  HOME_STRIP
+  CATEGORY_TOP
+  /// Appended, never inserted. A strip on a product detail page.
+  PRODUCT_PAGE
+  /// A site-wide promotional bar, above the header.
+  OFFER_STRIP
+}
+
+enum NotificationChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+/// Three states, not a queue of statuses. OPEN means the shop owes an answer or
+/// the conversation is still live; WAITING_ON_CUSTOMER means the last word was
+/// the shop's; RESOLVED means it is done and a new customer message reopens it.
+enum SupportTicketStatus {
+  OPEN
+  WAITING_ON_CUSTOMER
+  RESOLVED
+}
+
+/// Which side of the conversation a message came from. Two values because there
+/// are two sides; an automated sender would be appended, never inserted.
+enum SupportAuthor {
+  CUSTOMER
+  ADMIN
+}
+
+enum PriceChangeSource {
+  RATES_SCREEN
+  PRODUCT_FORM
+  CSV_IMPORT
+  BULK_EDIT
+}
+
+enum InventoryReason {
+  ORDER
+  CANCEL
+  MANUAL
+  IMPORT
+}
+
+enum ImportMode {
+  DRY_RUN
+  COMMIT
+}
+
+enum ImportJobStatus {
+  UPLOADED
+  PARSING
+  DRY_RUN_READY
+  COMMITTING
+  IMPORTING_IMAGES
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ImportIssueSeverity {
+  ERROR
+  WARNING
+}
+
+enum ImportImageStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}

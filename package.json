@@ -1,0 +1,49 @@
+{
+  "name": "buildkart-backend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BuildKart backend — Prisma schema, domain layer, and the tRPC API that every client reads through.",
+  "workspaces": [
+    "database",
+    "shared",
+    "core",
+    "api",
+    "contract"
+  ],
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "npm run dev --workspace @buildkart/api",
+    "start": "npm run start --workspace @buildkart/api",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:integration": "npm run test:integration --workspace @buildkart/core",
+    "clean": "turbo run clean && rimraf node_modules",
+    "format": "prettier --write \"**/*.{ts,md,json}\"",
+    "db:generate": "npm run generate --workspace @buildkart/database",
+    "db:migrate": "npm run migrate --workspace @buildkart/database",
+    "db:deploy": "npm run deploy --workspace @buildkart/database",
+    "db:studio": "npm run studio --workspace @buildkart/database",
+    "db:seed": "npm run seed --workspace @buildkart/database",
+    "db:seed:demo": "npm run seed:demo --workspace @buildkart/database",
+    "db:test:setup": "node scripts/setup-test-db.mjs",
+    "contract:build": "npm run build --workspace @buildkart/contract",
+    "check:pins": "node scripts/check-pins.mjs",
+    "r2:cors": "node scripts/setup-r2-cors.mjs",
+    "r2:cors:show": "node scripts/setup-r2-cors.mjs --show"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "10.9.1",
+    "globals": "17.12.0",
+    "prettier": "3.9.6",
+    "rimraf": "6.1.3",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.69.0"
+  },
+  "packageManager": "npm@11.6.1"
+}
