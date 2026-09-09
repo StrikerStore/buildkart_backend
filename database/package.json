@@ -17,6 +17,7 @@
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "deploy": "node scripts/migrate-deploy.mjs",
+    "check:case": "python scripts/check-migration-case.py",
     "studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "format": "prisma format",

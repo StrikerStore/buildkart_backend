@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE `order` DROP COLUMN `razorpayOrderId`,
+ALTER TABLE `Order` DROP COLUMN `razorpayOrderId`,
     DROP COLUMN `razorpayPaymentId`,
     ADD COLUMN `amountPaid` DECIMAL(10, 2) NOT NULL DEFAULT 0,
     ADD COLUMN `amountRefunded` DECIMAL(10, 2) NOT NULL DEFAULT 0,
@@ -40,4 +40,3 @@ ALTER TABLE `PaymentTransaction` ADD CONSTRAINT `PaymentTransaction_orderId_fkey
 
 -- AddForeignKey
 ALTER TABLE `PaymentTransaction` ADD CONSTRAINT `PaymentTransaction_recordedByAdminId_fkey` FOREIGN KEY (`recordedByAdminId`) REFERENCES `AdminUser`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
