@@ -47,7 +47,7 @@ folders work on this machine *before the contract is published*:
 
 | kept | why |
 |---|---|
-| `package.json` | `workspaces: [admin, website, backend/*]`, named `buildkart-dev`. Resolves `@buildkart/contract` to `backend/contract` locally, which no registry can do yet. |
+| `package.json` | `workspaces: [admin, website, backend/*]`, named `buildkart-dev`. Resolves `@StrikerStore/contract` to `backend/contract` locally, which no registry can do yet. |
 | `turbo.json` | lets one `npm run typecheck` cover all eight workspaces |
 | `.npmrc` | `save-exact`, and nothing scoped |
 | `package-lock.json` | regenerated; belongs to no repo |
@@ -61,7 +61,7 @@ Deleted, because every repo now has its own: `tsconfig.base.json`,
 put back: without it, `npm install` in `admin/` fails with
 
 ```
-npm error 404  '@buildkart/contract@0.1.0' could not be found
+npm error 404  '@StrikerStore/contract@0.1.0' could not be found
 ```
 
 because the package does not exist in any registry until step 2. Delete the root
@@ -162,7 +162,7 @@ GitHub Packages will refuse the publish.
 cd buildkart-backend
 export NODE_AUTH_TOKEN=<a GitHub PAT with write:packages>
 npm run contract:build
-npm publish --workspace @buildkart/contract
+npm publish --workspace @StrikerStore/contract
 ```
 
 `prepublishOnly` rebuilds and re-runs the leak guard and the consumer check, so
@@ -255,7 +255,7 @@ Cron points at the **backend**: `GET /cron/media-gc` and
 
 ## The one ordering constraint
 
-`admin` and `website` both depend on `@buildkart/contract@0.1.0`. Until step 2
+`admin` and `website` both depend on `@StrikerStore/contract@0.1.0`. Until step 2
 has run, **neither can `npm install` on its own** — the package does not exist
 anywhere a registry can serve it.
 
@@ -264,7 +264,7 @@ the admin before publishing, link it locally instead:
 
 ```bash
 cd buildkart-backend/contract && npm link
-cd ../../buildkart-admin && npm link @buildkart/contract
+cd ../../buildkart-admin && npm link @StrikerStore/contract
 ```
 
 That is a local-only arrangement — it changes nothing in `package.json` and
@@ -278,11 +278,11 @@ publish, and an install on the other side.
 
 ```bash
 # in buildkart-backend
-npm version --workspace @buildkart/contract patch
-npm publish --workspace @buildkart/contract
+npm version --workspace @StrikerStore/contract patch
+npm publish --workspace @StrikerStore/contract
 
 # in each consumer
-npm install @buildkart/contract@latest
+npm install @StrikerStore/contract@latest
 ```
 
 Use `npm link` while iterating; publish when the change is real.

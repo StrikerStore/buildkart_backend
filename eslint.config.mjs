@@ -13,7 +13,7 @@ import tseslint from 'typescript-eslint';
  *   - `core` may not import a framework, or it stops being runnable under a
  *     plain test runner and stops being usable by anything but Next.
  *   - `shared` may not reach a database, because `shared` is published inside
- *     `@buildkart/contract` and ends up in a browser bundle.
+ *     `@StrikerStore/contract` and ends up in a browser bundle.
  *
  * `core/src/boundary.test.ts` asserts the first of these too. That is deliberate
  * belt and braces: the test runs in CI even where a lint step is skipped, and it
@@ -86,7 +86,7 @@ export default tseslint.config(
     rules: restrict([
       {
         name: '@buildkart/database',
-        message: 'shared ships inside @buildkart/contract; it must not reach a database.',
+        message: 'shared ships inside @StrikerStore/contract; it must not reach a database.',
       },
       { name: '@buildkart/core', message: 'shared is the lower layer; core depends on it.' },
       { name: '@prisma/client', message: 'shared must stay free of Prisma.' },

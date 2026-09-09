@@ -30,7 +30,7 @@
     "db:seed": "npm run seed --workspace @buildkart/database",
     "db:seed:demo": "npm run seed:demo --workspace @buildkart/database",
     "db:test:setup": "node scripts/setup-test-db.mjs",
-    "contract:build": "npm run build --workspace @buildkart/contract",
+    "contract:build": "npm run build --workspace @StrikerStore/contract",
     "check:pins": "node scripts/check-pins.mjs",
     "r2:cors": "node scripts/setup-r2-cors.mjs",
     "r2:cors:show": "node scripts/setup-r2-cors.mjs --show"
