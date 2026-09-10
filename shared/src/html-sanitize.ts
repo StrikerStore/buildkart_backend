@@ -1,3 +1,5 @@
+import { markdownToHtml } from './markdown.ts';
+
 /**
  * Allowlist sanitiser for rich text.
  *
@@ -218,4 +220,20 @@ export function htmlToText(input: string | null | undefined, maxLength = 320): s
 /** True when the markup has no visible content — an editor's idea of "empty". */
 export function isBlankHtml(input: string | null | undefined): boolean {
   return htmlToText(input, 10_000) === '';
+}
+
+/**
+ * The one call every rich-text field should use on write.
+ *
+ * Markdown first, then the allowlist. Owners type Markdown into these boxes —
+ * it is what a plain text area invites and what every AI writing tool emits —
+ * and the storefront renders the result as HTML, so converting before
+ * sanitising is what makes `### Heading` a heading instead of three hashes on
+ * the page. Text that is already HTML passes through the conversion untouched.
+ *
+ * Sanitising still happens last and still happens on write, so the database
+ * never holds a tag the shop is not allowed to publish.
+ */
+export function richText(input: string | null | undefined): string {
+  return sanitizeHtml(markdownToHtml(input));
 }

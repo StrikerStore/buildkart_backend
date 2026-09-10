@@ -13,7 +13,7 @@ import {
   actionOk,
   blogPostSchema,
   htmlToText,
-  sanitizeHtml,
+  richText,
   slugify,
   toggleActiveSchema,
   uniqueSlug,
@@ -73,7 +73,7 @@ export async function saveBlogPost(
     }
   }
 
-  const bodyEn = sanitizeHtml(data.bodyHtmlEn);
+  const bodyEn = richText(data.bodyHtmlEn);
 
   const values = {
     slug,
@@ -87,7 +87,7 @@ export async function saveBlogPost(
     excerptEn: data.excerptEn ?? (bodyEn ? htmlToText(bodyEn, 200) : null),
     excerptHi: data.excerptHi ?? null,
     bodyHtmlEn: bodyEn || null,
-    bodyHtmlHi: sanitizeHtml(data.bodyHtmlHi) || null,
+    bodyHtmlHi: richText(data.bodyHtmlHi) || null,
     coverMediaId: data.coverMediaId ?? null,
     authorName: data.authorName ?? null,
     seoTitle: data.seoTitle ?? null,

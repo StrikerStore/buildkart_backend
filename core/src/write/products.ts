@@ -20,7 +20,7 @@ import {
   MATRIX_SEPARATOR,
   parseMetafieldCell,
   productInputSchema,
-  sanitizeHtml,
+  richText,
   slugify,
   toValueText,
   uniqueSlug,
@@ -170,12 +170,12 @@ function productScalars(
      * stored where null belongs makes the storefront render a heading over
      * nothing.
      */
-    bodyHtmlEn: sanitizeHtml(data.bodyHtmlEn) || null,
-    bodyHtmlHi: sanitizeHtml(data.bodyHtmlHi) || null,
-    faqsEn: sanitizeHtml(data.faqsEn) || null,
-    faqsHi: sanitizeHtml(data.faqsHi) || null,
-    returnPolicyEn: sanitizeHtml(data.returnPolicyEn) || null,
-    returnPolicyHi: sanitizeHtml(data.returnPolicyHi) || null,
+    bodyHtmlEn: richText(data.bodyHtmlEn) || null,
+    bodyHtmlHi: richText(data.bodyHtmlHi) || null,
+    faqsEn: richText(data.faqsEn) || null,
+    faqsHi: richText(data.faqsHi) || null,
+    returnPolicyEn: richText(data.returnPolicyEn) || null,
+    returnPolicyHi: richText(data.returnPolicyHi) || null,
     status: data.status,
     scheduledPublishAt: data.scheduledPublishAt ? new Date(data.scheduledPublishAt) : null,
     categoryId: data.categoryId,

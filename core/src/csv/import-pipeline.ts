@@ -9,7 +9,7 @@ import {
   generateSkusFor,
   toValueText,
   buildMetafieldColumn,
-  sanitizeHtml,
+  richText,
   type CsvRow,
   type ParsedProduct,
   type KnownDefinition,
@@ -310,17 +310,26 @@ async function commitProduct(
       create: {
         handle: product.handle,
         nameEn: product.nameEn,
-        bodyHtmlEn: product.bodyHtmlEn,
+        /*
+         * Sanitised like every other rich-text field on the product.
+         *
+         * This one was written straight from the cell while the three below it
+         * were cleaned, so a `<script>` in a supplier's "Body (HTML)" column
+         * was stored verbatim and rendered by the storefront with
+         * `dangerouslySetInnerHTML`. `richText` also means a description
+         * written in Markdown imports as real formatting.
+         */
+        bodyHtmlEn: richText(product.bodyHtmlEn) || null,
         // Lifted out of the `buildkart.*` columns by the parser. An absent
         // column leaves the product's own copy alone rather than clearing it —
         // a Shopify file has no such column and must not wipe them.
-        ...(product.faqsEn !== null ? { faqsEn: sanitizeHtml(product.faqsEn) || null } : {}),
-        ...(product.faqsHi !== null ? { faqsHi: sanitizeHtml(product.faqsHi) || null } : {}),
+        ...(product.faqsEn !== null ? { faqsEn: richText(product.faqsEn) || null } : {}),
+        ...(product.faqsHi !== null ? { faqsHi: richText(product.faqsHi) || null } : {}),
         ...(product.returnPolicyEn !== null
-          ? { returnPolicyEn: sanitizeHtml(product.returnPolicyEn) || null }
+          ? { returnPolicyEn: richText(product.returnPolicyEn) || null }
           : {}),
         ...(product.returnPolicyHi !== null
-          ? { returnPolicyHi: sanitizeHtml(product.returnPolicyHi) || null }
+          ? { returnPolicyHi: richText(product.returnPolicyHi) || null }
           : {}),
         status,
         publishedAt: status === 'ACTIVE' ? new Date() : null,
@@ -335,17 +344,17 @@ async function commitProduct(
       },
       update: {
         nameEn: product.nameEn,
-        bodyHtmlEn: product.bodyHtmlEn,
+        bodyHtmlEn: richText(product.bodyHtmlEn) || null,
         // Lifted out of the `buildkart.*` columns by the parser. An absent
         // column leaves the product's own copy alone rather than clearing it —
         // a Shopify file has no such column and must not wipe them.
-        ...(product.faqsEn !== null ? { faqsEn: sanitizeHtml(product.faqsEn) || null } : {}),
-        ...(product.faqsHi !== null ? { faqsHi: sanitizeHtml(product.faqsHi) || null } : {}),
+        ...(product.faqsEn !== null ? { faqsEn: richText(product.faqsEn) || null } : {}),
+        ...(product.faqsHi !== null ? { faqsHi: richText(product.faqsHi) || null } : {}),
         ...(product.returnPolicyEn !== null
-          ? { returnPolicyEn: sanitizeHtml(product.returnPolicyEn) || null }
+          ? { returnPolicyEn: richText(product.returnPolicyEn) || null }
           : {}),
         ...(product.returnPolicyHi !== null
-          ? { returnPolicyHi: sanitizeHtml(product.returnPolicyHi) || null }
+          ? { returnPolicyHi: richText(product.returnPolicyHi) || null }
           : {}),
         status,
         publishedAt: status === 'ACTIVE' ? (existing?.publishedAt ?? new Date()) : existing?.publishedAt,

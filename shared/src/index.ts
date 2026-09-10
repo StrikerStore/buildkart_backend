@@ -1,6 +1,7 @@
 export * from './locale.ts';
 export * from './money.ts';
 export * from './slug.ts';
+export * from './markdown.ts';
 export * from './html-sanitize.ts';
 export * from './gstin.ts';
 export * from './media.ts';
