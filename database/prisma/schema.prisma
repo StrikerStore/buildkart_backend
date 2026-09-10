@@ -651,6 +651,9 @@ model PriceHistory {
 
   price     Decimal  @db.Decimal(10, 2)
   bulkPrice Decimal? @db.Decimal(10, 2)
+  /// The MRP at the time of the change. Nullable because rows written before
+  /// the rates screen could edit it have no MRP to record.
+  compareAtPrice Decimal? @db.Decimal(10, 2)
 
   changedByAdminId String?
   source           PriceChangeSource

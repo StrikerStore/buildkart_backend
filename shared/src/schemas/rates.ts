@@ -20,11 +20,23 @@ const optionalMoney = z
  * rows would write forty pointless PriceHistory entries and forty misleading
  * "updated today" stamps.
  */
-export const rateChangeSchema = z.object({
-  variantId: z.string().min(1).max(64),
-  price: money,
-  bulkPrice: optionalMoney,
-});
+export const rateChangeSchema = z
+  .object({
+    variantId: z.string().min(1).max(64),
+    price: money,
+    bulkPrice: optionalMoney,
+    /** The MRP, struck through on the storefront. Blank clears it. */
+    compareAtPrice: optionalMoney,
+  })
+  /*
+   * Same rule the product form enforces: an MRP at or below the selling price
+   * prints a struck-through number that is not a saving, which is the one thing
+   * a "was ₹410" line must never do.
+   */
+  .refine(
+    (row) => row.compareAtPrice === undefined || Number(row.compareAtPrice) > Number(row.price),
+    { message: 'MRP must be higher than the selling price.', path: ['compareAtPrice'] },
+  );
 export type RateChange = z.infer<typeof rateChangeSchema>;
 
 export const saveRatesSchema = z.object({

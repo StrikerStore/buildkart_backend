@@ -106,6 +106,7 @@ export async function saveRates(
       id: true,
       price: true,
       bulkPrice: true,
+      compareAtPrice: true,
       product: { select: { id: true, nameEn: true } },
     },
   });
@@ -127,7 +128,13 @@ export async function saveRates(
       ? normalizeMoney(existing.bulkPrice.toString())
       : undefined;
     const incomingBulk = change.bulkPrice ? normalizeMoney(change.bulkPrice) : undefined;
-    return !(samePrice && storedBulk === incomingBulk);
+    // The MRP counts as a change on its own: an owner who corrects only the
+    // struck-through price must not be told nothing happened.
+    const storedMrp = existing.compareAtPrice
+      ? normalizeMoney(existing.compareAtPrice.toString())
+      : undefined;
+    const incomingMrp = change.compareAtPrice ? normalizeMoney(change.compareAtPrice) : undefined;
+    return !(samePrice && storedBulk === incomingBulk && storedMrp === incomingMrp);
   });
 
   if (real.length === 0) {
@@ -143,6 +150,7 @@ export async function saveRates(
         data: {
           price: change.price,
           bulkPrice: change.bulkPrice ?? null,
+          compareAtPrice: change.compareAtPrice ?? null,
           // What the storefront reads for its "rate updated today" stamp.
           priceUpdatedAt: now,
         },
@@ -154,6 +162,7 @@ export async function saveRates(
         variantId: change.variantId,
         price: change.price,
         bulkPrice: change.bulkPrice ?? null,
+        compareAtPrice: change.compareAtPrice ?? null,
         changedByAdminId: adminId,
         source: 'RATES_SCREEN' as const,
       })),
@@ -170,6 +179,8 @@ export async function saveRates(
         product: byId.get(change.variantId)?.product.nameEn,
         from: byId.get(change.variantId)?.price.toString(),
         to: change.price,
+        mrpFrom: byId.get(change.variantId)?.compareAtPrice?.toString() ?? null,
+        mrpTo: change.compareAtPrice ?? null,
       })),
     },
   });

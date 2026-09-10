@@ -821,6 +821,8 @@ export type RateRowDto = {
   unitLabel: string | null;
   price: string;
   bulkPrice: string;
+  /** The MRP. Empty string when the product has none. */
+  compareAtPrice: string;
   priceUpdatedAt: string | null;
 };
 

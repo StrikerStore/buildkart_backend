@@ -135,6 +135,7 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
           unitLabelEn: true,
           price: true,
           bulkPrice: true,
+          compareAtPrice: true,
           priceUpdatedAt: true,
         },
       },
@@ -153,6 +154,9 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
       // when nothing moved.
       price: normalizeMoney(variant.price.toString()),
       bulkPrice: variant.bulkPrice ? normalizeMoney(variant.bulkPrice.toString()) : '',
+      compareAtPrice: variant.compareAtPrice
+        ? normalizeMoney(variant.compareAtPrice.toString())
+        : '',
       priceUpdatedAt: dateToIso(variant.priceUpdatedAt),
     })),
   );
