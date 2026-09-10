@@ -28,6 +28,7 @@ export * from './password.ts';
 export * from './dto.ts';
 export * from './jobs.ts';
 export * from './media.ts';
+export * from './category-rule-sets.ts';
 export * from './membership.ts';
 export * from './r2.ts';
 export * from './secrets.ts';

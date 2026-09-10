@@ -1,5 +1,6 @@
 import type { Prisma } from '@buildkart/database';
 import {
+  matchesTagRules,
   normalizeMoney,
   parseAddressSnapshot,
   parseTaxBreakdown,
@@ -11,9 +12,11 @@ import {
   type PaymentStatus,
   type PaymentTransactionStatus,
   type PaymentTransactionType,
+  type CategoryMatch,
+  type TagRule,
   type TagTone,
 } from '@buildkart/shared';
-import type { CategoryDto, MediaDto, OrderDetailDto, OrderEventDto, OrderItemDto, OrderListItemDto, PaymentTransactionDto, ProductListItemDto } from '@buildkart/shared';
+import type { CategoryDto, MediaDto, ProductCategoryDto, OrderDetailDto, OrderEventDto, OrderItemDto, OrderListItemDto, PaymentTransactionDto, ProductListItemDto } from '@buildkart/shared';
 export type { CategoryDto, MediaDto, OrderDetailDto, OrderEventDto, OrderItemDto, OrderListItemDto, PaymentTransactionDto, ProductListItemDto };
 
 /*
@@ -157,7 +160,7 @@ type ProductListRow = {
   scheduledPublishAt: Date | null;
   hasVariants: boolean;
   updatedAt: Date;
-  category: { nameEn: string } | null;
+  category: { id: string; nameEn: string } | null;
   brand: { nameEn: string } | null;
   images: Array<{ media: { r2Key: string } }>;
   tags: Array<{ tag: { id: string; nameEn: string; scope: 'INTERNAL' | 'PUBLIC'; badgeTone: TagTone } }>;
@@ -170,7 +173,50 @@ type ProductListRow = {
   }>;
 };
 
-export function toProductListItemDto(row: ProductListRow): ProductListItemDto {
+/** A rule-bearing category, as the list mapper needs it. */
+export type RuleCategoryRow = {
+  id: string;
+  nameEn: string;
+  autoMatch: CategoryMatch;
+  autoRules: readonly TagRule[];
+};
+
+/**
+ * Every category a product belongs to: the one it is filed under, then any
+ * whose rule its tags satisfy.
+ *
+ * This is `matchesTagRules` read from the product's end — the category page
+ * asks the same question as SQL ("which products match this rule?"), and the
+ * two must agree or the admin sees a product listed under a category whose page
+ * does not show it. The assigned category comes first and is never repeated,
+ * even when the product's tags would also have gathered it.
+ */
+export function productCategories(
+  row: { category: { id: string; nameEn: string } | null; tags: Array<{ tag: { id: string } }> },
+  ruleCategories: readonly RuleCategoryRow[] = [],
+): ProductCategoryDto[] {
+  const assigned = row.category;
+  const out: ProductCategoryDto[] = assigned
+    ? [{ id: assigned.id, nameEn: assigned.nameEn, viaRule: false }]
+    : [];
+
+  if (ruleCategories.length === 0) return out;
+
+  const tagIds = row.tags.map((link) => link.tag.id);
+  for (const category of ruleCategories) {
+    if (category.id === assigned?.id) continue;
+    if (matchesTagRules(category.autoRules, category.autoMatch, tagIds)) {
+      out.push({ id: category.id, nameEn: category.nameEn, viaRule: true });
+    }
+  }
+
+  return out;
+}
+
+export function toProductListItemDto(
+  row: ProductListRow,
+  ruleCategories: readonly RuleCategoryRow[] = [],
+): ProductListItemDto {
   const active = row.variants.filter((v) => v.isActive);
   const priced = active.length > 0 ? active : row.variants;
 
@@ -195,7 +241,7 @@ export function toProductListItemDto(row: ProductListRow): ProductListItemDto {
     nameHi: row.nameHi,
     status: row.status,
     scheduledPublishAt: dateToIso(row.scheduledPublishAt),
-    categoryName: row.category?.nameEn ?? null,
+    categories: productCategories(row, ruleCategories),
     brandName: row.brand?.nameEn ?? null,
     hasVariants: row.hasVariants,
     variantCount: row.variants.length,

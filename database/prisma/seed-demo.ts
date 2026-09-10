@@ -10,6 +10,7 @@ import { prisma } from '../src/client.ts';
 import { matrixKeyOf, generateSku } from '@buildkart/shared';
 import { seedOrders, DEMO_CUSTOMERS } from './seed-demo-orders.ts';
 import { seedGrowth } from './seed-demo-growth.ts';
+import { seedSupport } from './seed-demo-support.ts';
 
 /**
  * Demo catalogue.
@@ -740,6 +741,13 @@ async function main() {
     `  ${growth.areas} delivery areas, ${growth.requests} area requests, ${growth.discounts} discounts, ${growth.banners} banners, ${growth.sections} homepage sections`,
   );
 
+  /*
+   * Last, deliberately: a ticket points at a customer and usually at an order,
+   * so both have to exist before this runs.
+   */
+  const support = await seedSupport();
+  console.log(`  ${support.tickets} support conversations, ${support.messages} messages`);
+
   const summary = {
     categories: await prisma.category.count(),
     products: await prisma.product.count(),
@@ -753,6 +761,7 @@ async function main() {
     pincodes: await prisma.serviceablePincode.count(),
     discounts: await prisma.discount.count(),
     sections: await prisma.homepageSection.count(),
+    supportTickets: await prisma.supportTicket.count(),
   };
   console.log('\nDone.', JSON.stringify(summary));
 }

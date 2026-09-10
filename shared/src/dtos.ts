@@ -18,6 +18,7 @@
 import type {
   AdminRole,
   AnalyticsRange,
+  CategoryMatch,
   DailyPoint,
   DiscountTrigger,
   DiscountType,
@@ -38,6 +39,7 @@ import type {
   PaymentTransactionType,
   PickerOptions,
   ProductStatusValue,
+  TagSlugRule,
   TaxBreakdownRow,
   TagScope,
   TagTone,
@@ -139,6 +141,14 @@ export type MediaDto = {
   createdAt: string;
 };
 
+/** One category a product belongs to, and how it got there. */
+export type ProductCategoryDto = {
+  id: string;
+  nameEn: string;
+  /** False when the product is filed here; true when a tag rule gathered it. */
+  viaRule: boolean;
+};
+
 // from core/src/dto.ts
 export type ProductListItemDto = {
   id: string;
@@ -147,7 +157,11 @@ export type ProductListItemDto = {
   nameHi: string | null;
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
   scheduledPublishAt: string | null;
-  categoryName: string | null;
+  /**
+   * Every category this product lands in: the one it is filed under, then any
+   * whose tag rule its tags satisfy. Empty means uncategorised.
+   */
+  categories: ProductCategoryDto[];
   brandName: string | null;
   hasVariants: boolean;
   variantCount: number;
@@ -325,7 +339,7 @@ export type DashboardData = {
 
 // from core/src/read/categories.ts
 /** A tag as the category rule builder needs it. */
-export type RuleTagOptionDto = { id: string; nameEn: string; scope: TagScope };
+export type RuleTagOptionDto = { id: string; slug: string; nameEn: string; scope: TagScope };
 
 // from core/src/read/categories.ts
 /** A possible parent. One level of nesting is all the storefront renders. */
@@ -708,11 +722,25 @@ export type ProductListResultDto = {
 };
 
 // from core/src/read/products.ts
+/** A rule-bearing category, as the product form evaluates it in the browser. */
+export type RuleCategoryDto = {
+  id: string;
+  nameEn: string;
+  autoMatch: CategoryMatch;
+  autoRules: TagSlugRule[];
+};
+
 export type ProductFormOptionsDto = {
   categories: Array<{ id: string; nameEn: string; parentName: string | null }>;
   brandSuggestions: string[];
   metafieldDefinitions: MetafieldDefinitionDto[];
   tagSuggestions: string[];
+  /**
+   * Categories that gather products by rule, so the form can show which ones a
+   * product falls into as its tags are edited — without a round trip per
+   * keystroke. Slug-keyed, because the form holds tag names it slugifies.
+   */
+  ruleCategories: RuleCategoryDto[];
   mediaCtx: MediaUrlContext;
   bulkCutoff: string;
   /** Active rates only. `productCount` is always 0 here — see the read. */

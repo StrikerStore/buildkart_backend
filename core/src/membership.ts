@@ -57,3 +57,59 @@ export function categoryMembershipWhere(
   if (branches.length === 0) return { id: { in: [] } };
   return branches.length === 1 ? branches[0]! : { OR: branches };
 }
+
+/** A category's rule, loaded. The unit the tree and count helpers work in. */
+export type CategoryRuleSet = {
+  id: string;
+  autoMatch: CategoryMatch;
+  autoRules: readonly TagRule[];
+};
+
+/**
+ * The most rule-bearing nodes a single category page will fold into its query.
+ *
+ * Rules are capped at 20 per category, so a parent with many ruled children
+ * could otherwise put 20 x (1 + childCount) correlated EXISTS subqueries into
+ * one statement — and that statement is re-run by the facet scan and by the
+ * price-sort groupBy. Beyond the cap children still contribute their assigned
+ * products, just not their rules. If this ever bites in practice the answer is
+ * a materialised join table populated on write, not a bigger cap.
+ */
+export const MAX_ROLLUP_RULE_NODES = 12;
+
+/**
+ * Every product in a category *or any of its children*: assigned to any of
+ * them, or gathered by any of their rules. A product qualifying several ways
+ * is still listed once.
+ *
+ * A shopper who taps "Cement" expects to see cement, whether it was filed there
+ * by hand, filed under a sub-category, or tagged into it by a rule.
+ */
+export function categoryTreeMembershipWhere(
+  nodes: readonly CategoryRuleSet[],
+): Prisma.ProductWhereInput {
+  if (nodes.length === 0) return { id: { in: [] } };
+
+  const branches: Prisma.ProductWhereInput[] = [
+    { categoryId: { in: nodes.map((node) => node.id) } },
+  ];
+
+  // Siblings frequently carry the same rule. Identical EXISTS subqueries cost
+  // real time and return the same rows, so fold them.
+  const seen = new Set<string>();
+  let ruleNodes = 0;
+
+  for (const node of nodes) {
+    if (ruleNodes >= MAX_ROLLUP_RULE_NODES) break;
+    const ruleWhere = tagRuleWhere(node.autoRules, node.autoMatch);
+    if (!ruleWhere) continue;
+
+    ruleNodes += 1;
+    const key = JSON.stringify(ruleWhere);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    branches.push(ruleWhere);
+  }
+
+  return branches.length === 1 ? branches[0]! : { OR: branches };
+}

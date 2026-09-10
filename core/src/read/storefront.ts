@@ -48,6 +48,8 @@ import {
   type StorefrontVariantDto,
 } from '@buildkart/shared';
 import { decimalToString, dateToIso } from '../dto.ts';
+import { categoryTreeMembershipWhere } from '../membership.ts';
+import { countsFor } from '../category-rule-sets.ts';
 import { getSettings } from './settings.ts';
 
 // ---------------------------------------------------------------------------
@@ -444,26 +446,39 @@ async function facetsFor(where: Prisma.ProductWhereInput): Promise<StorefrontFac
 // Categories
 // ---------------------------------------------------------------------------
 
+/*
+ * The rule rides along on every category read. It is a nested select on a query
+ * the caller is making anyway, so a page that lists categories still makes one
+ * round trip — where loading rules separately would be one query per category,
+ * on the nav that renders at the top of every page.
+ */
 const CATEGORY_SELECT = {
   id: true,
   slug: true,
   nameEn: true,
   nameHi: true,
   isRateVolatile: true,
+  autoMatch: true,
+  autoRules: { select: { tagId: true, operator: true } },
   image: { select: { r2Key: true } },
   _count: { select: { products: { where: VISIBLE_PRODUCT } } },
 } satisfies Prisma.CategorySelect;
 
 type CategoryRow = Prisma.CategoryGetPayload<{ select: typeof CATEGORY_SELECT }>;
 
-function toCategoryDto(row: CategoryRow): StorefrontCategoryDto {
+/**
+ * `counts` carries rule-aware totals for the categories that have a rule.
+ * A category absent from it keeps the assigned-only `_count` already fetched,
+ * which is both the normal case and the free one.
+ */
+function toCategoryDto(row: CategoryRow, counts?: Map<string, number>): StorefrontCategoryDto {
   return {
     slug: row.slug,
     nameEn: row.nameEn,
     nameHi: row.nameHi,
     imageKey: row.image?.r2Key ?? null,
     isRateVolatile: row.isRateVolatile,
-    productCount: row._count.products,
+    productCount: counts?.get(row.id) ?? row._count.products,
   };
 }
 
@@ -487,9 +502,13 @@ export async function listCategoryNav(): Promise<StorefrontNavCategoryDto[]> {
     },
   });
 
+  // Roots and children in one pass: a store with no category rules pays for no
+  // extra queries at all here.
+  const counts = await countsFor([...roots, ...roots.flatMap((row) => row.children)], VISIBLE_PRODUCT);
+
   return roots.map((row) => ({
-    ...toCategoryDto(row),
-    children: row.children.map(toCategoryDto),
+    ...toCategoryDto(row, counts),
+    children: row.children.map((child) => toCategoryDto(child, counts)),
   }));
 }
 
@@ -550,23 +569,21 @@ export async function getCategoryPage(
    * "Cement" expects to see cement, not an empty page because every product is
    * filed under "OPC 43 Grade" one level down.
    */
-  const childIds = category.children.map((child) => child.id);
-  const list = await listVisible(
-    { categoryId: { in: [category.id, ...childIds] } },
-    query,
-  );
+  const nodes = [category, ...category.children];
+  const list = await listVisible(categoryTreeMembershipWhere(nodes), query);
+  const counts = await countsFor(nodes, VISIBLE_PRODUCT);
 
   return {
     ...list,
     category: {
-      ...toCategoryDto(category),
+      ...toCategoryDto(category, counts),
       descriptionEn: category.descriptionEn,
       descriptionHi: category.descriptionHi,
       seoTitle: category.seoTitle,
       seoDescription: category.seoDescription,
     },
     ancestors: await ancestorsOf(category.parentId),
-    children: category.children.map(toCategoryDto),
+    children: category.children.map((child) => toCategoryDto(child, counts)),
   };
 }
 
@@ -943,11 +960,12 @@ async function resolveSection(
         where: { id: { in: wanted }, isActive: true },
         select: CATEGORY_SELECT,
       });
+      const gridCounts = await countsFor(rows, VISIBLE_PRODUCT);
       // The owner's order, not the database's — they arranged these by hand.
       const byId = new Map(rows.map((category) => [category.id, category]));
       const categories = wanted.flatMap((id) => {
         const found = byId.get(id);
-        return found ? [toCategoryDto(found)] : [];
+        return found ? [toCategoryDto(found, gridCounts)] : [];
       });
 
       return categories.length > 0 ? { ...head, type: 'CATEGORY_GRID', categories } : null;

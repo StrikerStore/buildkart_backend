@@ -12,6 +12,7 @@ import { prisma, type Prisma } from '@buildkart/database';
 import {
   emptyVariantDraft,
   formatMetafieldCell,
+  isRunnableRuleSet,
   matrixKeyToValues,
   normalizeMoney,
   parseSetting,
@@ -20,6 +21,8 @@ import {
 } from '@buildkart/shared';
 import type { ProductFormInitialDto } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
+import { tagRuleWhere, type CategoryRuleSet } from '../membership.ts';
+import { loadRuleSets } from '../category-rule-sets.ts';
 import { decimalToString, toProductListItemDto } from '../dto.ts';
 import { mediaContext } from '../media.ts';
 import {
@@ -65,10 +68,36 @@ export function productOrderBy(sort: string): Prisma.ProductOrderByWithRelationI
 export function buildProductWhere(
   query: ProductListQuery,
   metafieldOwnerIds: readonly string[] = [],
+  /**
+   * The filtered category's rule, already loaded. Passed in rather than fetched
+   * so this stays testable without a database — the same reason
+   * `metafieldOwnerIds` arrives this way.
+   *
+   * The category's own rule only. Filtering the list by a parent deliberately
+   * does not roll up its children the way the storefront page does: here the
+   * filter answers "what is filed under this category", and rolling children in
+   * would make "I moved these products out — did it work?" unanswerable.
+   */
+  categoryRule: Pick<CategoryRuleSet, 'autoMatch' | 'autoRules'> | null = null,
 ): Prisma.ProductWhereInput {
+  const ruleWhere =
+    query.categoryId && categoryRule
+      ? tagRuleWhere(categoryRule.autoRules, categoryRule.autoMatch)
+      : null;
+
   return {
     ...(query.status !== 'ALL' ? { status: query.status } : {}),
-    ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+    // No runnable rule: the plain scalar, exactly as before.
+    ...(query.categoryId && !ruleWhere ? { categoryId: query.categoryId } : {}),
+    /*
+     * With a rule, membership is assigned-or-gathered — and it goes under AND,
+     * because the search below owns the top-level OR. Two `OR` keys in one
+     * object literal is not an error, it is the second silently replacing the
+     * first, and every category-filtered search would return the wrong rows.
+     */
+    ...(ruleWhere
+      ? { AND: [{ OR: [{ categoryId: query.categoryId }, ruleWhere] }] }
+      : {}),
     ...(query.brandId ? { brandId: query.brandId } : {}),
     ...(query.tagId ? { tags: { some: { tagId: query.tagId } } } : {}),
     ...(query.q
@@ -121,7 +150,7 @@ const LIST_SELECT = {
   scheduledPublishAt: true,
   hasVariants: true,
   updatedAt: true,
-  category: { select: { nameEn: true } },
+  category: { select: { id: true, nameEn: true } },
   brand: { select: { nameEn: true } },
   images: {
     orderBy: { position: 'asc' },
@@ -148,7 +177,16 @@ export async function listProducts(
 ): Promise<ProductListResultDto> {
   assertPermission(actor, 'catalog:read');
 
-  const where = buildProductWhere(query, await matchingMetafieldOwnerIds(query.q));
+  // One extra query, only when a category filter is active, and in parallel.
+  const [ownerIds, ruleSets] = await Promise.all([
+    matchingMetafieldOwnerIds(query.q),
+    query.categoryId ? loadRuleSets([query.categoryId]) : Promise.resolve(null),
+  ]);
+  const where = buildProductWhere(
+    query,
+    ownerIds,
+    (query.categoryId ? ruleSets?.get(query.categoryId) : null) ?? null,
+  );
 
   const [rows, total, categories, brands, tags] = await Promise.all([
     prisma.product.findMany({
@@ -159,9 +197,19 @@ export async function listProducts(
       select: LIST_SELECT,
     }),
     prisma.product.count({ where }),
+    /*
+     * This list feeds the filter dropdown, and its rules double as the source
+     * for working out which categories each row's tags land it in. One query
+     * either way — the rules ride along on the query the filter needs anyway.
+     */
     prisma.category.findMany({
       orderBy: [{ position: 'asc' }, { nameEn: 'asc' }],
-      select: { id: true, nameEn: true },
+      select: {
+        id: true,
+        nameEn: true,
+        autoMatch: true,
+        autoRules: { select: { tagId: true, operator: true } },
+      },
     }),
     prisma.brand.findMany({ orderBy: { nameEn: 'asc' }, select: { id: true, nameEn: true } }),
     prisma.tag.findMany({
@@ -170,11 +218,22 @@ export async function listProducts(
     }),
   ]);
 
+  /*
+   * Which categories each product lands in — the same rule the category page
+   * runs as SQL, read from the other end. `LIST_SELECT` already loaded every
+   * row's tag ids, so this is an in-memory pass over 25 rows, not a query.
+   */
+  const ruleCategories = categories.filter((category) => isRunnableRuleSet(category.autoRules));
+
   return {
-    products: rows.map(toProductListItemDto),
+    products: rows.map((row) => toProductListItemDto(row, ruleCategories)),
     total,
     totalPages: Math.max(1, Math.ceil(total / PRODUCT_PAGE_SIZE)),
-    filters: { categories, brands, tags },
+    filters: {
+      categories: categories.map((c) => ({ id: c.id, nameEn: c.nameEn })),
+      brands,
+      tags,
+    },
   };
 }
 
@@ -197,7 +256,15 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
   const [categoryRows, brands, tags, cutoffSetting, metafieldDefinitions] = await Promise.all([
     prisma.category.findMany({
       orderBy: [{ position: 'asc' }, { nameEn: 'asc' }],
-      select: { id: true, nameEn: true, parent: { select: { nameEn: true } } },
+      select: {
+        id: true,
+        nameEn: true,
+        parent: { select: { nameEn: true } },
+        autoMatch: true,
+        // Slug-keyed: the form holds tag *names*, slugifies them, and evaluates
+        // these rules in the browser as the tags are edited.
+        autoRules: { select: { operator: true, tag: { select: { slug: true } } } },
+      },
     }),
     prisma.brand.findMany({ orderBy: { nameEn: 'asc' }, take: 200, select: { nameEn: true } }),
     prisma.tag.findMany({ orderBy: { nameEn: 'asc' }, take: 200, select: { nameEn: true } }),
@@ -214,7 +281,25 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
     select: { id: true, name: true, percent: true, isDefault: true, isActive: true, position: true },
   });
 
+  /*
+   * Only the categories that actually gather by rule. The form shows which of
+   * them a product falls into as its tags change, so shipping the rules lets it
+   * answer that in the browser rather than asking the server per keystroke.
+   */
+  const ruleCategories = categoryRows
+    .filter((category) => isRunnableRuleSet(category.autoRules))
+    .map((category) => ({
+      id: category.id,
+      nameEn: category.nameEn,
+      autoMatch: category.autoMatch,
+      autoRules: category.autoRules.map((rule) => ({
+        tagSlug: rule.tag.slug,
+        operator: rule.operator,
+      })),
+    }));
+
   return {
+    ruleCategories,
     categories: categoryRows.map((category) => ({
       id: category.id,
       nameEn: category.nameEn,

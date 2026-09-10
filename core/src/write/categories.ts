@@ -19,6 +19,7 @@ import {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { missingTagsMessage, resolveRuleSlugs } from '../category-rule-sets.ts';
 
 /**
  * Positions are gapped by 100 (100, 200, 300…) so inserting between two
@@ -66,6 +67,14 @@ export async function createCategory(
     }
   }
 
+  // Rules arrive keyed by tag slug; the database stores a tagId. Resolve before
+  // writing anything, so a rule naming a tag that no longer exists fails as a
+  // field error rather than a constraint violation.
+  const resolved = await resolveRuleSlugs(data.autoRules);
+  if (!resolved.ok) {
+    return actionError([], { autoRules: missingTagsMessage(resolved.missing) });
+  }
+
   const slug = uniqueSlug(slugBase, await takenSlugs());
 
   const last = await prisma.category.findFirst({
@@ -90,7 +99,7 @@ export async function createCategory(
       position: (last?.position ?? 0) + POSITION_GAP,
       autoMatch: data.autoMatch,
       autoRules: {
-        create: data.autoRules.map((rule) => ({ tagId: rule.tagId, operator: rule.operator })),
+        create: resolved.rules.map((rule) => ({ tagId: rule.tagId, operator: rule.operator })),
       },
     },
     select: { id: true },
@@ -152,34 +161,45 @@ export async function updateCategory(
   const slug =
     slugBase === existing.slug ? existing.slug : uniqueSlug(slugBase, await takenSlugs(id));
 
+  const resolved = await resolveRuleSlugs(data.autoRules);
+  if (!resolved.ok) {
+    return actionError([], { autoRules: missingTagsMessage(resolved.missing) });
+  }
+
+  /*
+   * The rules and the match mode that governs them go in one transaction.
+   * Replacing the rules in one round trip and setting `autoMatch` in another
+   * leaves a window where a failure would strand the category with new rules
+   * combined under the old mode — an ALL rule quietly running as ANY gathers
+   * far more than it should.
+   */
   await prisma.$transaction([
     prisma.categoryTagRule.deleteMany({ where: { categoryId: id } }),
     prisma.categoryTagRule.createMany({
-      data: data.autoRules.map((rule) => ({
+      data: resolved.rules.map((rule) => ({
         categoryId: id,
         tagId: rule.tagId,
         operator: rule.operator,
       })),
     }),
+    prisma.category.update({
+      where: { id },
+      data: {
+        autoMatch: data.autoMatch,
+        slug,
+        nameEn: data.nameEn,
+        nameHi: data.nameHi ?? null,
+        descriptionEn: data.descriptionEn ?? null,
+        descriptionHi: data.descriptionHi ?? null,
+        parentId: data.parentId,
+        imageMediaId: data.imageMediaId,
+        isActive: data.isActive,
+        isRateVolatile: data.isRateVolatile,
+        seoTitle: data.seoTitle ?? null,
+        seoDescription: data.seoDescription ?? null,
+      },
+    }),
   ]);
-
-  await prisma.category.update({
-    where: { id },
-    data: {
-      autoMatch: data.autoMatch,
-      slug,
-      nameEn: data.nameEn,
-      nameHi: data.nameHi ?? null,
-      descriptionEn: data.descriptionEn ?? null,
-      descriptionHi: data.descriptionHi ?? null,
-      parentId: data.parentId,
-      imageMediaId: data.imageMediaId,
-      isActive: data.isActive,
-      isRateVolatile: data.isRateVolatile,
-      seoTitle: data.seoTitle ?? null,
-      seoDescription: data.seoDescription ?? null,
-    },
-  });
 
   await recordAudit(actor, {
     action: 'category.update',
@@ -224,8 +244,15 @@ export async function deleteCategory(actor: Actor, id: string): Promise<ActionRe
   });
   if (!existing) return actionError('That category no longer exists.');
 
-  // Refuse rather than cascade. Deleting a category that still holds products
-  // would silently strip them from the storefront's navigation.
+  /*
+   * Refuse rather than cascade. Deleting a category that still holds products
+   * would silently strip them from the storefront's navigation.
+   *
+   * Counts assigned products only, deliberately. A product the category
+   * gathered by rule keeps its own `categoryId` and loses nothing when the rule
+   * cascades away with the category — while counting them here would make any
+   * broadly-ruled category permanently undeletable.
+   */
   if (existing._count.children > 0) {
     return actionError(
       `“${existing.nameEn}” has ${existing._count.children} sub-categor${existing._count.children === 1 ? 'y' : 'ies'}. Move or delete those first.`,

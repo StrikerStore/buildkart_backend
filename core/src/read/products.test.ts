@@ -103,3 +103,62 @@ test('a null publish date is an empty input, not the epoch', () => {
 test('a date renders as the zero-padded local value the input expects', () => {
   assert.equal(toLocalInputValue(new Date(2026, 0, 5, 9, 7)), '2026-01-05T09:07');
 });
+
+// --- category rules -------------------------------------------------------
+
+const rule = (autoRules: Array<{ tagId: string; operator: 'INCLUDES' | 'EXCLUDES' }>,
+  autoMatch: 'ALL' | 'ANY' = 'ALL') => ({ autoMatch, autoRules });
+
+test('a category with no rule filters exactly as it always did', () => {
+  // Byte-identical to the no-rule call, so the common path keeps its query plan.
+  assert.deepEqual(
+    buildProductWhere(q({ categoryId: 'c1' }), [], rule([])),
+    buildProductWhere(q({ categoryId: 'c1' })),
+  );
+  assert.deepEqual(buildProductWhere(q({ categoryId: 'c1' }), [], rule([])), {
+    categoryId: 'c1',
+  });
+});
+
+test('a category with a rule matches assigned or gathered products', () => {
+  assert.deepEqual(
+    buildProductWhere(q({ categoryId: 'c1' }), [], rule([{ tagId: 'a', operator: 'INCLUDES' }])),
+    {
+      AND: [
+        { OR: [{ categoryId: 'c1' }, { AND: [{ tags: { some: { tagId: 'a' } } }] }] },
+      ],
+    },
+  );
+});
+
+test('a rule is ignored when no category is being filtered on', () => {
+  assert.deepEqual(buildProductWhere(q(), [], rule([{ tagId: 'a', operator: 'INCLUDES' }])), {});
+});
+
+/*
+ * The regression this pair exists for. Both the search and the membership union
+ * want the key `OR`. In one object literal the second silently replaces the
+ * first — no error, just a category-filtered search quietly returning the wrong
+ * rows. Membership lives under AND for exactly this reason.
+ */
+test('a category rule and a search term keep both of their OR branches', () => {
+  const where = buildProductWhere(
+    q({ categoryId: 'c1', q: 'cement' }),
+    [],
+    rule([{ tagId: 'a', operator: 'INCLUDES' }]),
+  );
+
+  assert.ok(Array.isArray(where.OR), 'the search OR must survive');
+  assert.ok(
+    where.OR!.some((branch) => 'nameEn' in (branch as object)),
+    'the search OR must still be the search',
+  );
+
+  assert.ok(Array.isArray(where.AND), 'membership must live under AND');
+  assert.deepEqual(where.AND, [
+    { OR: [{ categoryId: 'c1' }, { AND: [{ tags: { some: { tagId: 'a' } } }] }] },
+  ]);
+
+  // And the scalar must not also be present, or the union would be pointless.
+  assert.ok(!('categoryId' in where), 'the scalar is replaced by the union, not added to it');
+});

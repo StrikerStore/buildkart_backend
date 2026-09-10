@@ -11,12 +11,13 @@ import { prisma } from '@buildkart/database';
 import {
   isRunnableRuleSet,
   type CategoryMatch,
-  type TagRule,
+  type TagSlugRule,
 } from '@buildkart/shared';
 import type { CategoryFormInitialDto } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { toCategoryDto, type CategoryDto } from '../dto.ts';
 import { categoryMembershipWhere } from '../membership.ts';
+import { countsFor, resolveRuleSlugs } from '../category-rule-sets.ts';
 import type { CategoryFormOptionsDto, MembershipPreviewDto, MembershipRowDto, ParentOptionDto, RuleTagOptionDto } from '@buildkart/shared';
 export type { CategoryFormOptionsDto, MembershipPreviewDto, MembershipRowDto, ParentOptionDto, RuleTagOptionDto };
 
@@ -37,10 +38,24 @@ export async function listCategories(actor: Actor): Promise<CategoryDto[]> {
 
   const rows = await prisma.category.findMany({
     orderBy: [{ position: 'asc' }, { nameEn: 'asc' }],
-    include: { _count: { select: { products: true, children: true } } },
+    include: {
+      _count: { select: { products: true, children: true } },
+      autoRules: { select: { tagId: true, operator: true } },
+    },
   });
 
-  return rows.map(toCategoryDto);
+  /*
+   * No visibility filter, matching the `_count` this list has always shown:
+   * the admin counts drafts and archived products too. The storefront counts
+   * ACTIVE only, and that difference is deliberate.
+   */
+  const counts = await countsFor(rows, {});
+
+  return rows.map((row) => {
+    const dto = toCategoryDto(row);
+    const ruleAware = counts.get(row.id);
+    return ruleAware === undefined ? dto : { ...dto, productCount: ruleAware };
+  });
 }
 
 /**
@@ -70,7 +85,7 @@ export async function getCategoryFormOptions(
   const [tags, parents] = await Promise.all([
     prisma.tag.findMany({
       orderBy: [{ scope: 'desc' }, { nameEn: 'asc' }],
-      select: { id: true, nameEn: true, scope: true },
+      select: { id: true, slug: true, nameEn: true, scope: true },
     }),
     prisma.category.findMany({
       where: { parentId: null },
@@ -97,7 +112,7 @@ export async function getCategoryForForm(
     where: { id },
     include: {
       _count: { select: { products: true, children: true } },
-      autoRules: { select: { tagId: true, operator: true } },
+      autoRules: { select: { operator: true, tag: { select: { slug: true } } } },
       // The tile picture. Selected rather than left to `imageMediaId`, because
       // the form draws a thumbnail of it and an id renders nothing.
       image: { select: { id: true, r2Key: true, filename: true, altTextEn: true } },
@@ -122,7 +137,10 @@ export async function getCategoryForForm(
     productCount: category._count.products,
     childCount: category._count.children,
     autoMatch: category.autoMatch,
-    autoRules: category.autoRules,
+    autoRules: category.autoRules.map((rule) => ({
+      tagSlug: rule.tag.slug,
+      operator: rule.operator,
+    })),
   };
 }
 
@@ -138,12 +156,22 @@ export async function getCategoryForForm(
  */
 export async function previewCategoryMembership(
   actor: Actor,
-  input: { categoryId: string | null; autoMatch: CategoryMatch; autoRules: TagRule[] },
+  input: { categoryId: string | null; autoMatch: CategoryMatch; autoRules: TagSlugRule[] },
 ): Promise<MembershipPreviewDto> {
   assertPermission(actor, 'catalog:read');
 
   const { categoryId, autoMatch } = input;
-  const rules = Array.isArray(input.autoRules) ? input.autoRules.slice(0, 20) : [];
+  const slugRules = Array.isArray(input.autoRules) ? input.autoRules.slice(0, 20) : [];
+
+  /*
+   * A slug that does not resolve yields an empty rule set here, where every
+   * other caller refuses outright. This runs on every keystroke in the rule
+   * builder, and a half-finished state is the normal case rather than an
+   * error — showing "nothing from this rule yet" is the honest answer. The
+   * *write* still refuses, so a broken rule can never be saved.
+   */
+  const resolved = await resolveRuleSlugs(slugRules);
+  const rules = resolved.ok ? resolved.rules : [];
   const where = categoryMembershipWhere(categoryId, rules, autoMatch);
 
   const [total, sample] = await Promise.all([

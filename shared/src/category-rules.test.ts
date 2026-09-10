@@ -4,7 +4,9 @@ import {
   matchesTagRules,
   isRunnableRuleSet,
   describeTagRules,
+  ruleKey,
   type TagRule,
+  type TagSlugRule,
 } from './category-rules.ts';
 
 const CEMENT = 'tag-cement';
@@ -99,4 +101,61 @@ test('the summary warns when a rule cannot match anything', () => {
   const nameOf = (id: string) => id;
   assert.match(describeTagRules([exclude(BINDER)], 'ALL', nameOf), /matches nothing/);
   assert.match(describeTagRules([], 'ALL', nameOf), /assign them by hand/);
+});
+
+/*
+ * The universal-key claim, stated as a test.
+ *
+ * A rule names its tag by id in the database and by slug at every interface.
+ * These are two spellings of one fact, so the same rule set must reach the same
+ * verdict whichever spelling it arrives in — otherwise the admin product list
+ * (which holds tag ids) and the product form (which holds tag names it
+ * slugifies) could disagree about which categories a product belongs to.
+ */
+test('a rule set reaches the same verdict keyed by id or by slug', () => {
+  const bySlug = (tagSlug: string): TagSlugRule => ({ tagSlug, operator: 'INCLUDES' });
+  const bySlugExcl = (tagSlug: string): TagSlugRule => ({ tagSlug, operator: 'EXCLUDES' });
+
+  // The same rule twice: ids on the left, slugs on the right.
+  const idRules = [include(CEMENT), include(PREMIUM), exclude(BINDER)];
+  const slugRules = [bySlug('cement'), bySlug('premium'), bySlugExcl('binder')];
+
+  const cases: Array<[string[], string[]]> = [
+    [[CEMENT, PREMIUM], ['cement', 'premium']],
+    [[CEMENT], ['cement']],
+    [[CEMENT, PREMIUM, BINDER], ['cement', 'premium', 'binder']],
+    [[], []],
+  ];
+
+  for (const [ids, slugs] of cases) {
+    for (const match of ['ALL', 'ANY'] as const) {
+      assert.equal(
+        matchesTagRules(idRules, match, ids),
+        matchesTagRules(slugRules, match, slugs),
+        `${match} disagreed for [${ids.join(', ')}]`,
+      );
+    }
+  }
+
+  // And the verdicts are the ones we expect, not merely equal to each other.
+  assert.equal(matchesTagRules(slugRules, 'ALL', ['cement', 'premium']), true);
+  assert.equal(matchesTagRules(slugRules, 'ALL', ['cement']), false);
+  assert.equal(matchesTagRules(slugRules, 'ANY', ['cement', 'binder']), false);
+});
+
+test('ruleKey reads whichever key a rule carries', () => {
+  assert.equal(ruleKey({ tagId: 'tag-1', operator: 'INCLUDES' }), 'tag-1');
+  assert.equal(ruleKey({ tagSlug: 'cement', operator: 'INCLUDES' }), 'cement');
+});
+
+test('the summary and the runnable check accept slug-keyed rules', () => {
+  const slugRules: TagSlugRule[] = [
+    { tagSlug: 'cement', operator: 'INCLUDES' },
+    { tagSlug: 'binder', operator: 'EXCLUDES' },
+  ];
+  assert.equal(isRunnableRuleSet(slugRules), true);
+  assert.equal(
+    describeTagRules(slugRules, 'ALL', (key) => key),
+    'Products tagged cement, but not binder.',
+  );
 });

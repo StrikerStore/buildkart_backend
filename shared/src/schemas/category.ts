@@ -48,10 +48,23 @@ export const categoryInputSchema = z.object({
 
   /// How the included tags combine. Exclusions always apply regardless.
   autoMatch: z.enum(CATEGORY_MATCHES).default('ALL'),
+  /*
+   * Rules name their tag by slug, not id — the same key the product form and
+   * the CSV already use. Core resolves it to a tagId before it reaches the
+   * database, so a renamed tag keeps its rules and a deleted one takes them
+   * with it. Same regex as `slugField` above: tag slugs come from the same
+   * `slugify()`.
+   */
   autoRules: z
     .array(
       z.object({
-        tagId: z.string().min(1).max(64),
+        tagSlug: z
+          .string()
+          .trim()
+          .toLowerCase()
+          .min(1)
+          .max(191)
+          .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Not a valid tag slug'),
         operator: z.enum(TAG_RULE_OPERATORS),
       }),
     )

@@ -15,6 +15,8 @@ import {
   type ExportProduct,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
+import { tagRuleWhere } from '../membership.ts';
+import { loadRuleSets } from '../category-rule-sets.ts';
 import { mediaContext } from '../media.ts';
 
 /** Rows are emitted in pages so the whole catalogue is never held in memory. */
@@ -144,11 +146,24 @@ export async function loadExportProducts(
 ): Promise<{ products: ExportProduct[]; header: string[] }> {
   assertPermission(actor, 'catalog:read');
 
+  /*
+   * The export button carries the product list's filters, so a category filter
+   * has to mean the same thing here as it does on screen — products assigned to
+   * it or gathered by its rule. A CSV that disagrees with the list it was
+   * launched from is a support ticket.
+   */
+  const ruleSets = filters.categoryId ? await loadRuleSets([filters.categoryId]) : null;
+  const categoryRule = filters.categoryId ? ruleSets?.get(filters.categoryId) : null;
+  const ruleWhere = categoryRule
+    ? tagRuleWhere(categoryRule.autoRules, categoryRule.autoMatch)
+    : null;
+
   const where: Prisma.ProductWhereInput = {
     ...(filters.status && filters.status !== 'ALL'
       ? { status: filters.status as Prisma.EnumProductStatusFilter['equals'] }
       : {}),
-    ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
+    ...(filters.categoryId && !ruleWhere ? { categoryId: filters.categoryId } : {}),
+    ...(ruleWhere ? { OR: [{ categoryId: filters.categoryId }, ruleWhere] } : {}),
     ...(filters.tagId ? { tags: { some: { tagId: filters.tagId } } } : {}),
   };
 

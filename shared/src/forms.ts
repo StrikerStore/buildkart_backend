@@ -9,7 +9,7 @@
  * Keeping the blank form beside the type is what stops the create and edit
  * screens drifting — they are the same shape, built once.
  */
-import type { CategoryMatch, TagRule } from './category-rules.ts';
+import type { CategoryMatch, TagSlugRule } from './category-rules.ts';
 import type { MediaImageDto } from './media-context.ts';
 import type { MetafieldOwnerType, MetafieldType } from './metafields/index.ts';
 import { emptyVariantDraft } from './variants.ts';
@@ -38,7 +38,7 @@ export type CategoryFormInitialDto = {
   productCount: number;
   childCount: number;
   autoMatch: CategoryMatch;
-  autoRules: TagRule[];
+  autoRules: TagSlugRule[];
 };
 
 /** The blank form. Kept here so new and edit cannot drift apart. */

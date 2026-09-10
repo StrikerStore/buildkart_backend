@@ -11,7 +11,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TagRule } from '@buildkart/shared';
-import { categoryMembershipWhere, tagRuleWhere } from './membership.ts';
+import {
+  categoryMembershipWhere,
+  categoryTreeMembershipWhere,
+  tagRuleWhere,
+  MAX_ROLLUP_RULE_NODES,
+} from './membership.ts';
 
 const includes = (...ids: string[]): TagRule[] =>
   ids.map((tagId) => ({ tagId, operator: 'INCLUDES' as const }));
@@ -84,4 +89,80 @@ test('both together are an OR, so a product qualifying twice is still listed onc
 test('a single branch is not wrapped in a pointless OR', () => {
   const where = categoryMembershipWhere('c1', [], 'ALL');
   assert.ok(!('OR' in where), 'a lone branch should be returned directly');
+});
+
+// --- categoryTreeMembershipWhere ------------------------------------------
+
+const node = (id: string, autoRules: TagRule[] = [], autoMatch: 'ALL' | 'ANY' = 'ALL') => ({
+  id,
+  autoMatch,
+  autoRules,
+});
+
+test('a tree with no rules is a plain id list, not a pointless OR', () => {
+  assert.deepEqual(categoryTreeMembershipWhere([node('parent'), node('kid1'), node('kid2')]), {
+    categoryId: { in: ['parent', 'kid1', 'kid2'] },
+  });
+});
+
+test('an empty tree matches nothing, not everything', () => {
+  assert.deepEqual(categoryTreeMembershipWhere([]), { id: { in: [] } });
+});
+
+test("a child's rule gathers products into its parent's page", () => {
+  assert.deepEqual(categoryTreeMembershipWhere([node('parent'), node('kid', includes('a'))]), {
+    OR: [
+      { categoryId: { in: ['parent', 'kid'] } },
+      { AND: [{ tags: { some: { tagId: 'a' } } }] },
+    ],
+  });
+});
+
+/*
+ * Siblings sharing a rule is the common case, not an exotic one — "new
+ * arrivals" under three sub-categories, say. Each identical branch is a
+ * separate correlated subquery returning the same rows.
+ */
+test('identical sibling rules collapse to one branch', () => {
+  const where = categoryTreeMembershipWhere([
+    node('parent'),
+    node('kid1', includes('a')),
+    node('kid2', includes('a')),
+    node('kid3', includes('b')),
+  ]);
+
+  assert.deepEqual(where, {
+    OR: [
+      { categoryId: { in: ['parent', 'kid1', 'kid2', 'kid3'] } },
+      { AND: [{ tags: { some: { tagId: 'a' } } }] },
+      { AND: [{ tags: { some: { tagId: 'b' } } }] },
+    ],
+  });
+});
+
+test('rules that cannot run contribute nothing but their category id', () => {
+  assert.deepEqual(categoryTreeMembershipWhere([node('parent', excludes('x'))]), {
+    categoryId: { in: ['parent'] },
+  });
+});
+
+/*
+ * The cap exists so one category page cannot put an unbounded number of EXISTS
+ * subqueries into a statement the facet scan also re-runs. Past it, children
+ * still contribute their assigned products — they lose their rules, not their
+ * contents.
+ */
+test('the rollup cap drops the last rules but keeps every category id', () => {
+  const nodes = Array.from({ length: MAX_ROLLUP_RULE_NODES + 3 }, (_, i) =>
+    node(`c${i}`, includes(`tag${i}`)),
+  );
+  const where = categoryTreeMembershipWhere(nodes);
+
+  assert.ok('OR' in where && Array.isArray(where.OR));
+  const branches = where.OR as unknown[];
+  assert.equal(branches.length, MAX_ROLLUP_RULE_NODES + 1, 'ids branch plus the capped rules');
+  assert.deepEqual(branches[0], { categoryId: { in: nodes.map((n) => n.id) } });
+
+  // The subject's own rule is first in and must survive the cap.
+  assert.deepEqual(branches[1], { AND: [{ tags: { some: { tagId: 'tag0' } } }] });
 });

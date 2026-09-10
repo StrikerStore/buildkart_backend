@@ -125,7 +125,14 @@ export const catalogRouter = router({
       z.object({
         categoryId: id.nullable(),
         autoMatch: z.enum(CATEGORY_MATCHES),
-        autoRules: z.array(z.object({ tagId: id, operator: z.enum(TAG_RULE_OPERATORS) })).max(20),
+        autoRules: z
+          .array(
+            z.object({
+              tagSlug: z.string().min(1).max(191),
+              operator: z.enum(TAG_RULE_OPERATORS),
+            }),
+          )
+          .max(20),
       }),
     )
     .query(({ ctx, input }) => previewCategoryMembership(ctx.actor, input)),
