@@ -35,7 +35,7 @@ CREATE TABLE `VariantPriceTier` (
   UNIQUE INDEX `VariantPriceTier_variantId_minAmount_key` (`variantId`, `minAmount`),
   INDEX `VariantPriceTier_variantId_position_idx` (`variantId`, `position`),
   PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 ALTER TABLE `VariantPriceTier`
   ADD CONSTRAINT `VariantPriceTier_variantId_fkey`
