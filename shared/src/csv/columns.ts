@@ -60,5 +60,26 @@ export const SHOPIFY_CSV_COLUMNS = [
 
 export type ShopifyCsvColumn = (typeof SHOPIFY_CSV_COLUMNS)[number];
 
+/**
+ * Columns BuildKart adds, because Shopify's format has nowhere to put them.
+ *
+ * Kept in their own list rather than appended to `SHOPIFY_CSV_COLUMNS`, which
+ * means "the columns a real Shopify export has" and is asserted against the
+ * reference fixture. They still round-trip: the exporter writes them and the
+ * parser reads them, and a file without them leaves existing ladders alone.
+ *
+ * `Bulk Tier Basis` is per product and read from its first row; `Bulk Tiers` is
+ * per variant, encoded `20:370|40:365` — threshold, colon, rate, pipe between
+ * rungs.
+ */
+export const BUILDKART_CSV_COLUMNS = ['Bulk Tier Basis', 'Bulk Tiers'] as const;
+export type BuildkartCsvColumn = (typeof BUILDKART_CSV_COLUMNS)[number];
+
+/** Every column this shop understands as a real field rather than a metafield. */
+export const KNOWN_CSV_COLUMNS = [
+  ...SHOPIFY_CSV_COLUMNS,
+  ...BUILDKART_CSV_COLUMNS,
+] as const;
+
 /** Columns in the reference export that are metafields rather than fixed fields. */
 export const FIXTURE_METAFIELD_COLUMN_COUNT = 36;

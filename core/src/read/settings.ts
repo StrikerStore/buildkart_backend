@@ -59,7 +59,6 @@ export async function getSettings(): Promise<SettingsDto> {
       // The counter itself, read-only: the form renders a preview of the next
       // number from it and has no field that can write it back.
       orderNumberNext: sequence.next,
-      bulkUnlockCutoff: parseSetting('bulk.unlockCutoff', byKey.get('bulk.unlockCutoff')).amount,
       orderMinimumValue: parseSetting('order.minimumValue', byKey.get('order.minimumValue')).amount,
       // `.enabled` only, one field at a time — see the note above. These moved
       // from three standalone boolean keys onto the provider rows; the DTO shape

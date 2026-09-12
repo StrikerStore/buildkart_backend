@@ -30,6 +30,7 @@ import {
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { refreshCustomerTotals } from './orders.ts';
 
@@ -87,7 +88,7 @@ export async function writeOrder(
       id: true,
       sku: true,
       price: true,
-      bulkPrice: true,
+      tiers: TIER_SELECT,
       option1Value: true,
       option2Value: true,
       option3Value: true,
@@ -150,8 +151,7 @@ export async function writeOrder(
   }
 
   // --- price it ------------------------------------------------------------
-  const [cutoffSetting, storeProfileSetting, area] = await Promise.all([
-    prisma.setting.findUnique({ where: { key: 'bulk.unlockCutoff' } }),
+  const [storeProfileSetting, area] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'store.profile' } }),
     prisma.serviceablePincode.findUnique({ where: { pincode: data.address.pincode } }),
   ]);
@@ -163,14 +163,13 @@ export async function writeOrder(
       variants.map((variant) => ({
         variantId: variant.id,
         price: variant.price.toString(),
-        bulkPrice: variant.bulkPrice?.toString() ?? null,
+        tiers: toEngineTiers(variant.tiers),
         // The rate is the product's; the exemption flag is the variant's.
         taxPercent: Number(variant.product.taxPercent),
         taxInclusive: variant.product.taxInclusive,
         taxable: variant.taxable,
       })),
       {
-        bulkCutoff: parseSetting('bulk.unlockCutoff', cutoffSetting?.value).amount,
         // An explicit charge wins; otherwise the area's own rate is used.
         deliveryCharge: data.deliveryCharge ?? area?.deliveryCharge.toString() ?? '0.00',
         discountTotal: data.discountTotal,
@@ -307,6 +306,23 @@ export async function writeOrder(
               },
               unitPrice: line.unitPrice,
               wasBulkPrice: line.wasBulkPrice,
+              /*
+               * The rung that produced this price, frozen with the line.
+               *
+               * Under the old store-wide cutoff `wasBulkPrice` was enough — the
+               * cutoff was one number that could be looked up afterwards. A
+               * ladder retuned every morning cannot be, so an order that does
+               * not record its own rung becomes unexplainable within a week.
+               */
+              listUnitPrice: line.listUnitPrice,
+              tierBasis:
+                line.appliedTier === null
+                  ? null
+                  : line.appliedTier.minQuantity !== null
+                    ? 'QUANTITY'
+                    : 'AMOUNT',
+              tierMinQuantity: line.appliedTier?.minQuantity ?? null,
+              tierMinAmount: line.appliedTier?.minAmount ?? null,
               quantity: line.quantity,
               lineTotal: line.lineTotal,
               taxPercent: line.taxPercent,

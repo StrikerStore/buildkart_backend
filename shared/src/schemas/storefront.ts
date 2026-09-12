@@ -73,6 +73,23 @@ export type StorefrontListQuery = z.infer<typeof storefrontListQuerySchema>;
 export const storefrontPageQuerySchema = storefrontListQuerySchema.extend({
   slug: z.string().trim().min(1).max(191),
 });
+
+/**
+ * The search box's dropdown, as the shopper types.
+ *
+ * Its own schema rather than a reuse of the list query, because the two want
+ * opposite things. A results page wants every filter, a count and the facets to
+ * refine by; this wants a handful of rows and nothing else, as cheaply as the
+ * database can produce them.
+ *
+ * Two characters, not three: "10mm" and "ppc" are real searches in a materials
+ * shop, and a three-character floor would refuse the second one.
+ */
+export const storefrontSuggestSchema = z.object({
+  q: z.string().trim().min(2).max(191),
+  limit: z.coerce.number().int().min(1).max(10).default(8),
+});
+export type StorefrontSuggestQuery = z.infer<typeof storefrontSuggestSchema>;
 export type StorefrontPageQuery = z.infer<typeof storefrontPageQuerySchema>;
 
 /**

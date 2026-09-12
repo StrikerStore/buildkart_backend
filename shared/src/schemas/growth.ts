@@ -422,7 +422,6 @@ const orderNumberFields = {
 
 export const commerceSettingsSchema = z
   .object({
-    bulkUnlockCutoff: money,
     orderMinimumValue: money,
     /*
      * Reading and writing these is deliberately asymmetric.

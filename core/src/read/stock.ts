@@ -11,8 +11,14 @@ import { normalizeMoney } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { dateToIso } from '../dto.ts';
 import { variantLabel } from '../variant-label.ts';
-import type { InventoryAdjustmentDto, InventoryPageDto, InventoryRowDto, RateRowDto } from '@buildkart/shared';
-export type { InventoryAdjustmentDto, InventoryPageDto, InventoryRowDto, RateRowDto };
+import type {
+  BulkTierRowDto,
+  InventoryAdjustmentDto,
+  InventoryPageDto,
+  InventoryRowDto,
+  RateRowDto,
+} from '@buildkart/shared';
+export type { BulkTierRowDto, InventoryAdjustmentDto, InventoryPageDto, InventoryRowDto, RateRowDto };
 
 
 
@@ -134,7 +140,6 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
           option3Value: true,
           unitLabelEn: true,
           price: true,
-          bulkPrice: true,
           compareAtPrice: true,
           priceUpdatedAt: true,
         },
@@ -153,11 +158,76 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
       // Normalising here keeps "410" and "410.00" from looking like a change
       // when nothing moved.
       price: normalizeMoney(variant.price.toString()),
-      bulkPrice: variant.bulkPrice ? normalizeMoney(variant.bulkPrice.toString()) : '',
       compareAtPrice: variant.compareAtPrice
         ? normalizeMoney(variant.compareAtPrice.toString())
         : '',
       priceUpdatedAt: dateToIso(variant.priceUpdatedAt),
+    })),
+  );
+}
+
+/**
+ * Every variant whose bulk ladder is worth retuning, for the Bulk rates screen.
+ *
+ * The filter is *has a ladder, or is marked as changing daily* — not just "has
+ * a ladder". Starting with none configured, filtering on ladders alone would
+ * show an empty screen with no way in; including the rate-volatile set puts
+ * exactly the products that want ladders (cement, sariya) in front of the owner
+ * on day one.
+ */
+export async function listBulkTiers(actor: Actor): Promise<BulkTierRowDto[]> {
+  assertPermission(actor, 'catalog:read');
+
+  const products = await prisma.product.findMany({
+    where: {
+      status: { not: 'ARCHIVED' },
+      OR: [
+        { variants: { some: { tiers: { some: {} } } } },
+        { isRateVolatile: true },
+        { category: { is: { isRateVolatile: true } } },
+      ],
+    },
+    orderBy: [{ category: { position: 'asc' } }, { nameEn: 'asc' }],
+    select: {
+      id: true,
+      nameEn: true,
+      bulkTierBasis: true,
+      category: { select: { nameEn: true } },
+      variants: {
+        where: { isActive: true },
+        orderBy: { position: 'asc' },
+        select: {
+          id: true,
+          sku: true,
+          option1Value: true,
+          option2Value: true,
+          option3Value: true,
+          unitLabelEn: true,
+          price: true,
+          tiers: { orderBy: { position: 'asc' } },
+        },
+      },
+    },
+  });
+
+  return products.flatMap((product) =>
+    product.variants.map((variant) => ({
+      variantId: variant.id,
+      productId: product.id,
+      productName: product.nameEn,
+      variantLabel: variantLabel(variant),
+      sku: variant.sku,
+      unitLabel: variant.unitLabelEn,
+      basis: product.bulkTierBasis,
+      // Normalised on read, so "410" and "410.00" never look like a change.
+      price: normalizeMoney(variant.price.toString()),
+      tiers: variant.tiers.map((tier) => ({
+        threshold:
+          tier.minQuantity !== null
+            ? String(tier.minQuantity)
+            : normalizeMoney(tier.minAmount!.toString()),
+        unitPrice: normalizeMoney(tier.unitPrice.toString()),
+      })),
     })),
   );
 }

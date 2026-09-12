@@ -3,7 +3,13 @@ import { optionalText } from './common.ts';
 import { optionAxisSchema, variantRowSchema } from './variant.ts';
 import { metafieldValuesSchema } from './metafield.ts';
 import { productTaxFields } from './tax.ts';
-import { MATRIX_SEPARATOR, MAX_OPTION_AXES, MAX_VARIANTS } from '../variants.ts';
+import {
+  BULK_TIER_BASES,
+  MATRIX_SEPARATOR,
+  MAX_OPTION_AXES,
+  MAX_VARIANTS,
+  validateTierLadder,
+} from '../variants.ts';
 
 export const PRODUCT_STATUSES = ['DRAFT', 'ACTIVE', 'ARCHIVED'] as const;
 export type ProductStatusValue = (typeof PRODUCT_STATUSES)[number];
@@ -92,6 +98,8 @@ export const productInputSchema = z
     ...productTaxFields,
 
     isRateVolatile: z.boolean().default(false),
+    /** How this product's bulk ladders are read. One choice for the product. */
+    bulkTierBasis: z.enum(BULK_TIER_BASES).default('QUANTITY'),
     searchKeywords: optionalText(1000),
     seoTitle: optionalText(255),
     seoDescriptionEn: optionalText(1000),
@@ -113,11 +121,14 @@ export const productInputSchema = z
       ),
     { message: 'MRP must be higher than the selling price.', path: ['variants'] },
   )
-  .refine(
-    (v) =>
-      v.variants.every((r) => r.bulkPrice === undefined || Number(r.bulkPrice) <= Number(r.price)),
-    { message: 'A bulk price cannot exceed its normal price.', path: ['variants'] },
-  )
+  /* The ladder rules, through the one shared validator. See `schemas/variant.ts`. */
+  .superRefine((v, ctx) => {
+    for (const row of v.variants) {
+      for (const problem of validateTierLadder(v.bulkTierBasis, row.price, row.tiers)) {
+        ctx.addIssue({ code: 'custom', message: problem, path: ['variants'] });
+      }
+    }
+  })
   .refine(
     (v) =>
       v.variants.every(

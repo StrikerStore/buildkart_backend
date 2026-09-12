@@ -23,6 +23,30 @@ export const MAX_VALUES_PER_AXIS = 100;
  */
 export const MAX_VARIANTS = 250;
 
+/**
+ * Rungs on one variant's bulk ladder.
+ *
+ * Five is already more price breaks than a builders' merchant quotes, and a
+ * ladder long enough to need scrolling is one nobody can check.
+ */
+export const MAX_PRICE_TIERS = 5;
+
+/**
+ * One rung, as the form holds it.
+ *
+ * `threshold` is a single raw string rather than separate quantity and amount
+ * fields: the form has one input, the product's basis says how to read it, and
+ * turning it into a `minQuantity` or a `minAmount` happens once, at the Zod
+ * boundary. Two fields here would mean every editor keeping the unused one
+ * cleared.
+ */
+export type PriceTierDraft = {
+  /** Present when this rung already exists in the database. */
+  id?: string;
+  threshold: string;
+  unitPrice: string;
+};
+
 export type OptionAxisDraft = {
   /** Present when this axis already exists in the database. */
   id?: string;
@@ -38,7 +62,8 @@ export type VariantDraft = {
   sku: string;
   price: string;
   compareAtPrice: string;
-  bulkPrice: string;
+  /** This variant's bulk ladder. Read against the product's `bulkTierBasis`. */
+  tiers: PriceTierDraft[];
   costPerItem: string;
   unitLabelEn: string;
   unitLabelHi: string;
@@ -66,7 +91,7 @@ export function emptyVariantDraft(overrides: Partial<VariantDraft> = {}): Varian
     sku: '',
     price: '',
     compareAtPrice: '',
-    bulkPrice: '',
+    tiers: [],
     costPerItem: '',
     unitLabelEn: '',
     unitLabelHi: '',
@@ -172,7 +197,14 @@ export function expandMatrix(
         // than an obvious zero.
         price: seed?.price ?? '',
         compareAtPrice: seed?.compareAtPrice ?? '',
-        bulkPrice: seed?.bulkPrice ?? '',
+        // Copied, never shared. Handing the new row the seed's array would make
+        // every inherited ladder the same object, so editing a rung on one size
+        // would silently edit it on all of them. The `id` is dropped with it:
+        // these are new rows, not the seed's rows moved.
+        tiers: (seed?.tiers ?? []).map((tier) => ({
+          threshold: tier.threshold,
+          unitPrice: tier.unitPrice,
+        })),
         costPerItem: seed?.costPerItem ?? '',
         unitLabelEn: seed?.unitLabelEn ?? '',
         unitLabelHi: seed?.unitLabelHi ?? '',
@@ -284,4 +316,119 @@ export function describeProblem(problem: MatrixProblem): string {
     case 'AXIS_WITHOUT_VALUES':
       return `“${problem.axisName}” needs at least one value.`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bulk ladders
+// ---------------------------------------------------------------------------
+
+/** How a ladder's thresholds are read. Mirrors the Prisma enum. */
+export const BULK_TIER_BASES = ['QUANTITY', 'AMOUNT'] as const;
+export type BulkTierBasis = (typeof BULK_TIER_BASES)[number];
+
+/**
+ * Everything that makes a ladder wrong, in one place.
+ *
+ * Called by the product schema, the bulk-rates screen's schema, the CSV parser
+ * and the two admin editors. One implementation because these rules decide what
+ * the shop charges: a rule the form enforces and the importer does not is a rule
+ * that holds until somebody uploads a spreadsheet.
+ *
+ * Returns plain sentences rather than codes — unlike `describeProblem` above,
+ * every caller renders these the same way, and a second lookup table would only
+ * be somewhere for the two to disagree.
+ */
+export function validateTierLadder(
+  basis: BulkTierBasis,
+  listPrice: string,
+  tiers: readonly PriceTierDraft[],
+): string[] {
+  const problems: string[] = [];
+  const filled = tiers.filter((tier) => tier.threshold.trim() !== '' || tier.unitPrice.trim() !== '');
+  if (filled.length === 0) return problems;
+
+  if (filled.length > MAX_PRICE_TIERS) {
+    problems.push(`A ladder can have at most ${MAX_PRICE_TIERS} price breaks.`);
+  }
+
+  const listPaise = moneyToPaise(listPrice);
+  const seen = new Set<number>();
+  let previousThreshold = -Infinity;
+  let previousPrice = Infinity;
+
+  for (const [index, tier] of filled.entries()) {
+    const where = `Price break ${index + 1}`;
+    const pricePaise = moneyToPaise(tier.unitPrice);
+
+    if (pricePaise === null) {
+      problems.push(`${where}: enter a rate like 370 or 370.50.`);
+      continue;
+    }
+
+    const threshold = basis === 'QUANTITY' ? wholeNumber(tier.threshold) : moneyToPaise(tier.threshold);
+    if (threshold === null) {
+      problems.push(
+        basis === 'QUANTITY'
+          ? `${where}: enter a whole number of units, like 20.`
+          : `${where}: enter an order value like 10000.`,
+      );
+      continue;
+    }
+
+    if (basis === 'QUANTITY' && threshold < 2) {
+      // A rung starting at one unit is not a bulk rate, it is the price.
+      problems.push(`${where}: a quantity break starts at 2 or more.`);
+    }
+    if (basis === 'AMOUNT' && threshold <= 0) {
+      problems.push(`${where}: an order value break must be above zero.`);
+    }
+
+    if (listPaise !== null && pricePaise >= listPaise) {
+      problems.push(`${where}: the bulk rate must be below the normal price.`);
+    }
+
+    /*
+     * An amount rung below one unit's price fires at quantity 1, which makes
+     * the "normal" price unreachable — the shopper never sees it.
+     */
+    if (basis === 'AMOUNT' && listPaise !== null && listPaise > 0 && threshold < listPaise) {
+      problems.push(`${where}: that value is below the price of a single unit, so it would always apply.`);
+    }
+
+    if (seen.has(threshold)) {
+      problems.push(`${where}: there is already a break at that ${basis === 'QUANTITY' ? 'quantity' : 'value'}.`);
+    }
+    seen.add(threshold);
+
+    if (threshold <= previousThreshold) {
+      problems.push(`${where}: breaks must go up, not down.`);
+    }
+    /*
+     * A rung no cheaper than the one below it can never be chosen — `matchTier`
+     * takes the lowest qualifying price — so it would sit on the product page
+     * advertising a saving that never happens.
+     */
+    if (pricePaise >= previousPrice) {
+      problems.push(`${where}: each break must be cheaper than the one before it.`);
+    }
+
+    previousThreshold = threshold;
+    previousPrice = pricePaise;
+  }
+
+  return problems;
+}
+
+/** Money string to integer paise, or null when it is not one. Never `Number()`. */
+function moneyToPaise(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d{1,10}(\.\d{1,2})?$/.test(trimmed)) return null;
+  const [rupees = '0', fraction = ''] = trimmed.split('.');
+  return Number(rupees) * 100 + Number((fraction + '00').slice(0, 2));
+}
+
+function wholeNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d{1,7}$/.test(trimmed)) return null;
+  return Number(trimmed);
 }

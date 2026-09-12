@@ -12,9 +12,12 @@ import { EMPTY_SECRET, encryptedSecretSchema } from './secrets.ts';
 const money = z.string().regex(MONEY_PATTERN, 'Must be an amount like "10000.00"');
 
 export const SETTING_SCHEMAS = {
-  /** Cart subtotal at which every bulk-priced item switches to its bulk rate. */
-  'bulk.unlockCutoff': z.object({ amount: money }).default({ amount: '10000.00' }),
-
+  /*
+   * `bulk.unlockCutoff` used to live here — one store-wide subtotal at which
+   * every bulk-priced item dropped to its bulk rate. Bulk pricing is now a
+   * per-variant ladder judged on each line, so there is nothing store-wide
+   * left to configure.
+   */
   'order.minimumValue': z.object({ amount: money }).default({ amount: '0.00' }),
 
   /**
@@ -456,7 +459,6 @@ export const SETTING_SCHEMAS = {
  */
 export const SETTINGS_DTO_KEYS = [
   'store.profile',
-  'bulk.unlockCutoff',
   'order.minimumValue',
   'order.numberSequence',
   'delivery.promise',

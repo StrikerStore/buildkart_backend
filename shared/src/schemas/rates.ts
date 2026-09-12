@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MONEY_PATTERN } from '../money.ts';
+import { MAX_PRICE_TIERS } from '../variants.ts';
 
 const money = z.string().trim().regex(MONEY_PATTERN, 'Enter an amount like 410 or 410.50');
 
@@ -24,7 +25,6 @@ export const rateChangeSchema = z
   .object({
     variantId: z.string().min(1).max(64),
     price: money,
-    bulkPrice: optionalMoney,
     /** The MRP, struck through on the storefront. Blank clears it. */
     compareAtPrice: optionalMoney,
   })
@@ -66,3 +66,32 @@ export const stockAdjustSchema = z.object({
     .optional(),
 });
 export type StockAdjustInput = z.infer<typeof stockAdjustSchema>;
+
+// ---------------------------------------------------------------------------
+// Bulk ladders — the retuning screen
+// ---------------------------------------------------------------------------
+
+/**
+ * One variant's whole ladder, as the bulk-rates screen submits it.
+ *
+ * The ladder is sent complete rather than as a diff of rungs: the server
+ * replaces it wholesale (nothing references a rung), so "what was submitted is
+ * what is stored" is true by construction rather than by careful merging.
+ */
+export const bulkTierChangeSchema = z.object({
+  variantId: z.string().min(1).max(64),
+  tiers: z
+    .array(
+      z.object({
+        threshold: z.string().trim().min(1).max(20),
+        unitPrice: money,
+      }),
+    )
+    .max(MAX_PRICE_TIERS),
+});
+export type BulkTierChange = z.infer<typeof bulkTierChangeSchema>;
+
+export const saveBulkTiersSchema = z.object({
+  changes: z.array(bulkTierChangeSchema).min(1, 'Nothing changed').max(500),
+});
+export type SaveBulkTiersInput = z.infer<typeof saveBulkTiersSchema>;

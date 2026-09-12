@@ -39,6 +39,7 @@ import type {
   PaymentTransactionType,
   PickerOptions,
   ProductStatusValue,
+  BulkTierBasis,
   TagSlugRule,
   TaxBreakdownRow,
   TagScope,
@@ -650,7 +651,7 @@ export type VariantSearchResult = {
   optionLabel: string | null;
   unitLabel: string | null;
   price: string;
-  bulkPrice: string | null;
+  tiers: PriceTierDto[];
   /*
    * Carried so the new-order screen can price in the browser with the same
    * `priceOrder` the server uses. Without them the on-screen total would
@@ -706,6 +707,24 @@ export type OrderListResultDto = {
   revenue: string;
 };
 
+/** One rung of a bulk ladder, as every client reads it. */
+export type PriceTierDto = {
+  /** Set on a QUANTITY ladder. */
+  minQuantity: number | null;
+  /** Set on an AMOUNT ladder, measured against the line's list total. */
+  minAmount: string | null;
+  unitPrice: string;
+};
+
+/** The rung above the one in force, and what reaching it is worth. */
+export type NextTierDto = PriceTierDto & {
+  /** Units still needed. Null on an amount ladder. */
+  quantityShort: number | null;
+  /** List value still needed. Null on a quantity ladder. */
+  amountShort: string | null;
+  saving: string;
+};
+
 // from core/src/read/products.ts
 export type ProductFilterOptionsDto = {
   categories: Array<{ id: string; nameEn: string }>;
@@ -742,7 +761,6 @@ export type ProductFormOptionsDto = {
    */
   ruleCategories: RuleCategoryDto[];
   mediaCtx: MediaUrlContext;
-  bulkCutoff: string;
   /** Active rates only. `productCount` is always 0 here — see the read. */
   taxRates: TaxRateDto[];
   /** What a new product is pre-selected onto. Null when no rate is marked default. */
@@ -754,7 +772,6 @@ export type StoreProfileDto = SettingValue<'store.profile'>;
 
 // from core/src/read/settings.ts
 export type CommerceSettingsDto = {
-  bulkUnlockCutoff: string;
   orderMinimumValue: string;
   codEnabled: boolean;
   razorpayEnabled: boolean;
@@ -820,10 +837,25 @@ export type RateRowDto = {
   sku: string | null;
   unitLabel: string | null;
   price: string;
-  bulkPrice: string;
   /** The MRP. Empty string when the product has none. */
   compareAtPrice: string;
   priceUpdatedAt: string | null;
+};
+
+// from core/src/read/stock.ts
+/** One variant's bulk ladder, as the Bulk rates screen edits it. */
+export type BulkTierRowDto = {
+  variantId: string;
+  productId: string;
+  productName: string;
+  variantLabel: string | null;
+  sku: string | null;
+  unitLabel: string | null;
+  /** From the product, so the screen knows how to read the thresholds. */
+  basis: BulkTierBasis;
+  /** The list price each rung has to beat. */
+  price: string;
+  tiers: Array<{ threshold: string; unitPrice: string }>;
 };
 
 // from core/src/read/tags.ts
@@ -1255,6 +1287,29 @@ export type StorefrontBadgeDto = {
 };
 
 /**
+ * One row of the search box's dropdown.
+ *
+ * Deliberately not a `StorefrontCardDto`. A card carries badges, every active
+ * variant, the bulk price and a discount percent — none of which a suggestion
+ * row draws, and each of which is another join on a query that fires while
+ * somebody is still typing.
+ *
+ * `imageKey`, not a URL: resolving one needs the media config, which is the
+ * storefront's job and not something to duplicate here.
+ */
+export type StorefrontSuggestionDto = {
+  handle: string;
+  nameEn: string;
+  nameHi: string | null;
+  brandName: string | null;
+  imageKey: string | null;
+  /** The cheapest sellable variant's price, or null when nothing is priced. */
+  price: string | null;
+  unitLabelEn: string | null;
+  unitLabelHi: string | null;
+};
+
+/**
  * One product tile. Everything a card draws, and nothing else.
  *
  * `variantId` is non-null only when the product has exactly one sellable
@@ -1274,8 +1329,13 @@ export type StorefrontCardDto = {
   /** The cheapest sellable variant's price. Null when nothing is priced. */
   price: string | null;
   compareAtPrice: string | null;
-  /** Shown as "Bulk: 395/bag above 10,000" — PLAN.md 6.6. */
-  bulkPrice: string | null;
+  /**
+   * The best rate anywhere on this product's ladder, and the rung that reaches
+   * it — a card saying "Bulk: 365" without "40+" promises a price the page
+   * cannot honour. Both null when the product has no ladder.
+   */
+  bestBulkPrice: string | null;
+  bulkFrom: PriceTierDto | null;
   /** Rounded, from price against compareAtPrice. Null when there is no saving. */
   discountPercent: number | null;
   inStock: boolean;
@@ -1427,7 +1487,8 @@ export type StorefrontVariantDto = {
   option3Value: string | null;
   price: string;
   compareAtPrice: string | null;
-  bulkPrice: string | null;
+  /** This variant's ladder, ascending. Empty when it has none. */
+  tiers: PriceTierDto[];
   unitLabelEn: string | null;
   unitLabelHi: string | null;
   /*
@@ -1445,6 +1506,8 @@ export type StorefrontVariantDto = {
 
 export type StorefrontProductDto = {
   id: string;
+  /** How this product's ladders read, so the page words them once. */
+  bulkTierBasis: BulkTierBasis;
   handle: string;
   nameEn: string;
   nameHi: string | null;
@@ -1528,6 +1591,16 @@ export type CartLineDto = {
   compareAtPrice: string | null;
   lineTotal: string;
   wasBulkPrice: boolean;
+  /** The rung this line is being charged at. Null at the list rate. */
+  appliedTier: PriceTierDto | null;
+  /**
+   * The next rung up, so the row can say what one more unit is worth.
+   *
+   * On the row rather than the cart, because that is where the quantity
+   * control is — "3 more bags" is only actionable next to the button that adds
+   * the third bag.
+   */
+  nextTier: NextTierDto | null;
   /**
    * The most the shop can supply right now, when that is less than asked for.
    * Null when the line is fine — the cart only warns when there is something
@@ -1536,23 +1609,12 @@ export type CartLineDto = {
   availableQty: number | null;
 };
 
-/**
- * The bulk-price nudge — PLAN.md §6.6.
- *
- * Present only when it would say something true: there is a cutoff, the cart
- * holds something with a bulk rate, and crossing the line would actually save
- * money. A progress bar toward a saving of zero is worse than no bar.
+/*
+ * `BulkNudgeDto` used to live here — a progress bar toward the one store-wide
+ * cutoff. Bulk pricing is a per-variant ladder now, so there is no single
+ * threshold left to make progress towards; each cart row carries its own
+ * `nextTier` instead, and the cart total carries `bulkSavings`.
  */
-export type BulkNudgeDto = {
-  cutoff: string;
-  /** The list subtotal the cutoff is tested against. */
-  progress: string;
-  /** How much more is needed. Zero once unlocked. */
-  remaining: string;
-  /** What crossing the line is worth, at the current quantities. */
-  saving: string;
-  unlocked: boolean;
-};
 
 export type CartDeliveryDto = {
   pincode: string;
@@ -1598,7 +1660,8 @@ export type CartDto = {
   taxAddedTotal: string;
   taxBreakdown: Array<{ percent: number; taxableAmount: string; taxAmount: string }>;
   bulkPricingApplied: boolean;
-  bulk: BulkNudgeDto | null;
+  /** Everything the ladders took off this cart, against the list rates. */
+  bulkSavings: string;
   delivery: CartDeliveryDto | null;
   discount: CartDiscountDto | null;
   /** The owner's minimum, and whether this cart clears it. */

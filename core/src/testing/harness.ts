@@ -124,7 +124,8 @@ export async function ownerActor(adminId = 'test-admin') {
 export async function seedProduct(options: {
   handle: string;
   price: string;
-  bulkPrice?: string | null;
+  /** A bulk ladder for this variant. Quantity rungs unless stated otherwise. */
+  tiers?: Array<{ minQuantity?: number; minAmount?: string; unitPrice: string }>;
   stockQty?: number;
   inventoryTracked?: boolean;
   inventoryPolicy?: 'DENY' | 'CONTINUE';
@@ -148,7 +149,15 @@ export async function seedProduct(options: {
         create: {
           matrixKey: '',
           price: options.price,
-          bulkPrice: options.bulkPrice ?? null,
+          tiers: {
+            create: (options.tiers ?? []).map((tier, index) => ({
+              basis: tier.minQuantity !== undefined ? ('QUANTITY' as const) : ('AMOUNT' as const),
+              minQuantity: tier.minQuantity ?? null,
+              minAmount: tier.minAmount ?? null,
+              unitPrice: tier.unitPrice,
+              position: index,
+            })),
+          },
           stockQty: options.stockQty ?? 100,
           inventoryTracked: options.inventoryTracked ?? true,
           inventoryPolicy: options.inventoryPolicy ?? 'DENY',
@@ -162,13 +171,8 @@ export async function seedProduct(options: {
 }
 
 /** The settings these tests depend on, at known values. */
-export async function seedSettings(overrides: { bulkCutoff?: string } = {}) {
+export async function seedSettings() {
   const prisma = await loadPrisma();
-  await prisma.setting.upsert({
-    where: { key: 'bulk.unlockCutoff' },
-    create: { key: 'bulk.unlockCutoff', value: { amount: overrides.bulkCutoff ?? '10000.00' } },
-    update: { value: { amount: overrides.bulkCutoff ?? '10000.00' } },
-  });
   await prisma.setting.upsert({
     where: { key: 'order.numberSequence' },
     create: { key: 'order.numberSequence', value: { prefix: 'BK-', next: 1001 } },

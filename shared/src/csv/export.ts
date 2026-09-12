@@ -1,4 +1,5 @@
-import { SHOPIFY_CSV_COLUMNS } from './columns.ts';
+import { BUILDKART_CSV_COLUMNS, KNOWN_CSV_COLUMNS, SHOPIFY_CSV_COLUMNS } from './columns.ts';
+import { encodeTiers } from './tiers.ts';
 import { formatMetafieldCell, buildMetafieldColumn, type MetafieldType } from '../metafields/types.ts';
 
 /**
@@ -12,6 +13,8 @@ import { formatMetafieldCell, buildMetafieldColumn, type MetafieldType } from '.
  */
 
 export type ExportVariant = {
+  /** This variant's bulk ladder, ascending. */
+  tiers: Array<{ threshold: string; unitPrice: string }>;
   sku: string | null;
   option1Value: string | null;
   option2Value: string | null;
@@ -64,6 +67,8 @@ export type ExportProduct = {
   tags: string[];
   optionNames: string[];
   optionLinkedTo: Array<string | null>;
+  /** How this product's ladders read. Written on every row of the product. */
+  bulkTierBasis: 'QUANTITY' | 'AMOUNT';
   variants: ExportVariant[];
   images: ExportImage[];
   metafields: ExportMetafield[];
@@ -148,7 +153,7 @@ export function buildExportHeader(products: readonly ExportProduct[]): string[] 
     }
     // Passthrough columns are replayed under their original headers.
     for (const column of Object.keys(product.raw)) {
-      if (!SHOPIFY_CSV_COLUMNS.includes(column as never)) metafieldColumns.add(column);
+      if (!KNOWN_CSV_COLUMNS.includes(column as never)) metafieldColumns.add(column);
     }
     if (product.nameHi) metafieldColumns.add(HINDI_NAME_COLUMN);
     if (product.bodyHtmlHi) metafieldColumns.add(HINDI_BODY_COLUMN);
@@ -158,7 +163,7 @@ export function buildExportHeader(products: readonly ExportProduct[]): string[] 
     if (product.returnPolicyHi) metafieldColumns.add(RETURN_POLICY_HI_COLUMN);
   }
 
-  return [...SHOPIFY_CSV_COLUMNS, ...[...metafieldColumns].sort()];
+  return [...SHOPIFY_CSV_COLUMNS, ...BUILDKART_CSV_COLUMNS, ...[...metafieldColumns].sort()];
 }
 
 function boolText(value: boolean): string {
@@ -249,6 +254,10 @@ export function buildProductRows(product: ExportProduct, header: readonly string
       row['Variant Inventory Policy'] = variant.inventoryPolicy.toLowerCase();
       row['Variant Fulfillment Service'] = 'manual';
       row['Variant Price'] = variant.price;
+      row['Bulk Tiers'] = encodeTiers(variant.tiers);
+      // The basis belongs to the product, so it repeats on each of its rows —
+      // the same way Shopify repeats Vendor and Type.
+      row['Bulk Tier Basis'] = variant.tiers.length > 0 ? product.bulkTierBasis : '';
       row['Variant Compare At Price'] = variant.compareAtPrice ?? '';
       row['Variant Requires Shipping'] = boolText(variant.requiresShipping);
       row['Variant Taxable'] = boolText(variant.taxable);

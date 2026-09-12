@@ -20,6 +20,7 @@ import {
   MATRIX_SEPARATOR,
   parseMetafieldCell,
   productInputSchema,
+  normalizeMoney,
   richText,
   slugify,
   toValueText,
@@ -96,7 +97,6 @@ function variantScalars(row: VariantRowInput) {
     sku: row.sku ?? null,
     price: row.price,
     compareAtPrice: row.compareAtPrice ?? null,
-    bulkPrice: row.bulkPrice ?? null,
     costPerItem: row.costPerItem ?? null,
     unitLabelEn: row.unitLabelEn ?? null,
     unitLabelHi: row.unitLabelHi ?? null,
@@ -186,6 +186,7 @@ function productScalars(
     taxInclusive: data.taxInclusive,
     hsnCode: data.hsnCode ?? null,
     isRateVolatile: data.isRateVolatile,
+    bulkTierBasis: data.bulkTierBasis,
     searchKeywords: data.searchKeywords ?? null,
     seoTitle: data.seoTitle ?? null,
     seoDescriptionEn: data.seoDescriptionEn ?? null,
@@ -202,16 +203,94 @@ function productScalars(
  * client re-keys its drafts, so a renamed row arrives with its data intact and
  * is recognised as an update rather than a delete plus an insert.
  */
+/** A rung ready for the database: the raw threshold read against the basis. */
+type TierRows = Array<{
+  basis: 'QUANTITY' | 'AMOUNT';
+  minQuantity: number | null;
+  minAmount: string | null;
+  unitPrice: string;
+  position: number;
+}>;
+
+/**
+ * Turns the form's raw `threshold` strings into rows.
+ *
+ * Which column the threshold lands in is decided here, by the product's basis —
+ * the one place that reading happens, so a ladder cannot be half-written as
+ * quantities and half as amounts. Blank rows are dropped: the editor leaves one
+ * behind whenever somebody starts a rung and thinks better of it.
+ *
+ * Validation has already run by this point, so anything unparseable here would
+ * be a bug rather than bad input; it is skipped rather than written as a null
+ * that the CHECK constraint would reject.
+ */
+function tierRowsFor(
+  basis: 'QUANTITY' | 'AMOUNT',
+  tiers: ReadonlyArray<{ threshold: string; unitPrice: string }>,
+): TierRows {
+  const rows: TierRows = [];
+  for (const tier of tiers) {
+    const threshold = tier.threshold.trim();
+    const unitPrice = tier.unitPrice.trim();
+    if (threshold === '' || unitPrice === '') continue;
+
+    if (basis === 'QUANTITY') {
+      const qty = Number.parseInt(threshold, 10);
+      if (!Number.isFinite(qty)) continue;
+      rows.push({ basis, minQuantity: qty, minAmount: null, unitPrice, position: rows.length });
+    } else {
+      rows.push({
+        basis,
+        minQuantity: null,
+        minAmount: normalizeMoney(threshold),
+        unitPrice,
+        position: rows.length,
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Whether a stored ladder and an incoming one are the same.
+ *
+ * Both sides are normalised before comparing, for the reason `saveRates`
+ * documents: Prisma returns a stored `370.00` as `"370"`, so a raw comparison
+ * would mark an untouched ladder as changed and fill `PriceHistory` with
+ * entries recording nothing.
+ */
+function tiersEqual(
+  stored: ReadonlyArray<{ minQuantity: number | null; minAmount: Prisma.Decimal | null; unitPrice: Prisma.Decimal }>,
+  incoming: TierRows,
+): boolean {
+  if (stored.length !== incoming.length) return false;
+  return stored.every((row, index) => {
+    const next = incoming[index]!;
+    return (
+      row.minQuantity === next.minQuantity &&
+      (row.minAmount === null ? null : normalizeMoney(row.minAmount.toString())) ===
+        (next.minAmount === null ? null : normalizeMoney(next.minAmount)) &&
+      normalizeMoney(row.unitPrice.toString()) === normalizeMoney(next.unitPrice)
+    );
+  });
+}
+
 async function persistVariants(
   tx: Prisma.TransactionClient,
   productId: string,
   data: ProductInput,
   /** Null when no admin is behind the write — the column is nullable for that. */
   adminId: string | null,
-  existing: Array<{ id: string; matrixKey: string; price: Prisma.Decimal; bulkPrice: Prisma.Decimal | null }>,
+  existing: Array<{
+    id: string;
+    matrixKey: string;
+    price: Prisma.Decimal;
+    tiers: Array<{ minQuantity: number | null; minAmount: Prisma.Decimal | null; unitPrice: Prisma.Decimal }>;
+  }>,
   deletableIds: string[],
   deactivateIds: string[],
 ) {
+  const basis = data.bulkTierBasis;
   await tx.productOption.deleteMany({ where: { productId } });
   for (const [index, axis] of data.axes.entries()) {
     await tx.productOption.create({
@@ -225,15 +304,19 @@ async function persistVariants(
   }
 
   const byKey = new Map(existing.map((v) => [v.matrixKey, v]));
-  const priceChanges: Array<{ variantId: string; price: string; bulkPrice: string | null }> = [];
+  const priceChanges: Array<{
+    variantId: string;
+    price: string;
+    tiers: TierRows;
+  }> = [];
 
   for (const [index, row] of data.variants.entries()) {
     const found = byKey.get(row.matrixKey);
 
     if (found) {
+      const tiers = tierRowsFor(basis, row.tiers);
       const changed =
-        found.price.toString() !== row.price ||
-        (found.bulkPrice?.toString() ?? null) !== (row.bulkPrice ?? null);
+        found.price.toString() !== row.price || !tiersEqual(found.tiers, tiers);
 
       await tx.productVariant.update({
         where: { id: found.id },
@@ -246,12 +329,21 @@ async function persistVariants(
         },
       });
 
-      if (changed) {
-        priceChanges.push({
-          variantId: found.id,
-          price: row.price,
-          bulkPrice: row.bulkPrice ?? null,
+      /*
+       * The ladder is replaced wholesale rather than diffed rung by rung.
+       * Nothing references a rung — an order freezes the matched tier as
+       * scalars — so recreating them makes "what was submitted is what is
+       * stored" true by construction.
+       */
+      await tx.variantPriceTier.deleteMany({ where: { variantId: found.id } });
+      if (tiers.length > 0) {
+        await tx.variantPriceTier.createMany({
+          data: tiers.map((tier) => ({ ...tier, variantId: found.id })),
         });
+      }
+
+      if (changed) {
+        priceChanges.push({ variantId: found.id, price: row.price, tiers });
       }
     } else {
       const created = await tx.productVariant.create({
@@ -266,11 +358,13 @@ async function persistVariants(
         },
         select: { id: true },
       });
-      priceChanges.push({
-        variantId: created.id,
-        price: row.price,
-        bulkPrice: row.bulkPrice ?? null,
-      });
+      const tiers = tierRowsFor(basis, row.tiers);
+      if (tiers.length > 0) {
+        await tx.variantPriceTier.createMany({
+          data: tiers.map((tier) => ({ ...tier, variantId: created.id })),
+        });
+      }
+      priceChanges.push({ variantId: created.id, price: row.price, tiers });
     }
   }
 
@@ -290,7 +384,9 @@ async function persistVariants(
       data: priceChanges.map((c) => ({
         variantId: c.variantId,
         price: c.price,
-        bulkPrice: c.bulkPrice,
+        // The ladder as it stands after the change, so the ledger keeps
+        // explaining bulk rates now that they are a list rather than one number.
+        tiersJson: c.tiers,
         changedByAdminId: adminId,
         source: 'PRODUCT_FORM' as const,
       })),
@@ -479,7 +575,14 @@ export async function updateProduct(
       nameEn: true,
       status: true,
       publishedAt: true,
-      variants: { select: { id: true, matrixKey: true, price: true, bulkPrice: true } },
+      variants: {
+        select: {
+          id: true,
+          matrixKey: true,
+          price: true,
+          tiers: { orderBy: { position: 'asc' }, select: { minQuantity: true, minAmount: true, unitPrice: true } },
+        },
+      },
     },
   });
   if (!existing) return actionError('That product no longer exists.');

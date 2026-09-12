@@ -53,6 +53,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'metafield.definition.delete': 'Deleted a custom field',
 
   'rates.save': "Updated today's rates",
+  'bulkTiers.save': 'Updated bulk price ladders',
 
   'tax.rate.create': 'Created a tax rate',
   'tax.rate.update': 'Updated a tax rate',

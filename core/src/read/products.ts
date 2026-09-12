@@ -253,7 +253,7 @@ export async function getProductName(id: string): Promise<string | null> {
 export async function getProductFormOptions(actor: Actor): Promise<ProductFormOptionsDto> {
   assertPermission(actor, 'catalog:write');
 
-  const [categoryRows, brands, tags, cutoffSetting, metafieldDefinitions] = await Promise.all([
+  const [categoryRows, brands, tags, metafieldDefinitions] = await Promise.all([
     prisma.category.findMany({
       orderBy: [{ position: 'asc' }, { nameEn: 'asc' }],
       select: {
@@ -268,7 +268,6 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
     }),
     prisma.brand.findMany({ orderBy: { nameEn: 'asc' }, take: 200, select: { nameEn: true } }),
     prisma.tag.findMany({ orderBy: { nameEn: 'asc' }, take: 200, select: { nameEn: true } }),
-    prisma.setting.findUnique({ where: { key: 'bulk.unlockCutoff' } }),
     listProductMetafieldDefinitions(),
   ]);
 
@@ -309,7 +308,6 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
     metafieldDefinitions,
     tagSuggestions: tags.map((tag) => tag.nameEn),
     mediaCtx: mediaContext(),
-    bulkCutoff: parseSetting('bulk.unlockCutoff', cutoffSetting?.value).amount,
     taxRates: taxRates.map((rate) => ({
       id: rate.id,
       name: rate.name,
@@ -358,7 +356,10 @@ export async function getProductForForm(
         },
       },
       options: { orderBy: { position: 'asc' }, include: { values: true } },
-      variants: { orderBy: { position: 'asc' } },
+      variants: {
+        orderBy: { position: 'asc' },
+        include: { tiers: { orderBy: { position: 'asc' } } },
+      },
       _count: { select: { orderItems: true } },
     },
   });
@@ -388,7 +389,14 @@ export async function getProductForForm(
       sku: variant.sku ?? '',
       price: normalizeMoney(variant.price.toString()),
       compareAtPrice: variant.compareAtPrice ? normalizeMoney(variant.compareAtPrice.toString()) : '',
-      bulkPrice: variant.bulkPrice ? normalizeMoney(variant.bulkPrice.toString()) : '',
+      tiers: variant.tiers.map((tier) => ({
+        id: tier.id,
+        threshold:
+          tier.minQuantity !== null
+            ? String(tier.minQuantity)
+            : normalizeMoney(tier.minAmount!.toString()),
+        unitPrice: normalizeMoney(tier.unitPrice.toString()),
+      })),
       costPerItem: variant.costPerItem ? normalizeMoney(variant.costPerItem.toString()) : '',
       unitLabelEn: variant.unitLabelEn ?? '',
       unitLabelHi: variant.unitLabelHi ?? '',
@@ -440,6 +448,7 @@ export async function getProductForForm(
     taxInclusive: product.taxInclusive,
     hsnCode: product.hsnCode ?? '',
     isRateVolatile: product.isRateVolatile,
+    bulkTierBasis: product.bulkTierBasis,
     searchKeywords: product.searchKeywords ?? '',
     seoTitle: product.seoTitle ?? '',
     seoDescriptionEn: product.seoDescriptionEn ?? '',

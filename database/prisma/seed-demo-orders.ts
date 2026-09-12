@@ -1,13 +1,26 @@
 import { prisma } from '../src/client.ts';
 import {
   derivePaymentStatus,
+  matchTier,
   totalPayments,
+  type PriceTier,
   type LedgerEntry,
   type PaymentGateway,
   type PaymentInstrument,
   type PaymentTransactionStatus,
   type PaymentTransactionType,
 } from '@buildkart/shared';
+
+/** Stored rungs in the shape the engine's matcher expects. */
+function toSeedTiers(
+  rows: ReadonlyArray<{ minQuantity: number | null; minAmount: unknown; unitPrice: unknown }>,
+): PriceTier[] {
+  return rows.map((row) =>
+    row.minQuantity !== null
+      ? { minQuantity: row.minQuantity, unitPrice: String(row.unitPrice) }
+      : { minAmount: String(row.minAmount), unitPrice: String(row.unitPrice) },
+  );
+}
 
 /**
  * Demo customers and their order history.
@@ -274,7 +287,7 @@ export async function seedOrders(): Promise<number> {
       id: true,
       sku: true,
       price: true,
-      bulkPrice: true,
+      tiers: { orderBy: { position: 'asc' } },
       option1Value: true,
       option2Value: true,
       option3Value: true,
@@ -319,16 +332,30 @@ export async function seedOrders(): Promise<number> {
       (sum, variant, n) => sum + toPaise(variant.price.toString()) * quantities[n]!,
       0,
     );
-    const bulkApplies = listSubtotal >= 1_000_000; // ₹10,000, the default cutoff
-
+    /*
+     * The real matcher, not a copy of it.
+     *
+     * This used to reimplement the bulk rule inline — one boolean against a
+     * hard-coded ₹10,000. A ladder is far more than a boolean, and a second
+     * implementation of it here would drift from the engine within a release
+     * and quietly seed orders at prices the shop would never charge.
+     */
     const items = chosen.map((variant, n) => {
-      const useBulk = bulkApplies && variant.bulkPrice !== null;
-      const unitPaise = toPaise((useBulk ? variant.bulkPrice! : variant.price).toString());
       const quantity = quantities[n]!;
+      const listUnitPaise = toPaise(variant.price.toString());
+      const tier = matchTier(
+        toSeedTiers(variant.tiers),
+        variant.price.toString(),
+        quantity,
+        listUnitPaise * quantity,
+      );
+      const unitPaise = toPaise(tier?.unitPrice ?? variant.price.toString());
       return {
         variant,
         quantity,
-        wasBulkPrice: useBulk,
+        wasBulkPrice: tier !== null,
+        appliedTier: tier,
+        listUnitPrice: money(listUnitPaise),
         unitPrice: money(unitPaise),
         lineTotal: money(unitPaise * quantity),
       };
@@ -432,6 +459,16 @@ export async function seedOrders(): Promise<number> {
             },
             unitPrice: item.unitPrice,
             wasBulkPrice: item.wasBulkPrice,
+            // Frozen with the line, like the real order writer does.
+            listUnitPrice: item.listUnitPrice,
+            tierBasis:
+              item.appliedTier === null
+                ? null
+                : item.appliedTier.minQuantity !== null
+                  ? 'QUANTITY'
+                  : 'AMOUNT',
+            tierMinQuantity: item.appliedTier?.minQuantity ?? null,
+            tierMinAmount: item.appliedTier?.minAmount ?? null,
             quantity: item.quantity,
             lineTotal: item.lineTotal,
           })),

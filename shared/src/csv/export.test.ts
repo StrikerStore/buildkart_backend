@@ -35,8 +35,10 @@ function product(overrides: Partial<ExportProduct> = {}): ExportProduct {
     tags: [],
     optionNames: [],
     optionLinkedTo: [],
+    bulkTierBasis: 'QUANTITY' as const,
     variants: [
       {
+        tiers: [],
         sku: 'UT-1',
         option1Value: null,
         option2Value: null,
@@ -63,6 +65,7 @@ function product(overrides: Partial<ExportProduct> = {}): ExportProduct {
 
 function variant(values: string[], sku: string, price: string) {
   return {
+    tiers: [],
     sku,
     option1Value: values[0] ?? null,
     option2Value: values[1] ?? null,
@@ -119,6 +122,7 @@ test('more variants than images leaves the extra image cells blank', () => {
   const multi = product({
     optionNames: ['Size'],
     optionLinkedTo: [null],
+    bulkTierBasis: 'QUANTITY' as const,
     variants: [variant(['8mm'], 'S8', '400.00'), variant(['10mm'], 'S10', '410.00')],
     images: [{ url: 'https://cdn/a.jpg', position: 1, altText: null }],
   });
@@ -140,6 +144,7 @@ test('option names appear once, values on every variant row', () => {
   const multi = product({
     optionNames: ['Size'],
     optionLinkedTo: [null],
+    bulkTierBasis: 'QUANTITY' as const,
     variants: [variant(['8mm'], 'S8', '400.00'), variant(['10mm'], 'S10', '410.00')],
   });
   const { rows } = buildExportRows([multi]);
@@ -250,6 +255,7 @@ test('the exported file parses straight back into the same products', () => {
       tags: ['sariya', 'ISI marked'],
       optionNames: ['Size'],
       optionLinkedTo: [null],
+      bulkTierBasis: 'QUANTITY' as const,
       variants: [
         variant(['8mm'], 'TMT-8', '400.00'),
         variant(['10mm'], 'TMT-10', '410.00'),
@@ -308,6 +314,7 @@ test('a second round trip changes nothing', () => {
     handle: 'tmt-sariya',
     optionNames: ['Size'],
     optionLinkedTo: [null],
+    bulkTierBasis: 'QUANTITY' as const,
     variants: [variant(['8mm'], 'TMT-8', '400.00'), variant(['10mm'], 'TMT-10', '410.00')],
     images: [{ url: 'https://cdn/one.jpg', position: 1, altText: null }],
   });

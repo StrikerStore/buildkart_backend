@@ -77,7 +77,6 @@ export async function saveCommerceSettings(
   const data = parsed.data;
 
   await writeSettings([
-    { key: 'bulk.unlockCutoff', value: { amount: data.bulkUnlockCutoff } },
     { key: 'order.minimumValue', value: { amount: data.orderMinimumValue } },
     { key: 'delivery.promise', value: { hours: data.promiseHours, cutoffTime: data.cutoffTime } },
   ]);

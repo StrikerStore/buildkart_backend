@@ -18,6 +18,7 @@ import {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { variantLabel } from '../variant-label.ts';
+import { TIER_SELECT, toTierDtos } from '../tiers.ts';
 import type { CustomerLookupResult, PincodeQuote, VariantSearchResult } from '@buildkart/shared';
 export type { CustomerLookupResult, PincodeQuote, VariantSearchResult };
 
@@ -65,7 +66,9 @@ export async function searchVariants(
       id: true,
       sku: true,
       price: true,
-      bulkPrice: true,
+      // The counter screen prices in the browser with the same `priceOrder` the
+      // server runs, so it needs the whole ladder, not a single rate.
+      tiers: TIER_SELECT,
       option1Value: true,
       option2Value: true,
       option3Value: true,
@@ -90,7 +93,7 @@ export async function searchVariants(
       optionLabel: variantLabel(variant),
       unitLabel: variant.unitLabelEn,
       price: variant.price.toString(),
-      bulkPrice: variant.bulkPrice?.toString() ?? null,
+      tiers: toTierDtos(variant.tiers),
       taxPercent: Number(variant.product.taxPercent),
       taxInclusive: variant.product.taxInclusive,
       taxable: variant.taxable,

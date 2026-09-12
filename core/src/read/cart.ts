@@ -25,6 +25,7 @@ import {
   parseSetting,
   priceOrder,
   PricingError,
+  type PricedLine,
   subtractMoney,
   type CartCouponDto,
   type CartCouponsInput,
@@ -36,6 +37,7 @@ import {
   type PriceCartInput,
 } from '@buildkart/shared';
 import { decimalToString } from '../dto.ts';
+import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 
 /** The empty answer, so a cleared cart and a cart of only-dead lines agree. */
 const EMPTY: Pick<
@@ -52,7 +54,7 @@ const EMPTY: Pick<
   | 'taxAddedTotal'
   | 'taxBreakdown'
   | 'bulkPricingApplied'
-  | 'bulk'
+  | 'bulkSavings'
 > = {
   lines: [],
   itemCount: 0,
@@ -66,7 +68,7 @@ const EMPTY: Pick<
   taxAddedTotal: '0.00',
   taxBreakdown: [],
   bulkPricingApplied: false,
-  bulk: null,
+  bulkSavings: '0.00',
 };
 
 const CART_VARIANT_SELECT = {
@@ -74,7 +76,7 @@ const CART_VARIANT_SELECT = {
   sku: true,
   price: true,
   compareAtPrice: true,
-  bulkPrice: true,
+  tiers: TIER_SELECT,
   option1Value: true,
   option2Value: true,
   option3Value: true,
@@ -114,10 +116,9 @@ function variantLabel(variant: CartVariant): string | null {
 
 export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   const settingsRows = await prisma.setting.findMany({
-    where: { key: { in: ['bulk.unlockCutoff', 'order.minimumValue'] } },
+    where: { key: { in: ['order.minimumValue'] } },
   });
   const byKey = new Map(settingsRows.map((row) => [row.key, row.value]));
-  const bulkCutoff = parseSetting('bulk.unlockCutoff', byKey.get('bulk.unlockCutoff')).amount;
   const minimumOrderValue = parseSetting('order.minimumValue', byKey.get('order.minimumValue')).amount;
 
   const area = input.pincode
@@ -189,7 +190,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   const catalog = kept.map(({ variant }) => ({
     variantId: variant.id,
     price: decimalToString(variant.price),
-    bulkPrice: decimalToString(variant.bulkPrice),
+    tiers: toEngineTiers(variant.tiers),
     // The rate is the product's; the exemption flag is the variant's.
     taxPercent: Number(variant.product.taxPercent),
     taxInclusive: variant.product.taxInclusive,
@@ -211,7 +212,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
    */
   let probe;
   try {
-    probe = priceOrder(orderLines, catalog, { bulkCutoff });
+    probe = priceOrder(orderLines, catalog, {});
   } catch (error) {
     if (error instanceof PricingError) return { ...EMPTY, ...base, dropped };
     throw error;
@@ -222,7 +223,6 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     : null;
 
   const pricing = priceOrder(orderLines, catalog, {
-    bulkCutoff,
     deliveryCharge: delivery?.serviced ? delivery.charge : '0.00',
     discountTotal: resolved?.applied ? resolved.amount : undefined,
     // A FREE_DELIVERY discount is expressed as a zero threshold, which is what
@@ -264,6 +264,8 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
       compareAtPrice: decimalToString(variant.compareAtPrice),
       lineTotal: priced.lineTotal,
       wasBulkPrice: priced.wasBulkPrice,
+      appliedTier: priced.appliedTier,
+      nextTier: priced.nextTier,
       availableQty: short ? variant.stockQty : null,
     };
   });
@@ -282,7 +284,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     taxAddedTotal: pricing.taxAddedTotal,
     taxBreakdown: pricing.taxBreakdown,
     bulkPricingApplied: pricing.bulkPricingApplied,
-    bulk: bulkNudge(kept, pricing.listSubtotal, bulkCutoff, pricing.bulkPricingApplied),
+    bulkSavings: bulkSavingsOf(pricing.lines),
     delivery,
     discount: resolved,
     minimumOrderValue,
@@ -308,35 +310,22 @@ function savingsOf(kept: Array<{ variant: CartVariant; quantity: number }>): str
 }
 
 /**
- * The bulk nudge — "add ₹1,500 more to unlock bulk prices, save ₹230".
+ * What the ladders took off this cart.
  *
- * Returns null unless every part of that sentence is true: there is a cutoff,
- * something in the cart has a bulk rate, and the saving is real. A progress bar
- * that promises nothing is worse than no bar, and once the shopper notices it
- * lies they stop reading the rest of the cart too.
+ * Summed from the *priced* lines rather than recomputed from the variants,
+ * because working it out again here would mean a second implementation of tier
+ * matching — and the two would eventually disagree about a price in front of a
+ * customer. The engine already decided; this only adds up.
+ *
+ * The per-line "3 more bags and you save ₹120" is not here: it rides on each
+ * cart row, where the quantity control is.
  */
-function bulkNudge(
-  kept: Array<{ variant: CartVariant; quantity: number }>,
-  listSubtotal: string,
-  cutoff: string,
-  unlocked: boolean,
-): CartDto['bulk'] {
-  if (compareMoney(cutoff, '0.00') <= 0) return null;
-
-  const saving = kept.reduce((total, { variant, quantity }) => {
-    const bulk = decimalToString(variant.bulkPrice);
-    const price = decimalToString(variant.price);
-    if (!bulk || compareMoney(price, bulk) <= 0) return total;
-    return addMoney(total, multiplyMoney(subtractMoney(price, bulk), quantity));
+function bulkSavingsOf(lines: readonly PricedLine[]): string {
+  return lines.reduce((total, line) => {
+    if (!line.wasBulkPrice) return total;
+    const perUnit = subtractMoney(line.listUnitPrice, line.unitPrice);
+    return addMoney(total, multiplyMoney(perUnit, line.quantity));
   }, '0.00');
-
-  if (compareMoney(saving, '0.00') <= 0) return null;
-
-  const remaining = compareMoney(listSubtotal, cutoff) >= 0
-    ? '0.00'
-    : subtractMoney(cutoff, listSubtotal);
-
-  return { cutoff, progress: listSubtotal, remaining, saving, unlocked };
 }
 
 /**

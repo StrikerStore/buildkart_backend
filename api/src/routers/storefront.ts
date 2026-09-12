@@ -46,6 +46,7 @@ import {
   saveMyAddress,
   searchPlaces,
   searchProducts,
+  suggestProducts,
   updateMyProfile,
   verifyOtp,
 } from '@buildkart/core';
@@ -58,6 +59,7 @@ import {
   placeSearchSchema,
   priceCartSchema,
   storefrontListQuerySchema,
+  storefrontSuggestSchema,
   storefrontPageQuerySchema,
 } from '@buildkart/shared';
 import type { ActionResult, CustomerSessionDto } from '@buildkart/shared';
@@ -98,6 +100,18 @@ export const storefrontRouter = router({
   search: publicProcedure
     .input(storefrontListQuerySchema)
     .query(({ input }) => searchProducts(input)),
+
+  /*
+   * The search box's dropdown, as the shopper types.
+   *
+   * Its own procedure rather than `search` with a smaller page, because `search`
+   * has no smaller page: it always pays for a count and for the facets, and the
+   * facets alone are four queries including a 2,000-row option scan. That is the
+   * right price for a results page and the wrong one for a keystroke.
+   */
+  suggest: publicProcedure
+    .input(storefrontSuggestSchema)
+    .query(({ input }) => suggestProducts(input)),
 
   /*
    * The cart's totals.

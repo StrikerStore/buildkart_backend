@@ -29,12 +29,12 @@ export async function proveInference() {
   // this is `any` or an error.
   const settings = await client.content.settings.query();
   const storeName: string = settings.store.nameEn;
-  const cutoff: string = settings.commerce.bulkUnlockCutoff;
+  const minimum: string = settings.commerce.orderMinimumValue;
 
   const order = await client.orders.detail.query({ id: 'x' });
   const detail: OrderDetailDto | null = order;
 
   const actor: Actor = { kind: 'public' };
 
-  return { price, label, media, storeName, cutoff, detail, actor };
+  return { price, label, media, storeName, minimum, detail, actor };
 }

@@ -10,6 +10,7 @@
  * screens drifting — they are the same shape, built once.
  */
 import type { CategoryMatch, TagSlugRule } from './category-rules.ts';
+import type { BulkTierBasis } from './variants.ts';
 import type { MediaImageDto } from './media-context.ts';
 import type { MetafieldOwnerType, MetafieldType } from './metafields/index.ts';
 import { emptyVariantDraft } from './variants.ts';
@@ -124,6 +125,8 @@ export type ProductFormInitialDto = {
   taxInclusive: boolean;
   hsnCode: string;
   isRateVolatile: boolean;
+  /** How this product's bulk ladders are read. */
+  bulkTierBasis: BulkTierBasis;
   searchKeywords: string;
   seoTitle: string;
   seoDescriptionEn: string;
@@ -160,6 +163,7 @@ export function emptyProductForm(): ProductFormInitialDto {
     taxInclusive: true,
     hsnCode: '',
     isRateVolatile: false,
+    bulkTierBasis: 'QUANTITY',
     searchKeywords: '',
     seoTitle: '',
     seoDescriptionEn: '',

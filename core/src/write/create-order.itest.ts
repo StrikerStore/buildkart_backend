@@ -38,6 +38,18 @@ const address = {
   pincode: '452001',
 };
 
+/** A multi-line order, for the rules that only show up across lines. */
+async function placeLines(lines: Array<{ variantId: string; quantity: number }>) {
+  const actor = await ownerActor();
+  return core.createOrder(actor, {
+    customer: { phone: '9826000001', name: 'Rajesh' },
+    address,
+    lines,
+    status: 'PLACED',
+    paymentMethod: 'COD',
+  });
+}
+
 async function place(variantId: string, quantity: number, extra: Record<string, unknown> = {}) {
   const actor = await ownerActor();
   return core.createOrder(actor, {
@@ -132,37 +144,137 @@ test('overselling is allowed when the variant permits it', async () => {
 });
 
 /*
- * Bulk pricing is the promise the storefront advertises on every product page,
- * so the cutoff has to bite at exactly the advertised value and not a rupee
- * either side.
+ * Bulk pricing, against a real database.
+ *
+ * The rung has to bite at exactly the advertised quantity and not one bag
+ * either side, and — the part only a real order can show — the order has to
+ * record *which* rung it was charged at. Under the old store-wide cutoff that
+ * was reconstructable from one setting; a ladder retuned every morning is not,
+ * so an order that does not freeze its own rung stops being explainable.
  */
-test('crossing the bulk cutoff switches every bulk-priced line', async () => {
+test('a quantity rung bites at exactly its threshold, and the order records it', async () => {
   const { variant } = await seedProduct({
     handle: 'cement-bulk',
     price: '410.00',
-    bulkPrice: '395.00',
     stockQty: 500,
+    tiers: [{ minQuantity: 20, unitPrice: '395.00' }],
   });
 
-  const below = await place(variant.id, 20); // 8,200 — under 10,000
+  const below = await place(variant.id, 19);
   assert.ok(below.ok);
-  assert.equal(below.data.grandTotal, '8200.00', 'still at the regular rate');
+  assert.equal(below.data.grandTotal, '7790.00', '19 x 410 — one short of the rung');
 
   await resetDatabase();
   await seedSettings();
   const { variant: v2 } = await seedProduct({
     handle: 'cement-bulk',
     price: '410.00',
-    bulkPrice: '395.00',
     stockQty: 500,
+    tiers: [{ minQuantity: 20, unitPrice: '395.00' }],
   });
 
-  const above = await place(v2.id, 30); // 12,300 regular -> bulk applies
-  assert.ok(above.ok);
-  assert.equal(above.data.grandTotal, '11850.00', '30 x 395');
+  const at = await place(v2.id, 20);
+  assert.ok(at.ok);
+  assert.equal(at.data.grandTotal, '7900.00', '20 x 395 — inclusive');
 
-  const order = await prisma.order.findUniqueOrThrow({ where: { id: above.data.orderId } });
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: at.data.orderId },
+    include: { items: true },
+  });
   assert.equal(order.bulkPricingApplied, true);
+
+  const item = order.items[0]!;
+  assert.equal(item.listUnitPrice?.toString(), '410');
+  assert.equal(item.tierBasis, 'QUANTITY');
+  assert.equal(item.tierMinQuantity, 20);
+});
+
+/*
+ * The line-scoping rule, where it costs real money: one line's volume must not
+ * earn another line a discount. Under the old cart-wide cutoff this order would
+ * have dropped both lines.
+ */
+test('a rung on one line leaves the other line at list', async () => {
+  const { variant: cement } = await seedProduct({
+    handle: 'cement-line',
+    price: '410.00',
+    stockQty: 500,
+    tiers: [{ minQuantity: 20, unitPrice: '395.00' }],
+  });
+  const { variant: wire } = await seedProduct({
+    handle: 'wire-line',
+    price: '1250.00',
+    stockQty: 500,
+    tiers: [{ minQuantity: 20, unitPrice: '1100.00' }],
+  });
+
+  const result = await placeLines([
+    { variantId: cement.id, quantity: 20 },
+    { variantId: wire.id, quantity: 2 },
+  ]);
+  assert.ok(result.ok, JSON.stringify(result));
+
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: result.data.orderId },
+    include: { items: true },
+  });
+
+  const cementItem = order.items.find((i) => i.variantId === cement.id)!;
+  const wireItem = order.items.find((i) => i.variantId === wire.id)!;
+
+  assert.equal(cementItem.wasBulkPrice, true, 'cement reached its own rung');
+  assert.equal(wireItem.wasBulkPrice, false, 'two rolls of wire did not, whatever cement did');
+  assert.equal(wireItem.unitPrice.toString(), '1250');
+});
+
+/*
+ * An amount rung is judged on the line's *list* total. Five basins at 2,000 is
+ * exactly 10,000 and clears; billed at 1,950 the line is 9,750, which would not
+ * — and pricing on that figure would have no stable answer.
+ */
+test('an amount rung is judged on the list line total', async () => {
+  const { variant } = await seedProduct({
+    handle: 'basin',
+    price: '2000.00',
+    stockQty: 100,
+    tiers: [{ minAmount: '10000.00', unitPrice: '1950.00' }],
+  });
+
+  const result = await place(variant.id, 5);
+  assert.ok(result.ok);
+  assert.equal(result.data.grandTotal, '9750.00');
+
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: result.data.orderId },
+    include: { items: true },
+  });
+  assert.equal(order.items[0]!.tierBasis, 'AMOUNT');
+  assert.equal(order.items[0]!.tierMinAmount?.toString(), '10000');
+});
+
+/*
+ * The point of freezing scalars rather than a foreign key: the rates screen has
+ * to stay free to delete a rung, and the order still has to say what it charged.
+ */
+test('editing the ladder afterwards does not change what the order says', async () => {
+  const { variant } = await seedProduct({
+    handle: 'cement-frozen',
+    price: '410.00',
+    stockQty: 500,
+    tiers: [{ minQuantity: 20, unitPrice: '395.00' }],
+  });
+
+  const result = await place(variant.id, 20);
+  assert.ok(result.ok);
+
+  await prisma.variantPriceTier.deleteMany({ where: { variantId: variant.id } });
+
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: result.data.orderId },
+    include: { items: true },
+  });
+  assert.equal(order.items[0]!.tierMinQuantity, 20, 'the rung is recorded, not referenced');
+  assert.equal(order.items[0]!.unitPrice.toString(), '395');
 });
 
 test('a returning customer keeps one history rather than gaining a second account', async () => {

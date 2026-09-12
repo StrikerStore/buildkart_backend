@@ -26,7 +26,10 @@ const PRODUCT_INCLUDE = {
   brand: { select: { nameEn: true } },
   tags: { include: { tag: { select: { nameEn: true } } } },
   options: { orderBy: { position: 'asc' }, include: { values: true } },
-  variants: { orderBy: { position: 'asc' } },
+  variants: {
+    orderBy: { position: 'asc' },
+    include: { tiers: { orderBy: { position: 'asc' } } },
+  },
   images: {
     orderBy: { position: 'asc' },
     include: { media: { select: { r2Key: true, altTextEn: true } } },
@@ -63,7 +66,17 @@ function toExportProduct(
         ? `product.metafields.${o.linkedMetafieldNamespace}.${o.linkedMetafieldKey}`
         : null,
     ),
+    bulkTierBasis: product.bulkTierBasis,
     variants: product.variants.map((v) => ({
+      // Normalised like every other money column, so a ladder that has not been
+      // touched does not diff against the file it was exported from.
+      tiers: v.tiers.map((tier) => ({
+        threshold:
+          tier.minQuantity !== null
+            ? String(tier.minQuantity)
+            : normalizeMoney(tier.minAmount!.toString()),
+        unitPrice: normalizeMoney(tier.unitPrice.toString()),
+      })),
       sku: v.sku,
       option1Value: v.option1Value,
       option2Value: v.option2Value,

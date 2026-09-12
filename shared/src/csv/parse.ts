@@ -1,4 +1,5 @@
-import { matrixKeyOf, MAX_OPTION_AXES, MAX_VARIANTS } from '../variants.ts';
+import { matrixKeyOf, MAX_OPTION_AXES, MAX_VARIANTS, type BulkTierBasis } from '../variants.ts';
+import { decodeTiers } from './tiers.ts';
 import {
   parseMetafieldCell,
   parseMetafieldColumn,
@@ -40,6 +41,15 @@ export type ParsedVariant = {
   sku: string | null;
   price: string;
   compareAtPrice: string | null;
+  /**
+   * The bulk ladder from `Bulk Tiers`, or null when the column is absent.
+   *
+   * Null and empty mean different things, and the importer relies on it: a
+   * Shopify file has no such column and must leave existing ladders alone,
+   * while a BuildKart file with the cell explicitly blank clears them. The
+   * `faqsEn` fields above draw the same distinction for the same reason.
+   */
+  tiers: Array<{ threshold: string; unitPrice: string }> | null;
   costPerItem: string | null;
   stockQty: number;
   inventoryPolicy: 'DENY' | 'CONTINUE';
@@ -85,6 +95,8 @@ export type ParsedProduct = {
   vendor: string | null;
   productType: string | null;
   googleProductCategory: string | null;
+  /** From `Bulk Tier Basis`, or null when the column is absent. */
+  bulkTierBasis: BulkTierBasis | null;
   status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
   seoTitle: string | null;
   seoDescription: string | null;
@@ -198,6 +210,13 @@ export function parseProducts(
   definitions: readonly KnownDefinition[],
 ): ParseResult {
   const { metafieldColumns, ignoredColumns } = classifyHeader(header, knownColumns);
+  /*
+   * Absent is not the same as blank. A Shopify export has neither column, and
+   * must leave whatever ladders the shop has configured alone; a BuildKart file
+   * with the cell empty is the owner clearing them.
+   */
+  const hasTierColumn = header.includes('Bulk Tiers');
+  const hasBasisColumn = header.includes('Bulk Tier Basis');
   const definitionByKey = new Map(definitions.map((d) => [`${d.namespace}.${d.key}`, d]));
 
   const groups = groupByHandle(rows);
@@ -334,6 +353,7 @@ export function parseProducts(
         sku,
         price: price ?? '0.00',
         compareAtPrice: readMoney(entry.row, 'Variant Compare At Price') ?? null,
+        tiers: hasTierColumn ? decodeTiers(readCell(entry.row, 'Bulk Tiers')) : null,
         costPerItem: readMoney(entry.row, 'Cost per item') ?? null,
         stockQty: qty ?? 0,
         inventoryPolicy:
@@ -498,6 +518,11 @@ export function parseProducts(
       vendor: readCell(firstRow, 'Vendor') || null,
       productType: readCell(firstRow, 'Type') || null,
       googleProductCategory: readCell(firstRow, 'Product Category') || null,
+      bulkTierBasis: hasBasisColumn
+        ? readCell(firstRow, 'Bulk Tier Basis').toUpperCase() === 'AMOUNT'
+          ? 'AMOUNT'
+          : 'QUANTITY'
+        : null,
       status: status ?? 'DRAFT',
       seoTitle: readCell(firstRow, 'SEO Title') || null,
       seoDescription: readCell(firstRow, 'SEO Description') || null,

@@ -29,6 +29,7 @@ import {
   listMedia,
   listMediaForPicker,
   listPincodes,
+  listBulkTiers,
   listRates,
   loadDashboard,
   markRequestsNotified,
@@ -36,6 +37,7 @@ import {
   runImageBatch,
   saveDiscount,
   savePincode,
+  saveBulkTiers,
   saveRates,
   setDiscountActive,
   startImportUpload,
@@ -84,6 +86,10 @@ export const operationsRouter = router({
     .mutation(({ ctx, input }) => adjustStock(ctx.actor, input)),
   rates: adminProcedure.query(({ ctx }) => listRates(ctx.actor)),
   saveRates: adminProcedure.input(payload).mutation(({ ctx, input }) => saveRates(ctx.actor, input)),
+  bulkTiers: adminProcedure.query(({ ctx }) => listBulkTiers(ctx.actor)),
+  saveBulkTiers: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveBulkTiers(ctx.actor, input)),
 
   // --- media -------------------------------------------------------------
   mediaLibrary: adminProcedure

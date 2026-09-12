@@ -110,7 +110,6 @@ export async function duplicateProduct(
           option3Value: variant.option3Value,
           price: variant.price,
           compareAtPrice: variant.compareAtPrice,
-          bulkPrice: variant.bulkPrice,
           costPerItem: variant.costPerItem,
           unitLabelEn: variant.unitLabelEn,
           unitLabelHi: variant.unitLabelHi,

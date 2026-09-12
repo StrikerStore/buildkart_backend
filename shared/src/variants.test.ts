@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MATRIX_SEPARATOR,
+  MAX_PRICE_TIERS,
   MAX_VARIANTS,
   combinations,
   emptyVariantDraft,
@@ -11,6 +12,7 @@ import {
   renameAxisValue,
   usableAxes,
   validateMatrix,
+  validateTierLadder,
   type OptionAxisDraft,
   type VariantDraft,
 } from './variants.ts';
@@ -66,15 +68,40 @@ test('existing rows survive expansion untouched', () => {
 
 test('new combinations inherit pricing but never stock', () => {
   const existing = indexByKey([
-    draft(['8mm'], { price: '410.00', bulkPrice: '395.00', unitLabelEn: 'per kg', stockQty: '120' }),
+    draft(['8mm'], {
+      price: '410.00',
+      tiers: [{ threshold: '20', unitPrice: '395.00' }],
+      unitLabelEn: 'per kg',
+      stockQty: '120',
+    }),
   ]);
   const { variants } = expandMatrix([size], existing);
 
   const twelve = variants.find((v) => v.optionValues[0] === '12mm')!;
   assert.equal(twelve.price, '410.00', 'price is copied down');
-  assert.equal(twelve.bulkPrice, '395.00', 'bulk price is copied down');
+  assert.deepEqual(twelve.tiers, [{ threshold: '20', unitPrice: '395.00' }], 'ladder is copied down');
   assert.equal(twelve.unitLabelEn, 'per kg', 'unit label is copied down');
   assert.equal(twelve.stockQty, '0', 'stock must NOT be inherited');
+});
+
+/*
+ * The inherited ladder must be a copy, not the same array. Sharing it would
+ * mean editing a rung on one size silently edited it on every size that
+ * inherited from the same seed — the kind of bug that only shows up after the
+ * prices are already live.
+ */
+test('an inherited ladder is independent of the one it was copied from', () => {
+  const existing = indexByKey([
+    draft(['8mm'], { price: '410.00', tiers: [{ threshold: '20', unitPrice: '395.00' }] }),
+  ]);
+  const { variants } = expandMatrix([size], existing);
+
+  const eight = variants.find((v) => v.optionValues[0] === '8mm')!;
+  const twelve = variants.find((v) => v.optionValues[0] === '12mm')!;
+
+  assert.notEqual(eight.tiers, twelve.tiers, 'the arrays must not be the same object');
+  twelve.tiers[0]!.unitPrice = '380.00';
+  assert.equal(eight.tiers[0]!.unitPrice, '395.00', 'the seed must be untouched');
 });
 
 test('editing one axis leaves data on other axes intact', () => {
@@ -190,5 +217,81 @@ test('expansion is stable when run twice over its own output', () => {
   assert.deepEqual(
     second.variants.map((v) => v.matrixKey),
     first.variants.map((v) => v.matrixKey),
+  );
+});
+
+// --- bulk ladders ----------------------------------------------------------
+
+const rung = (threshold: string, unitPrice: string) => ({ threshold, unitPrice });
+
+test('a well-formed quantity ladder passes', () => {
+  assert.deepEqual(
+    validateTierLadder('QUANTITY', '432.00', [rung('20', '415'), rung('40', '405')]),
+    [],
+  );
+});
+
+test('an empty ladder is fine — most products have none', () => {
+  assert.deepEqual(validateTierLadder('QUANTITY', '432.00', []), []);
+  assert.deepEqual(validateTierLadder('QUANTITY', '432.00', [rung('', '')]), []);
+});
+
+test('breaks must climb and prices must fall', () => {
+  assert.match(
+    validateTierLadder('QUANTITY', '432.00', [rung('40', '415'), rung('20', '405')]).join(' '),
+    /must go up/,
+  );
+  assert.match(
+    validateTierLadder('QUANTITY', '432.00', [rung('20', '405'), rung('40', '415')]).join(' '),
+    /cheaper than the one before/,
+  );
+});
+
+test('a rung at or above the normal price is refused', () => {
+  // It could never be chosen, so it would advertise a saving that never happens.
+  assert.match(
+    validateTierLadder('QUANTITY', '432.00', [rung('20', '432')]).join(' '),
+    /below the normal price/,
+  );
+});
+
+test('two breaks at the same threshold are refused', () => {
+  assert.match(
+    validateTierLadder('QUANTITY', '432.00', [rung('20', '415'), rung('20', '405')]).join(' '),
+    /already a break at that quantity/,
+  );
+});
+
+test('a quantity break starts at two, not one', () => {
+  assert.match(
+    validateTierLadder('QUANTITY', '432.00', [rung('1', '415')]).join(' '),
+    /starts at 2 or more/,
+  );
+});
+
+/*
+ * An amount rung below one unit's price fires at quantity 1, which makes the
+ * normal price unreachable — the shopper would never see it.
+ */
+test('an amount break below one unit’s price is refused', () => {
+  assert.match(
+    validateTierLadder('AMOUNT', '2000.00', [rung('500', '1950')]).join(' '),
+    /below the price of a single unit/,
+  );
+  assert.deepEqual(validateTierLadder('AMOUNT', '2000.00', [rung('10000', '1950')]), []);
+});
+
+test('a ladder longer than the cap is refused', () => {
+  const long = Array.from({ length: MAX_PRICE_TIERS + 1 }, (_, i) =>
+    rung(String((i + 2) * 10), String(400 - i)),
+  );
+  assert.match(validateTierLadder('QUANTITY', '432.00', long).join(' '), /at most/);
+});
+
+test('thresholds and rates are checked as money, never as floats', () => {
+  assert.match(validateTierLadder('QUANTITY', '432.00', [rung('20', 'abc')]).join(' '), /rate like/);
+  assert.match(
+    validateTierLadder('QUANTITY', '432.00', [rung('twenty', '415')]).join(' '),
+    /whole number of units/,
   );
 });

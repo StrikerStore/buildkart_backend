@@ -55,12 +55,15 @@ test('a malformed MRP is rejected like any other amount', () => {
   assert.equal(rateChangeSchema.safeParse(row({ compareAtPrice: 'abc' })).success, false);
 });
 
-test('the bulk price still works alongside the MRP', () => {
-  const parsed = rateChangeSchema.safeParse(
-    row({ compareAtPrice: '450', bulkPrice: '395' }),
-  );
+/*
+ * Bulk rates left this screen when they became ladders. Today's Rates edits the
+ * selling price and the MRP; the ladder has its own screen, because a rung is a
+ * list and cannot live in a column here.
+ */
+test('Today’s Rates no longer carries a bulk price', () => {
+  const parsed = rateChangeSchema.safeParse(row({ bulkPrice: '395' }));
   assert.equal(parsed.success, true);
-  assert.equal(parsed.data?.bulkPrice, '395');
+  assert.ok(!('bulkPrice' in (parsed.data ?? {})), 'a stray bulk price is dropped, not stored');
 });
 
 test('a save carries many rows and refuses an empty one', () => {

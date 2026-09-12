@@ -1,7 +1,15 @@
 import { z } from 'zod';
 import { optionalText } from './common.ts';
 import { MONEY_PATTERN } from '../money.ts';
-import { MATRIX_SEPARATOR, MAX_OPTION_AXES, MAX_VALUES_PER_AXIS, MAX_VARIANTS } from '../variants.ts';
+import {
+  BULK_TIER_BASES,
+  MATRIX_SEPARATOR,
+  MAX_OPTION_AXES,
+  MAX_PRICE_TIERS,
+  MAX_VALUES_PER_AXIS,
+  MAX_VARIANTS,
+  validateTierLadder,
+} from '../variants.ts';
 
 const money = z.string().trim().regex(MONEY_PATTERN, 'Enter an amount like 410 or 410.50');
 const optionalMoney = z
@@ -12,6 +20,16 @@ const optionalMoney = z
   .refine((v) => v === undefined || MONEY_PATTERN.test(v), {
     message: 'Enter an amount like 410 or 410.50',
   });
+
+/**
+ * One rung as the client sends it — the threshold still raw text, because how
+ * to read it depends on the product's basis, which lives a level up.
+ */
+export const priceTierSchema = z.object({
+  id: z.string().max(64).optional(),
+  threshold: z.string().trim().min(1, 'Enter a quantity or an order value').max(20),
+  unitPrice: money,
+});
 
 export const optionAxisSchema = z.object({
   id: z.string().max(64).optional(),
@@ -28,7 +46,7 @@ export const variantRowSchema = z.object({
   sku: optionalText(64),
   price: money,
   compareAtPrice: optionalMoney,
-  bulkPrice: optionalMoney,
+  tiers: z.array(priceTierSchema).max(MAX_PRICE_TIERS).default([]),
   costPerItem: optionalMoney,
   unitLabelEn: optionalText(32),
   unitLabelHi: optionalText(32),
@@ -49,6 +67,7 @@ export const saveVariantsSchema = z
   .object({
     axes: z.array(optionAxisSchema).max(MAX_OPTION_AXES),
     variants: z.array(variantRowSchema).min(1).max(MAX_VARIANTS),
+    bulkTierBasis: z.enum(BULK_TIER_BASES).default('QUANTITY'),
   })
   .refine(
     (v) => new Set(v.variants.map((row) => row.matrixKey)).size === v.variants.length,
@@ -61,13 +80,18 @@ export const saveVariantsSchema = z
       ),
     { message: 'Every MRP must be higher than its selling price.', path: ['variants'] },
   )
-  .refine(
-    (v) =>
-      v.variants.every(
-        (row) => row.bulkPrice === undefined || Number(row.bulkPrice) <= Number(row.price),
-      ),
-    { message: 'A bulk price cannot exceed its normal price.', path: ['variants'] },
-  )
+  /*
+   * The whole ladder, per variant, through the one shared validator — so the
+   * product form, the bulk-rates screen and the CSV importer cannot disagree
+   * about what a valid ladder is.
+   */
+  .superRefine((v, ctx) => {
+    for (const row of v.variants) {
+      for (const problem of validateTierLadder(v.bulkTierBasis, row.price, row.tiers)) {
+        ctx.addIssue({ code: 'custom', message: problem, path: ['variants'] });
+      }
+    }
+  })
   .refine(
     (v) => {
       // Every variant must carry exactly one value per axis, or the matrix and

@@ -459,6 +459,13 @@ model Product {
   isRateVolatile Boolean @default(false)
   isGiftCard     Boolean @default(false)
 
+  /// How this product's bulk ladder is read — by units on the line, or by the
+  /// line's rupee value. One choice per product rather than per variant: it is
+  /// a merchandising decision ("we do volume deals on cement by the bag") and
+  /// the product page has to tell one story. Meaningless until a variant
+  /// actually carries rungs.
+  bulkTierBasis BulkTierBasis @default(QUANTITY)
+
   seoTitle         String? @db.VarChar(255)
   seoDescriptionEn String? @db.Text
   seoDescriptionHi String? @db.Text
@@ -588,8 +595,6 @@ model ProductVariant {
   price          Decimal  @db.Decimal(10, 2)
   /// MRP, shown struck through when higher than price. Shopify `Compare At Price`.
   compareAtPrice Decimal? @db.Decimal(10, 2)
-  /// Applied automatically once the cart subtotal crosses the store-wide cutoff.
-  bulkPrice      Decimal? @db.Decimal(10, 2)
   /// Shopify `Cost per item`. Never shown to customers.
   costPerItem    Decimal? @db.Decimal(10, 2)
 
@@ -632,6 +637,7 @@ model ProductVariant {
   priceHistory PriceHistory[]
   adjustments  InventoryAdjustment[]
   orderItems   OrderItem[]
+  tiers        VariantPriceTier[]
 
   @@unique([productId, matrixKey])
   /// Scoped to the product, not global. Shopify does not enforce global SKU
@@ -643,6 +649,59 @@ model ProductVariant {
   @@index([isActive, stockQty])
 }
 
+/// How a variant's bulk ladder is measured.
+enum BulkTierBasis {
+  /// Rungs are counts of units on one line: "20 or more bags".
+  QUANTITY
+  /// Rungs are rupee values of one line: "this line worth ₹10,000 or more".
+  AMOUNT
+}
+
+/// One rung of a variant's bulk ladder.
+///
+/// Hangs off the *variant* rather than the product because the rung carries an
+/// absolute rupee price, and 8mm sariya and 20mm sariya cannot share one. The
+/// *basis* lives on the product (`Product.bulkTierBasis`) because it is a
+/// merchandising decision and the product page has to tell one story; it is
+/// copied onto every rung so the shape can be enforced by a CHECK constraint
+/// and the rates screen can render a ladder without joining the product.
+///
+/// Two nullable threshold columns rather than one reinterpreted column: a
+/// quantity is a whole number of units, an amount is money that has to go
+/// through `toPaise`. A mis-set basis then leaves an obvious NULL instead of a
+/// number that is quietly wrong by a factor of a hundred.
+///
+/// Nothing references a rung — an order freezes the matched tier as scalars on
+/// `OrderItem` — so the cascade is safe and the rates screen can delete and
+/// rewrite a whole ladder without stranding history.
+model VariantPriceTier {
+  id        String        @id @default(cuid())
+  variantId String
+  basis     BulkTierBasis
+
+  /// QUANTITY only. Inclusive: a rung of 20 applies at exactly 20.
+  minQuantity Int?
+  /// AMOUNT only. Inclusive, and measured against the line's *list* total
+  /// (quantity × list price) — never the bulk-adjusted one, or a line could
+  /// drop below its own rung by qualifying for it.
+  minAmount Decimal? @db.Decimal(10, 2)
+
+  unitPrice Decimal @db.Decimal(10, 2)
+  position  Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  /// MySQL treats NULLs as distinct in a unique index, so each of these dedupes
+  /// its own basis and is inert for the other — a second reason the thresholds
+  /// are two columns rather than one.
+  @@unique([variantId, minQuantity])
+  @@unique([variantId, minAmount])
+  @@index([variantId, position])
+}
+
 /// Append-only price ledger. Cheap, and it makes the daily rate routine
 /// auditable — "why did cement jump ₹40 on Tuesday" has an answer.
 model PriceHistory {
@@ -650,7 +709,12 @@ model PriceHistory {
   variantId String
 
   price     Decimal  @db.Decimal(10, 2)
+  /// The single bulk price this shop used to carry, before ladders. Kept so old
+  /// rows still read correctly; never written any more.
   bulkPrice Decimal? @db.Decimal(10, 2)
+  /// The bulk ladder as it stood after the change, so the ledger keeps
+  /// explaining bulk rates now that they are a list rather than one number.
+  tiersJson Json?
   /// The MRP at the time of the change. Nullable because rows written before
   /// the rates screen could edit it have no MRP to record.
   compareAtPrice Decimal? @db.Decimal(10, 2)
@@ -980,6 +1044,23 @@ model OrderItem {
   wasBulkPrice Boolean @default(false)
   quantity     Int
   lineTotal    Decimal @db.Decimal(10, 2)
+
+  /// The bulk rung this line was charged at, frozen as scalars.
+  ///
+  /// Under the old store-wide cutoff, `wasBulkPrice` was enough — the cutoff was
+  /// one number in Settings and could be looked up. A ladder retuned every
+  /// morning cannot be: the rung that produced this price is gone by the time
+  /// anyone asks. Scalars rather than a foreign key to `VariantPriceTier`,
+  /// because `Restrict` would stop the rates screen deleting a rung and
+  /// `SetNull` would evaporate the explanation — the same choice
+  /// `variantSnapshot` already makes.
+  ///
+  /// All nullable: orders placed before ladders existed have no rung, and
+  /// inventing one would misreport history.
+  listUnitPrice   Decimal?       @db.Decimal(10, 2)
+  tierBasis       BulkTierBasis?
+  tierMinQuantity Int?
+  tierMinAmount   Decimal?       @db.Decimal(10, 2)
 
   /// The GST rate this line was charged at, frozen with the line.
   taxPercent Decimal @default(0) @db.Decimal(5, 2)

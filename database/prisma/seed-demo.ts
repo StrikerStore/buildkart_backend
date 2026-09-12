@@ -75,7 +75,11 @@ async function clearCatalogue() {
 type VariantSeed = {
   values: string[];
   price: string;
-  bulkPrice?: string;
+  /**
+   * The bulk ladder, read against the product's `bulkBasis`. A quantity rung
+   * unless `amount` is given.
+   */
+  tiers?: Array<{ qty?: number; amount?: string; price: string }>;
   compareAt?: string;
   cost?: string;
   stock: number;
@@ -93,6 +97,8 @@ type ProductSeed = {
   status?: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
   scheduledIn?: number;
   rateVolatile?: boolean;
+  /** How this product's rungs are read. Quantity unless stated. */
+  bulkBasis?: 'QUANTITY' | 'AMOUNT';
   unitEn?: string;
   unitHi?: string;
   keywords?: string;
@@ -252,7 +258,7 @@ const PRODUCTS: ProductSeed[] = [
     unitHi: 'प्रति बोरी',
     keywords: 'cement, siment, ultratech, opc, 53 grade',
     tags: ['Bestseller', 'ISI Marked'],
-    variants: [{ values: [], price: '432.00', bulkPrice: '415.00', cost: '385.00', stock: 240, lowStock: 40 }],
+    variants: [{ values: [], price: '432.00', tiers: [{ qty: 20, price: '415.00' }], cost: '385.00', stock: 240, lowStock: 40 }],
     fields: { grade: 'OPC 53', isi_certified: true, applications: ['Columns', 'Beams', 'Slabs'] },
   },
   {
@@ -268,7 +274,7 @@ const PRODUCTS: ProductSeed[] = [
     unitHi: 'प्रति बोरी',
     keywords: 'cement, ppc, acc, plaster',
     tags: ['ISI Marked'],
-    variants: [{ values: [], price: '398.00', bulkPrice: '382.00', cost: '356.00', stock: 180, lowStock: 40 }],
+    variants: [{ values: [], price: '398.00', tiers: [{ qty: 20, price: '382.00' }], cost: '356.00', stock: 180, lowStock: 40 }],
     fields: { grade: 'PPC', isi_certified: true, applications: ['Plaster', 'Brickwork'] },
   },
   {
@@ -281,7 +287,7 @@ const PRODUCTS: ProductSeed[] = [
     rateVolatile: true,
     unitEn: 'per bag',
     keywords: 'cement, ambuja, ppc',
-    variants: [{ values: [], price: '405.00', bulkPrice: '390.00', cost: '362.00', stock: 26, lowStock: 40 }],
+    variants: [{ values: [], price: '405.00', tiers: [{ qty: 20, price: '390.00' }], cost: '362.00', stock: 26, lowStock: 40 }],
     tags: ['Priority Restock'],
     fields: { grade: 'PPC', isi_certified: true },
   },
@@ -300,11 +306,11 @@ const PRODUCTS: ProductSeed[] = [
     tags: ['Bestseller', 'ISI Marked'],
     axes: [{ name: 'Size', values: ['8mm', '10mm', '12mm', '16mm', '20mm'] }],
     variants: [
-      { values: ['8mm'], price: '74.50', bulkPrice: '71.00', cost: '66.00', stock: 1800, lowStock: 500 },
-      { values: ['10mm'], price: '72.00', bulkPrice: '68.50', cost: '64.00', stock: 2400, lowStock: 500 },
-      { values: ['12mm'], price: '70.50', bulkPrice: '67.00', cost: '62.50', stock: 3100, lowStock: 500 },
-      { values: ['16mm'], price: '69.80', bulkPrice: '66.50', cost: '62.00', stock: 420, lowStock: 500 },
-      { values: ['20mm'], price: '69.20', bulkPrice: '66.00', cost: '61.50', stock: 0, lowStock: 500 },
+      { values: ['8mm'], price: '74.50', tiers: [{ qty: 20, price: '71.00' }], cost: '66.00', stock: 1800, lowStock: 500 },
+      { values: ['10mm'], price: '72.00', tiers: [{ qty: 20, price: '68.50' }], cost: '64.00', stock: 2400, lowStock: 500 },
+      { values: ['12mm'], price: '70.50', tiers: [{ qty: 20, price: '67.00' }], cost: '62.50', stock: 3100, lowStock: 500 },
+      { values: ['16mm'], price: '69.80', tiers: [{ qty: 20, price: '66.50' }], cost: '62.00', stock: 420, lowStock: 500 },
+      { values: ['20mm'], price: '69.20', tiers: [{ qty: 20, price: '66.00' }], cost: '61.50', stock: 0, lowStock: 500 },
     ],
     fields: { grade: 'Fe550', isi_certified: true, applications: ['Columns', 'Slabs', 'Foundation'] },
   },
@@ -320,9 +326,9 @@ const PRODUCTS: ProductSeed[] = [
     keywords: 'sariya, saria, tmt, jsw, fe500',
     axes: [{ name: 'Size', values: ['8mm', '10mm', '12mm'] }],
     variants: [
-      { values: ['8mm'], price: '73.00', bulkPrice: '70.00', cost: '65.00', stock: 900, lowStock: 300 },
-      { values: ['10mm'], price: '71.20', bulkPrice: '68.00', cost: '63.50', stock: 1200, lowStock: 300 },
-      { values: ['12mm'], price: '69.90', bulkPrice: '66.80', cost: '62.00', stock: 240, lowStock: 300 },
+      { values: ['8mm'], price: '73.00', tiers: [{ qty: 20, price: '70.00' }], cost: '65.00', stock: 900, lowStock: 300 },
+      { values: ['10mm'], price: '71.20', tiers: [{ qty: 20, price: '68.00' }], cost: '63.50', stock: 1200, lowStock: 300 },
+      { values: ['12mm'], price: '69.90', tiers: [{ qty: 20, price: '66.80' }], cost: '62.00', stock: 240, lowStock: 300 },
     ],
     fields: { grade: 'Fe500', isi_certified: true },
   },
@@ -344,12 +350,12 @@ const PRODUCTS: ProductSeed[] = [
       { name: 'Grade', values: ['BWP', 'MR'] },
     ],
     variants: [
-      { values: ['12mm', 'BWP'], price: '2450.00', bulkPrice: '2340.00', cost: '2080.00', stock: 42, lowStock: 10 },
-      { values: ['12mm', 'MR'], price: '1890.00', bulkPrice: '1810.00', cost: '1610.00', stock: 55, lowStock: 10 },
-      { values: ['16mm', 'BWP'], price: '3120.00', bulkPrice: '2990.00', cost: '2650.00', stock: 28, lowStock: 10 },
-      { values: ['16mm', 'MR'], price: '2410.00', bulkPrice: '2310.00', cost: '2050.00', stock: 31, lowStock: 10 },
-      { values: ['19mm', 'BWP'], price: '3680.00', bulkPrice: '3520.00', cost: '3120.00', stock: 6, lowStock: 10 },
-      { values: ['19mm', 'MR'], price: '2870.00', bulkPrice: '2750.00', cost: '2440.00', stock: 19, lowStock: 10 },
+      { values: ['12mm', 'BWP'], price: '2450.00', tiers: [{ qty: 20, price: '2340.00' }], cost: '2080.00', stock: 42, lowStock: 10 },
+      { values: ['12mm', 'MR'], price: '1890.00', tiers: [{ qty: 20, price: '1810.00' }], cost: '1610.00', stock: 55, lowStock: 10 },
+      { values: ['16mm', 'BWP'], price: '3120.00', tiers: [{ qty: 20, price: '2990.00' }], cost: '2650.00', stock: 28, lowStock: 10 },
+      { values: ['16mm', 'MR'], price: '2410.00', tiers: [{ qty: 20, price: '2310.00' }], cost: '2050.00', stock: 31, lowStock: 10 },
+      { values: ['19mm', 'BWP'], price: '3680.00', tiers: [{ qty: 20, price: '3520.00' }], cost: '3120.00', stock: 6, lowStock: 10 },
+      { values: ['19mm', 'MR'], price: '2870.00', tiers: [{ qty: 20, price: '2750.00' }], cost: '2440.00', stock: 19, lowStock: 10 },
     ],
     fields: { thickness: '19 mm', isi_certified: true, warranty_years: '25', applications: ['Kitchen', 'Wardrobe', 'Furniture'] },
   },
@@ -404,10 +410,10 @@ const PRODUCTS: ProductSeed[] = [
     tags: ['Bestseller', 'ISI Marked'],
     axes: [{ name: 'Size', values: ['1.0 sq mm', '1.5 sq mm', '2.5 sq mm', '4.0 sq mm'] }],
     variants: [
-      { values: ['1.0 sq mm'], price: '1090.00', bulkPrice: '1040.00', cost: '920.00', stock: 34, lowStock: 12 },
-      { values: ['1.5 sq mm'], price: '1580.00', bulkPrice: '1510.00', cost: '1340.00', stock: 51, lowStock: 12 },
-      { values: ['2.5 sq mm'], price: '2490.00', bulkPrice: '2380.00', cost: '2120.00', stock: 27, lowStock: 12 },
-      { values: ['4.0 sq mm'], price: '3860.00', bulkPrice: '3700.00', cost: '3290.00', stock: 4, lowStock: 12 },
+      { values: ['1.0 sq mm'], price: '1090.00', tiers: [{ qty: 20, price: '1040.00' }], cost: '920.00', stock: 34, lowStock: 12 },
+      { values: ['1.5 sq mm'], price: '1580.00', tiers: [{ qty: 20, price: '1510.00' }], cost: '1340.00', stock: 51, lowStock: 12 },
+      { values: ['2.5 sq mm'], price: '2490.00', tiers: [{ qty: 20, price: '2380.00' }], cost: '2120.00', stock: 27, lowStock: 12 },
+      { values: ['4.0 sq mm'], price: '3860.00', tiers: [{ qty: 20, price: '3700.00' }], cost: '3290.00', stock: 4, lowStock: 12 },
     ],
     fields: { isi_certified: true, applications: ['House wiring', 'Conduit'] },
   },
@@ -451,7 +457,7 @@ const PRODUCTS: ProductSeed[] = [
     unitEn: 'per bag',
     unitHi: 'प्रति बोरी',
     keywords: 'adhesive, tile, gum, chemical',
-    variants: [{ values: [], price: '612.00', bulkPrice: '588.00', cost: '512.00', stock: 0, lowStock: 20 }],
+    variants: [{ values: [], price: '612.00', tiers: [{ qty: 20, price: '588.00' }], cost: '512.00', stock: 0, lowStock: 20 }],
     tags: ['Priority Restock'],
     fields: { applications: ['Floor tiles', 'Wall tiles'] },
   },
@@ -618,6 +624,7 @@ async function main() {
         brandId: seed.brand ? brandIds.get(seed.brand) : null,
         productType: seed.type,
         isRateVolatile: seed.rateVolatile ?? false,
+        bulkTierBasis: seed.bulkBasis ?? 'QUANTITY',
         searchKeywords: seed.keywords,
         hasVariants: axes.length > 0,
         seoTitle: seed.nameEn,
@@ -647,7 +654,15 @@ async function main() {
           option3Value: variant.values[2] ?? null,
           sku: generateSku(seed.nameEn, variant.values),
           price: variant.price,
-          bulkPrice: variant.bulkPrice,
+          tiers: {
+            create: (variant.tiers ?? []).map((tier, tierIndex) => ({
+              basis: tier.qty !== undefined ? ('QUANTITY' as const) : ('AMOUNT' as const),
+              minQuantity: tier.qty ?? null,
+              minAmount: tier.amount ?? null,
+              unitPrice: tier.price,
+              position: tierIndex,
+            })),
+          },
           compareAtPrice: variant.compareAt,
           costPerItem: variant.cost,
           unitLabelEn: seed.unitEn,
@@ -666,8 +681,8 @@ async function main() {
       if (seed.rateVolatile) {
         await prisma.priceHistory.createMany({
           data: [
-            { variantId: created.id, price: variant.price, bulkPrice: variant.bulkPrice, source: 'CSV_IMPORT', createdAt: daysAgo(9) },
-            { variantId: created.id, price: variant.price, bulkPrice: variant.bulkPrice, source: 'RATES_SCREEN', createdAt: daysAgo(2) },
+            { variantId: created.id, price: variant.price, tiersJson: variant.tiers ?? [], source: 'CSV_IMPORT', createdAt: daysAgo(9) },
+            { variantId: created.id, price: variant.price, tiersJson: variant.tiers ?? [], source: 'RATES_SCREEN', createdAt: daysAgo(2) },
           ],
         });
       }

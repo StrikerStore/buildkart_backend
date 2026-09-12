@@ -45,9 +45,12 @@ import {
   type StorefrontNavCategoryDto,
   type StorefrontProductDto,
   type StorefrontSectionDto,
+  type StorefrontSuggestionDto,
+  type StorefrontSuggestQuery,
   type StorefrontVariantDto,
 } from '@buildkart/shared';
 import { decimalToString, dateToIso } from '../dto.ts';
+import { TIER_SELECT, bestTier, toTierDtos } from '../tiers.ts';
 import { categoryTreeMembershipWhere } from '../membership.ts';
 import { countsFor } from '../category-rule-sets.ts';
 import { getSettings } from './settings.ts';
@@ -114,7 +117,7 @@ const CARD_SELECT = {
       id: true,
       price: true,
       compareAtPrice: true,
-      bulkPrice: true,
+      tiers: TIER_SELECT,
       unitLabelEn: true,
       unitLabelHi: true,
       stockQty: true,
@@ -165,6 +168,7 @@ export function toCardDto(row: CardRow): StorefrontCardDto {
 
   const price = cheapest ? decimalToString(cheapest.price) : null;
   const compareAtPrice = cheapest ? decimalToString(cheapest.compareAtPrice) : null;
+  const cheapestBulk = cheapest ? bestTier(toTierDtos(cheapest.tiers)) : null;
 
   return {
     handle: row.handle,
@@ -176,7 +180,13 @@ export function toCardDto(row: CardRow): StorefrontCardDto {
     unitLabelHi: cheapest?.unitLabelHi ?? null,
     price,
     compareAtPrice,
-    bulkPrice: cheapest ? decimalToString(cheapest.bulkPrice) : null,
+    /*
+     * The best rate on the cheapest sellable variant's ladder, and the rung
+     * that reaches it. A card has room for one figure, and "Bulk: 365" without
+     * "40+" beside it promises a price the product page will not honour.
+     */
+    bestBulkPrice: cheapestBulk?.unitPrice ?? null,
+    bulkFrom: cheapestBulk,
     discountPercent: price ? discountPercent(price, compareAtPrice) : null,
     inStock: sellable.length > 0,
     hasVariants: row.hasVariants,
@@ -197,6 +207,32 @@ export function toCardDto(row: CardRow): StorefrontCardDto {
 // ---------------------------------------------------------------------------
 
 /**
+ * What "matches a search term" means, in one place.
+ *
+ * Extracted so the results page and the search box's dropdown cannot drift. The
+ * two run different queries — one paginates and aggregates facets, the other
+ * takes eight rows and stops — but they must agree on which products the word
+ * reaches, or the dropdown will offer a product the page it links to then fails
+ * to list.
+ *
+ * Exported for `suggestProducts` below; still only ever ANDed onto
+ * `VISIBLE_PRODUCT`, never used alone.
+ */
+export function matchesText(q: string): Prisma.ProductWhereInput {
+  return {
+    OR: [
+      { nameEn: { contains: q } },
+      { nameHi: { contains: q } },
+      { handle: { contains: q } },
+      // The synonym column: "saria", "sariya", "rebar" all reach the same
+      // product. PLAN.md §6.5 is the requirement; this column is the answer.
+      { searchKeywords: { contains: q } },
+      { brand: { is: { nameEn: { contains: q } } } },
+    ],
+  };
+}
+
+/**
  * The shopper's filters, as a Prisma `where`.
  *
  * Always ANDed onto `VISIBLE_PRODUCT` by the caller — this function returns the
@@ -211,17 +247,7 @@ function narrowBy(query: StorefrontListQuery): Prisma.ProductWhereInput[] {
   const clauses: Prisma.ProductWhereInput[] = [];
 
   if (query.q) {
-    clauses.push({
-      OR: [
-        { nameEn: { contains: query.q } },
-        { nameHi: { contains: query.q } },
-        { handle: { contains: query.q } },
-        // The synonym column: "saria", "sariya", "rebar" all reach the same
-        // product. PLAN.md §6.5 is the requirement; this column is the answer.
-        { searchKeywords: { contains: query.q } },
-        { brand: { is: { nameEn: { contains: query.q } } } },
-      ],
-    });
+    clauses.push(matchesText(query.q));
   }
 
   if (query.brands.length > 0) {
@@ -658,6 +684,88 @@ export async function searchProducts(query: StorefrontListQuery): Promise<Storef
   return listVisible({}, query);
 }
 
+/**
+ * Suggestions, cached by normalised query.
+ *
+ * This fires while somebody is typing, and public reads have no rate limit in
+ * front of them — the client debounces, and this catches what the debounce lets
+ * through. The same shape as `geocode.ts`'s search cache, for the same reason.
+ *
+ * Sixty seconds is the trade: long enough that a burst of typing and everyone
+ * searching "cement" on a busy morning costs one query, short enough that a
+ * price the owner edited is not wrong in the dropdown for long. It is
+ * per-instance, so it is a cushion rather than a guarantee.
+ */
+const suggestCache = new Map<string, { at: number; rows: StorefrontSuggestionDto[] }>();
+const SUGGEST_TTL_MS = 60_000;
+/** Bounded so a crawler typing nonsense cannot grow it without limit. */
+const SUGGEST_CACHE_MAX = 500;
+
+function suggestKey(query: StorefrontSuggestQuery): string {
+  return `${query.limit}:${query.q.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
+/**
+ * The search box's dropdown.
+ *
+ * Deliberately *not* `listVisible`. That function always pays for a count and
+ * for `facetsFor`, which is four more queries including a 2,000-row scan of
+ * product options — the right price for a results page the shopper asked for,
+ * and the wrong one for a keystroke. This takes the rows and stops.
+ *
+ * Ordering matches what `sort: 'relevance'` already means here — most recently
+ * touched first. There is no scoring engine behind either, and giving the
+ * dropdown its own order would have it disagree with the page it links to.
+ */
+export async function suggestProducts(
+  query: StorefrontSuggestQuery,
+): Promise<StorefrontSuggestionDto[]> {
+  const key = suggestKey(query);
+  const hit = suggestCache.get(key);
+  if (hit && Date.now() - hit.at < SUGGEST_TTL_MS) return hit.rows;
+
+  const products = await prisma.product.findMany({
+    where: { AND: [VISIBLE_PRODUCT, matchesText(query.q)] },
+    orderBy: [{ updatedAt: 'desc' }],
+    take: query.limit,
+    select: {
+      handle: true,
+      nameEn: true,
+      nameHi: true,
+      brand: { select: { nameEn: true } },
+      images: {
+        orderBy: { position: 'asc' },
+        take: 1,
+        select: { media: { select: { r2Key: true } } },
+      },
+      variants: {
+        where: { isActive: true },
+        orderBy: { price: 'asc' },
+        take: 1,
+        select: { price: true, unitLabelEn: true, unitLabelHi: true },
+      },
+    },
+  });
+
+  const rows: StorefrontSuggestionDto[] = products.map((product) => {
+    const cheapest = product.variants[0];
+    return {
+      handle: product.handle,
+      nameEn: product.nameEn,
+      nameHi: product.nameHi,
+      brandName: product.brand?.nameEn ?? null,
+      imageKey: product.images[0]?.media.r2Key ?? null,
+      price: cheapest ? decimalToString(cheapest.price) : null,
+      unitLabelEn: cheapest?.unitLabelEn ?? null,
+      unitLabelHi: cheapest?.unitLabelHi ?? null,
+    };
+  });
+
+  if (suggestCache.size >= SUGGEST_CACHE_MAX) suggestCache.clear();
+  suggestCache.set(key, { at: Date.now(), rows });
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
 // Product page
 // ---------------------------------------------------------------------------
@@ -684,6 +792,7 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
       returnPolicyEn: true,
       returnPolicyHi: true,
       isRateVolatile: true,
+      bulkTierBasis: true,
       hsnCode: true,
       seoTitle: true,
       seoDescriptionEn: true,
@@ -714,7 +823,7 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
           option3Value: true,
           price: true,
           compareAtPrice: true,
-          bulkPrice: true,
+          tiers: TIER_SELECT,
           unitLabelEn: true,
           unitLabelHi: true,
           stockQty: true,
@@ -758,7 +867,7 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
     option3Value: variant.option3Value,
     price: decimalToString(variant.price),
     compareAtPrice: decimalToString(variant.compareAtPrice),
-    bulkPrice: decimalToString(variant.bulkPrice),
+    tiers: toTierDtos(variant.tiers),
     unitLabelEn: variant.unitLabelEn,
     unitLabelHi: variant.unitLabelHi,
     inStock: canFulfil(variant, 1),
@@ -771,6 +880,7 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
 
   return {
     id: product.id,
+    bulkTierBasis: product.bulkTierBasis,
     handle: product.handle,
     nameEn: product.nameEn,
     nameHi: product.nameHi,
