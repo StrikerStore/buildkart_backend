@@ -10,6 +10,23 @@
 -- mixed carts pay. Ladders are entered fresh; until then everything sells at
 -- list, which is the honest starting state rather than a guessed one.
 
+-- Re-runnable, on purpose.
+--
+-- MySQL has no transactional DDL, so a migration that fails partway leaves
+-- every statement before the failure applied. `migrate-deploy.mjs` then marks
+-- the migration rolled back — which tells Prisma it never happened, and is a
+-- lie the database does not share — and the retry dies on the wreckage of the
+-- first attempt. That is exactly how this one wedged a deploy in a restart
+-- loop: `CREATE TABLE` succeeded, the foreign key did not, and every retry
+-- afterwards failed with "table already exists".
+--
+-- So every statement below tolerates having already run. The table is dropped
+-- first rather than skipped: a half-applied attempt leaves it without its
+-- foreign key, and on the deploy that wedged, with the wrong collation too.
+-- Nothing can have written to it, because the migration that creates it has
+-- never completed anywhere it is still present.
+DROP TABLE IF EXISTS `VariantPriceTier`;
+
 -- The ladder itself.
 CREATE TABLE `VariantPriceTier` (
   `id`          VARCHAR(191) NOT NULL,
@@ -42,22 +59,56 @@ ALTER TABLE `VariantPriceTier`
   FOREIGN KEY (`variantId`) REFERENCES `ProductVariant`(`id`)
   ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- The column steps, each guarded.
+--
+-- MySQL has no `ADD COLUMN IF NOT EXISTS` (MariaDB does; this is not MariaDB),
+-- so existence is checked against information_schema and the ALTER is run
+-- through a prepared statement only when it is still needed.
+
 -- How a product's rungs are read.
-ALTER TABLE `Product`
-  ADD COLUMN `bulkTierBasis` ENUM('QUANTITY', 'AMOUNT') NOT NULL DEFAULT 'QUANTITY';
+SET @stmt := (SELECT IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Product'
+            AND COLUMN_NAME = 'bulkTierBasis'),
+  'DO 0',
+  'ALTER TABLE `Product` ADD COLUMN `bulkTierBasis` ENUM(''QUANTITY'', ''AMOUNT'') NOT NULL DEFAULT ''QUANTITY'''));
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- The ledger keeps explaining bulk rates now that they are a list.
-ALTER TABLE `PriceHistory` ADD COLUMN `tiersJson` JSON NULL;
+SET @stmt := (SELECT IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PriceHistory'
+            AND COLUMN_NAME = 'tiersJson'),
+  'DO 0',
+  'ALTER TABLE `PriceHistory` ADD COLUMN `tiersJson` JSON NULL'));
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- What an order was actually charged, and why. Nullable: orders placed before
 -- ladders existed have no rung to record.
-ALTER TABLE `OrderItem`
-  ADD COLUMN `listUnitPrice`   DECIMAL(10, 2) NULL,
-  ADD COLUMN `tierBasis`       ENUM('QUANTITY', 'AMOUNT') NULL,
-  ADD COLUMN `tierMinQuantity` INTEGER NULL,
-  ADD COLUMN `tierMinAmount`   DECIMAL(10, 2) NULL;
+SET @stmt := (SELECT IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'OrderItem'
+            AND COLUMN_NAME = 'listUnitPrice'),
+  'DO 0',
+  'ALTER TABLE `OrderItem`
+     ADD COLUMN `listUnitPrice`   DECIMAL(10, 2) NULL,
+     ADD COLUMN `tierBasis`       ENUM(''QUANTITY'', ''AMOUNT'') NULL,
+     ADD COLUMN `tierMinQuantity` INTEGER NULL,
+     ADD COLUMN `tierMinAmount`   DECIMAL(10, 2) NULL'));
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- The old model. `PriceHistory.bulkPrice` stays so historical rows still read
 -- correctly; only the live column and the store-wide setting go.
-ALTER TABLE `ProductVariant` DROP COLUMN `bulkPrice`;
+--
+-- Guarded like the adds above, and for the same reason: a rerun after a partial
+-- apply would otherwise fail on a column that is already gone.
+SET @stmt := (SELECT IF(
+  EXISTS(SELECT 1 FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ProductVariant'
+            AND COLUMN_NAME = 'bulkPrice'),
+  'ALTER TABLE `ProductVariant` DROP COLUMN `bulkPrice`',
+  'DO 0'));
+PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
+
+-- Already idempotent: deleting a row that is gone removes nothing.
 DELETE FROM `Setting` WHERE `key` = 'bulk.unlockCutoff';
