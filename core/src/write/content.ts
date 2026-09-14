@@ -186,7 +186,24 @@ export async function saveHomepageSection(
   const config: Record<string, unknown> = { limit: data.config.limit };
   if (data.type === 'CATEGORY_GRID') config.categoryIds = data.config.categoryIds;
   if (data.type === 'PRODUCT_CAROUSEL') config.productIds = data.config.productIds;
-  if (data.type === 'TAG_CAROUSEL') config.tagId = data.config.tagId;
+  if (data.type === 'TAG_CAROUSEL') {
+    /*
+     * Refused rather than saved when the tag cannot show. The storefront only
+     * renders public, active tags, so an internal one here would produce a
+     * section that is "showing" in the admin and absent on the site, with
+     * nothing anywhere to say why.
+     */
+    const tag = await prisma.tag.findFirst({
+      where: { slug: data.config.tagSlug, scope: 'PUBLIC', isActive: true },
+      select: { slug: true },
+    });
+    if (!tag) {
+      return actionError('That tag is not public, so it cannot appear on the storefront.', {
+        config: 'Choose a public tag',
+      });
+    }
+    config.tagSlug = tag.slug;
+  }
 
   const values = {
     type: data.type,

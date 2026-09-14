@@ -229,7 +229,7 @@ export async function seedGrowth(): Promise<{
     { type: 'CATEGORY_GRID', titleEn: 'Shop by category', titleHi: 'श्रेणी से खरीदें', configJson: { categoryIds: categories.map((c) => c.id), limit: 12 } },
     { type: 'RATE_TICKER', titleEn: "Today's rates", titleHi: 'आज के भाव', configJson: { limit: 8 } },
     ...(bestseller
-      ? [{ type: 'TAG_CAROUSEL', titleEn: 'Bestsellers', titleHi: 'सबसे ज़्यादा बिकने वाले', configJson: { tagId: bestseller.id, limit: 12 } }]
+      ? [{ type: 'TAG_CAROUSEL', titleEn: 'Bestsellers', titleHi: 'सबसे ज़्यादा बिकने वाले', configJson: { tagSlug: bestseller.slug, limit: 12 } }]
       : []),
     { type: 'PRODUCT_CAROUSEL', titleEn: 'Picked for contractors', configJson: { productIds: featured.map((p) => p.id), limit: 12 } },
     { type: 'BANNER_STRIP', titleEn: null, configJson: { limit: 4 } },

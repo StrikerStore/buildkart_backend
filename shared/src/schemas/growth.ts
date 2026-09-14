@@ -328,6 +328,13 @@ export const TRUST_MARKER_HINTS: Record<TrustMarker, string> = {
 export const homepageSectionConfigSchema = z.object({
   categoryIds: z.array(z.string().max(64)).max(50).default([]),
   productIds: z.array(z.string().max(64)).max(50).default([]),
+  /*
+   * The tag, by slug. Slugs are what the storefront's URLs already speak and
+   * they survive a re-seed or an import, where ids are regenerated and a saved
+   * id quietly points at nothing.
+   */
+  tagSlug: z.string().trim().max(191).optional(),
+  /** Legacy: sections saved before slugs. Read, never written. */
   tagId: z.string().max(64).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(12),
   /*
@@ -354,7 +361,7 @@ export const homepageSectionSchema = z
     config: homepageSectionConfigSchema,
     isActive: z.boolean().default(true),
   })
-  .refine((v) => v.type !== 'TAG_CAROUSEL' || Boolean(v.config.tagId), {
+  .refine((v) => v.type !== 'TAG_CAROUSEL' || Boolean(v.config.tagSlug), {
     message: 'Choose the tag this section shows',
     path: ['config'],
   })

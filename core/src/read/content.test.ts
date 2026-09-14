@@ -21,7 +21,7 @@ test('a known section maps with its config', () => {
   assert.equal(dto.type, 'CATEGORY_GRID');
   assert.deepEqual(dto.categoryIds, ['c1', 'c2']);
   assert.equal(dto.limit, 12);
-  assert.equal(dto.tagId, null);
+  assert.equal(dto.tagSlug, null);
 });
 
 /*
@@ -41,26 +41,39 @@ test('a malformed config degrades to defaults instead of throwing', () => {
     assert.ok(dto, `expected a dto for ${JSON.stringify(configJson)}`);
     assert.deepEqual(dto.categoryIds, []);
     assert.deepEqual(dto.productIds, []);
-    assert.equal(dto.tagId, null);
+    assert.equal(dto.tagSlug, null);
     assert.equal(dto.limit, 12, 'the schema default');
   }
 });
 
-test('an absent tagId is normalised to null, never undefined', () => {
+test('an absent tagSlug is normalised to null, never undefined', () => {
   // undefined does not survive serialisation to a client component; null does.
   const dto = toHomepageSectionDto(row({ configJson: { categoryIds: [], productIds: [] } }));
   assert.ok(dto);
-  assert.equal(dto.tagId, null);
-  assert.ok('tagId' in dto);
+  assert.equal(dto.tagSlug, null);
+  assert.ok('tagSlug' in dto);
 });
 
-test('a tag carousel keeps its tag', () => {
+test('a tag carousel keeps its tag slug', () => {
   const dto = toHomepageSectionDto(
-    row({ type: 'TAG_CAROUSEL', configJson: { categoryIds: [], productIds: [], tagId: 't9', limit: 8 } }),
+    row({ type: 'TAG_CAROUSEL', configJson: { tagSlug: 'bestseller', limit: 8 } }),
   );
   assert.ok(dto);
-  assert.equal(dto.tagId, 't9');
+  assert.equal(dto.tagSlug, 'bestseller');
   assert.equal(dto.limit, 8);
+});
+
+/*
+ * A section saved before slugs holds only an id. The pure mapper cannot look
+ * one up, so it reports no slug; `listHomepageSections` resolves it from the
+ * database. The id must not leak into `tagSlug` as if it were one.
+ */
+test('a legacy id-only tag carousel maps to a null slug, not the id', () => {
+  const dto = toHomepageSectionDto(
+    row({ type: 'TAG_CAROUSEL', configJson: { tagId: 't9', limit: 8 } }),
+  );
+  assert.ok(dto);
+  assert.equal(dto.tagSlug, null);
 });
 
 test('a trust strip keeps the markers it was saved with', () => {

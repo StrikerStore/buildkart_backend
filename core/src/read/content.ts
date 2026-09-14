@@ -21,8 +21,13 @@ import type {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { dateToIso } from '../dto.ts';
-import { loadPickerOptions, type PickerOptions } from './pickers.ts';
-import type { BannerDto, HomepageSectionDto, HomepageSectionRow } from '@buildkart/shared';
+import { loadPickerOptions } from './pickers.ts';
+import type {
+  BannerDto,
+  HomepageSectionDto,
+  HomepageSectionOptionsDto,
+  HomepageSectionRow,
+} from '@buildkart/shared';
 export type { BannerDto, HomepageSectionDto, HomepageSectionRow };
 export type { AnnouncementBarDto, StorefrontAnnouncementsDto };
 
@@ -89,7 +94,7 @@ export function toHomepageSectionDto(row: HomepageSectionRow): HomepageSectionDt
     titleHi: row.titleHi,
     categoryIds: config.categoryIds,
     productIds: config.productIds,
-    tagId: config.tagId ?? null,
+    tagSlug: config.tagSlug ?? null,
     limit: config.limit,
     markers: config.markers,
     position: row.position,
@@ -102,18 +107,60 @@ export async function listHomepageSections(actor: Actor): Promise<HomepageSectio
   assertPermission(actor, 'content:write');
 
   const sections = await prisma.homepageSection.findMany({ orderBy: { position: 'asc' } });
-
-  return sections
+  const dtos = sections
     .map(toHomepageSectionDto)
     .filter((section): section is HomepageSectionDto => section !== null);
+
+  /*
+   * Sections saved before slugs carry only a tag id. Resolve those to slugs here
+   * so the form opens with the tag selected; saving the section again writes
+   * the slug and the legacy id is gone. An id that no longer resolves stays
+   * null, which the list shows as "Tag missing".
+   */
+  const legacy = new Map<string, string>();
+  sections.forEach((row) => {
+    const config = (row.configJson ?? {}) as { tagSlug?: unknown; tagId?: unknown };
+    if (typeof config.tagSlug !== 'string' && typeof config.tagId === 'string') {
+      legacy.set(row.id, config.tagId);
+    }
+  });
+  if (legacy.size === 0) return dtos;
+
+  const tags = await prisma.tag.findMany({
+    where: { id: { in: [...new Set(legacy.values())] } },
+    select: { id: true, slug: true },
+  });
+  const slugById = new Map(tags.map((tag) => [tag.id, tag.slug]));
+
+  return dtos.map((dto) => {
+    const id = legacy.get(dto.id);
+    return id ? { ...dto, tagSlug: slugById.get(id) ?? null } : dto;
+  });
 }
 
 /** What the section form can point at. See `loadPickerOptions` for the caps. */
-export async function listHomepageSectionOptions(actor: Actor): Promise<PickerOptions> {
+export async function listHomepageSectionOptions(
+  actor: Actor,
+): Promise<HomepageSectionOptionsDto> {
   assertPermission(actor, 'content:write');
   // Active categories only: a section pointing at a hidden category renders an
   // empty rail on the storefront.
-  return loadPickerOptions({ activeCategoriesOnly: true });
+  const [{ categories, products }, tags] = await Promise.all([
+    loadPickerOptions({ activeCategoriesOnly: true }),
+    // Public and active only, for the same reason — and by slug, which is what
+    // a tag section now saves. See `HomepageSectionOptionsDto`.
+    prisma.tag.findMany({
+      where: { scope: 'PUBLIC', isActive: true },
+      orderBy: { nameEn: 'asc' },
+      select: { slug: true, nameEn: true },
+    }),
+  ]);
+
+  return {
+    categories,
+    products,
+    tags: tags.map((tag) => ({ slug: tag.slug, label: tag.nameEn })),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1072,6 +1072,7 @@ async function resolveSection(
   const config = (row.configJson ?? {}) as {
     categoryIds?: unknown;
     productIds?: unknown;
+    tagSlug?: unknown;
     tagId?: unknown;
     limit?: unknown;
     markers?: unknown;
@@ -1122,17 +1123,27 @@ async function resolveSection(
     }
 
     case 'TAG_CAROUSEL': {
-      const tagId = typeof config.tagId === 'string' ? config.tagId : null;
-      if (!tagId) return null;
+      /*
+       * By slug, falling back to the id older sections were saved with. The
+       * slug is what survives a re-seed or an import; an id saved against the
+       * old rows points at nothing afterwards and the section silently vanishes.
+       */
+      const tagSlug = typeof config.tagSlug === 'string' ? config.tagSlug : null;
+      const legacyId = typeof config.tagId === 'string' ? config.tagId : null;
+      if (!tagSlug && !legacyId) return null;
 
       const tag = await prisma.tag.findFirst({
-        where: { id: tagId, scope: 'PUBLIC', isActive: true },
-        select: { slug: true },
+        where: {
+          ...(tagSlug ? { slug: tagSlug } : { id: legacyId! }),
+          scope: 'PUBLIC',
+          isActive: true,
+        },
+        select: { id: true, slug: true },
       });
       if (!tag) return null;
 
       const rows = await prisma.product.findMany({
-        where: { ...VISIBLE_PRODUCT, tags: { some: { tagId } } },
+        where: { ...VISIBLE_PRODUCT, tags: { some: { tagId: tag.id } } },
         orderBy: { updatedAt: 'desc' },
         take: limit,
         select: CARD_SELECT,

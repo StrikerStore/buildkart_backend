@@ -391,12 +391,27 @@ export type HomepageSectionDto = {
   titleHi: string | null;
   categoryIds: string[];
   productIds: string[];
-  tagId: string | null;
+  /** TAG_CAROUSEL: the tag's slug. Resolved from a legacy id when the row predates slugs. */
+  tagSlug: string | null;
   limit: number;
   /** TRUST_STRIP only: which promises the row makes. */
   markers: TrustMarker[];
   position: number;
   isActive: boolean;
+};
+
+// from core/src/read/content.ts
+/**
+ * What the homepage section form can point at.
+ *
+ * Tags carry a slug rather than an id, and only public, active ones are listed:
+ * the storefront shows nothing else, so offering an internal tag would let the
+ * owner build a section that can never appear.
+ */
+export type HomepageSectionOptionsDto = {
+  categories: Array<{ id: string; label: string }>;
+  products: Array<{ id: string; label: string }>;
+  tags: Array<{ slug: string; label: string }>;
 };
 
 // from core/src/read/content.ts

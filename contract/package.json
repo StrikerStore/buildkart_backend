@@ -1,6 +1,6 @@
 {
   "name": "@StrikerStore/contract",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": false,
   "type": "module",
   "description": "Everything a BuildKart client needs: the shared vocabulary, the wire format, and the API's type. Published from the backend repo; consumed by admin and website.",
