@@ -717,6 +717,27 @@ function suggestKey(query: StorefrontSuggestQuery): string {
  * touched first. There is no scoring engine behind either, and giving the
  * dropdown its own order would have it disagree with the page it links to.
  */
+/**
+ * Cards for a list of handles, in the order given.
+ *
+ * The order matters and the database will not preserve it: `IN` returns rows in
+ * whatever order suits the index, and a recently-viewed rail that reshuffles
+ * itself is not "recent" any more. Re-sorted here against the input.
+ *
+ * Silently drops handles that no longer resolve — unpublished since, renamed,
+ * deleted. A stale handle in somebody's cookie is not an error worth raising;
+ * it is just one fewer tile.
+ */
+export async function cardsByHandles(handles: string[]): Promise<StorefrontCardDto[]> {
+  const rows = await prisma.product.findMany({
+    where: { AND: [VISIBLE_PRODUCT, { handle: { in: handles } }] },
+    select: CARD_SELECT,
+  });
+
+  const byHandle = new Map(rows.map((row) => [row.handle, toCardDto(row)]));
+  return handles.map((handle) => byHandle.get(handle)).filter((card) => card !== undefined);
+}
+
 export async function suggestProducts(
   query: StorefrontSuggestQuery,
 ): Promise<StorefrontSuggestionDto[]> {

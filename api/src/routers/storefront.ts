@@ -45,6 +45,7 @@ import {
   resolveDeviceLocation,
   saveMyAddress,
   searchPlaces,
+  cardsByHandles,
   searchProducts,
   suggestProducts,
   updateMyProfile,
@@ -58,6 +59,7 @@ import {
   deviceLocationSchema,
   placeSearchSchema,
   priceCartSchema,
+  storefrontCardsByHandlesSchema,
   storefrontListQuerySchema,
   storefrontSuggestSchema,
   storefrontPageQuerySchema,
@@ -112,6 +114,11 @@ export const storefrontRouter = router({
   suggest: publicProcedure
     .input(storefrontSuggestSchema)
     .query(({ input }) => suggestProducts(input)),
+
+  /** Recently-viewed: the browser holds handles, the shop holds the prices. */
+  cardsByHandles: publicProcedure
+    .input(storefrontCardsByHandlesSchema)
+    .query(({ input }) => cardsByHandles(input.handles)),
 
   /*
    * The cart's totals.

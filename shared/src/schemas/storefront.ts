@@ -90,6 +90,19 @@ export const storefrontSuggestSchema = z.object({
   limit: z.coerce.number().int().min(1).max(10).default(8),
 });
 export type StorefrontSuggestQuery = z.infer<typeof storefrontSuggestSchema>;
+
+/**
+ * Products by handle, in the order asked for.
+ *
+ * Recently-viewed is the caller: the browser remembers handles and nothing
+ * else, so prices, stock and badges are read fresh on every render rather than
+ * frozen at the moment the shopper looked. On a shop whose cement rate moves
+ * daily, a cached price is a wrong price.
+ */
+export const storefrontCardsByHandlesSchema = z.object({
+  handles: z.array(z.string().trim().min(1).max(191)).min(1).max(12),
+});
+export type StorefrontCardsByHandlesQuery = z.infer<typeof storefrontCardsByHandlesSchema>;
 export type StorefrontPageQuery = z.infer<typeof storefrontPageQuerySchema>;
 
 /**
