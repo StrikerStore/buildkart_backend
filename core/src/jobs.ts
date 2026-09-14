@@ -52,6 +52,7 @@ export async function collectMediaGarbage(now: Date = new Date()): Promise<Media
       brands: { none: {} },
       bannersDesktop: { none: {} },
       bannersMobile: { none: {} },
+      reviewMedia: { none: {} },
     },
     select: { id: true, r2Key: true },
     take: 500,

@@ -104,6 +104,8 @@ test('only migrated domains expose mutations', () => {
     'content.saveBlogPost',
     'content.menu',
     'content.saveMenu',
+    'content.customerReviews',
+    'content.saveCustomerReview',
     'content.seoDefaults',
     'content.publishedPage',
     'content.publishedMenu',

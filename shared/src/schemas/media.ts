@@ -10,7 +10,7 @@ export const presignRequestSchema = z.object({
   filename: z.string().trim().min(1).max(255),
   contentType: z.string().trim().min(1).max(64).toLowerCase(),
   sizeBytes: z.number().int().positive().max(50 * 1024 * 1024),
-  prefix: z.enum(['products', 'categories', 'banners', 'imports']).default('products'),
+  prefix: z.enum(['products', 'categories', 'banners', 'imports', 'reviews']).default('products'),
 });
 export type PresignRequest = z.infer<typeof presignRequestSchema>;
 
@@ -66,6 +66,34 @@ export const MEDIA_EXTENSIONS: Record<string, string> = {
   'image/avif': 'avif',
   'text/csv': 'csv',
 };
+
+/**
+ * Video, for customer reviews and nowhere else.
+ *
+ * Held in code rather than added to `MEDIA_ALLOWED_MIME`, and that is the
+ * point. That variable is the allowlist for every upload in the shop, so
+ * widening it to video would let a clip be picked as a product photo or a
+ * banner — both of which render an `<img>`. Here the widening applies only to
+ * the `reviews` prefix, and only the review screen asks for it.
+ *
+ * Its own size cap for the same reason: a phone clip of a delivery is tens of
+ * megabytes, and raising the shop-wide image cap to fit it would stop catching
+ * the 30 MB photo that should have been resized. Bytes go straight from the
+ * browser to R2, so the size costs this server nothing.
+ */
+export const REVIEW_VIDEO_MIME = ['video/mp4', 'video/webm', 'video/quicktime'] as const;
+export const REVIEW_VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+
+/** Kept apart from `MEDIA_EXTENSIONS`, which support attachments also read. */
+export const REVIEW_VIDEO_EXTENSIONS: Record<string, string> = {
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+
+export function isVideoMime(mime: string): boolean {
+  return mime.toLowerCase().startsWith('video/');
+}
 
 export function isAllowedImageMime(mime: string, allowed: string[]): boolean {
   return allowed.includes(mime.toLowerCase());

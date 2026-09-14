@@ -116,6 +116,7 @@ type MediaRow = {
     brands?: number;
     bannersDesktop?: number;
     bannersMobile?: number;
+    reviewMedia?: number;
   };
 };
 
@@ -126,7 +127,8 @@ export function toMediaDto(row: MediaRow): MediaDto {
     (counts?.categories ?? 0) +
     (counts?.brands ?? 0) +
     (counts?.bannersDesktop ?? 0) +
-    (counts?.bannersMobile ?? 0);
+    (counts?.bannersMobile ?? 0) +
+    (counts?.reviewMedia ?? 0);
 
   return {
     id: row.id,

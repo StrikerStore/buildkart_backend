@@ -28,6 +28,7 @@ import {
   parseOptionFilter,
   STOREFRONT_PAGE_SIZE,
   TRUST_MARKERS,
+  isVideoMime,
   type CommerceSettingsDto,
   type TrustMarker,
   type StorefrontAreaDto,
@@ -44,6 +45,7 @@ import {
   type StorefrontListResultDto,
   type StorefrontNavCategoryDto,
   type StorefrontProductDto,
+  type StorefrontReviewDto,
   type StorefrontSectionDto,
   type StorefrontSuggestionDto,
   type StorefrontSuggestQuery,
@@ -1230,6 +1232,64 @@ async function resolveSection(
       if (markers.length === 0) return null;
 
       return { ...head, type: 'TRUST_STRIP', markers, promiseHours: commerce.promiseHours };
+    }
+
+    case 'CUSTOMER_REVIEWS': {
+      /*
+       * The reviews posted under Website › Customer reviews, in the order
+       * arranged there. The phone number is selected only to be reduced to a
+       * boolean on the next line and goes no further: `verified` is all the
+       * badge claims, and the number is not the storefront's to hold.
+       *
+       * The average is over every showing review rather than the few in this
+       * band, so capping the band at six does not quietly change the headline.
+       */
+      const [rows, summary] = await Promise.all([
+        prisma.customerReview.findMany({
+          where: { isActive: true },
+          orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
+          take: limit,
+          select: {
+            id: true,
+            customerName: true,
+            customerPhone: true,
+            rating: true,
+            body: true,
+            media: {
+              orderBy: { position: 'asc' },
+              select: { media: { select: { r2Key: true, mimeType: true, width: true, height: true } } },
+            },
+          },
+        }),
+        prisma.customerReview.aggregate({
+          where: { isActive: true },
+          _avg: { rating: true },
+          _count: { _all: true },
+        }),
+      ]);
+      if (rows.length === 0) return null;
+
+      const reviews: StorefrontReviewDto[] = rows.map((row) => ({
+        id: row.id,
+        customerName: row.customerName,
+        rating: row.rating,
+        body: row.body,
+        verified: row.customerPhone !== null,
+        media: row.media.map(({ media }) => ({
+          kind: isVideoMime(media.mimeType) ? 'video' : 'image',
+          key: media.r2Key,
+          width: media.width,
+          height: media.height,
+        })),
+      }));
+
+      return {
+        ...head,
+        type: 'CUSTOMER_REVIEWS',
+        reviews,
+        averageRating: Math.round((summary._avg.rating ?? 0) * 10) / 10,
+        reviewCount: summary._count._all,
+      };
     }
 
     default:

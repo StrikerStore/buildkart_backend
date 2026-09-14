@@ -383,6 +383,29 @@ export type BannerDto = {
   endsAt: string | null;
 };
 
+// from core/src/read/reviews.ts
+export type CustomerReviewMediaDto = {
+  id: string;
+  r2Key: string;
+  filename: string;
+  mimeType: string;
+  kind: 'image' | 'video';
+};
+
+// from core/src/read/reviews.ts
+export type CustomerReviewDto = {
+  id: string;
+  customerName: string;
+  /** Admin only. The storefront's DTO carries `verified` instead. */
+  customerPhone: string | null;
+  rating: number;
+  body: string;
+  media: CustomerReviewMediaDto[];
+  position: number;
+  isActive: boolean;
+  createdAt: string;
+};
+
 // from core/src/read/content.ts
 export type HomepageSectionDto = {
   id: string;
@@ -1385,6 +1408,30 @@ export type StorefrontCollectionDto = {
   productCount: number;
 };
 
+export type StorefrontReviewMediaDto = {
+  kind: 'image' | 'video';
+  /** An R2 key. Images are resized by the website; a video is served as is. */
+  key: string;
+  width: number | null;
+  height: number | null;
+};
+
+/**
+ * A review as a shopper sees it.
+ *
+ * No phone number, by construction rather than by the renderer's restraint:
+ * `verified` is decided on the server, so the number is never in a page's
+ * payload for someone to find in view-source.
+ */
+export type StorefrontReviewDto = {
+  id: string;
+  customerName: string;
+  rating: number;
+  body: string;
+  verified: boolean;
+  media: StorefrontReviewMediaDto[];
+};
+
 export type StorefrontBannerDto = {
   titleEn: string | null;
   titleHi: string | null;
@@ -1445,6 +1492,16 @@ export type StorefrontSectionDto =
       markers: TrustMarker[];
       /** Carried so the strip needs no second call to render "{n}-hour delivery". */
       promiseHours: number;
+    }
+  | {
+      id: string;
+      type: 'CUSTOMER_REVIEWS';
+      titleEn: string | null;
+      titleHi: string | null;
+      reviews: StorefrontReviewDto[];
+      /** Over every showing review, not just the ones in this band. One decimal. */
+      averageRating: number;
+      reviewCount: number;
     };
 
 export type StorefrontHomeDto = {

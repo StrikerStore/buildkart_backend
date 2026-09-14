@@ -17,3 +17,4 @@ export * from './checkout.ts';
 export * from './notification.ts';
 export * from './support.ts';
 export * from './storefront.ts';
+export * from './reviews.ts';

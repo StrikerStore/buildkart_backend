@@ -191,6 +191,7 @@ model Media {
   bannersMobile  Banner[]          @relation("BannerMobile")
   blogCovers     BlogPost[]
   importTasks    ImportImageTask[]
+  reviewMedia    CustomerReviewMedia[]
 
   @@index([status, createdAt])
   @@index([source, createdAt])
@@ -1347,6 +1348,55 @@ model HomepageSection {
   updatedAt DateTime @updatedAt
 
   @@index([isActive, position])
+}
+
+/// A customer's review, posted by the owner on their behalf.
+///
+/// Admin-written by design: there is no storefront form, so nothing here was
+/// typed by an anonymous visitor and nothing needs moderating. Reviews appear
+/// only in the home page's CUSTOMER_REVIEWS band — never on a product, and
+/// never as a star rating on a card.
+model CustomerReview {
+  id           String @id @default(cuid())
+  customerName String @db.VarChar(191)
+
+  /// Private. Never sent to the storefront: the only thing a shopper learns
+  /// from it is that one was recorded, which is what the "Verified customer"
+  /// badge claims. Stored normalised to ten digits, like `Customer.phone`.
+  customerPhone String? @db.VarChar(20)
+
+  /// 1–5, enforced by a CHECK in the migration as well as by the schema.
+  rating Int
+  body   String @db.Text
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  media CustomerReviewMedia[]
+
+  @@index([isActive, position])
+}
+
+/// Photos and videos on a review, in the order the owner arranged them.
+///
+/// A join to `Media` rather than keys on the review, so the files live in the
+/// library like every other upload: the in-use guard stops one being deleted
+/// out from under a review, and the nightly GC leaves it alone.
+model CustomerReviewMedia {
+  id       String @id @default(cuid())
+  reviewId String
+  mediaId  String
+  position Int    @default(0)
+
+  review CustomerReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  media  Media          @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@unique([reviewId, mediaId])
+  @@index([reviewId, position])
+  @@index([mediaId])
 }
 
 /// A standalone page: About us, Contact, and the policies a payment gateway

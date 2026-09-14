@@ -11,11 +11,16 @@ import { z } from 'zod';
 import {
   deleteBanner,
   deleteBlogPost,
+  deleteCustomerReview,
   deletePage,
   deleteHomepageSection,
   getSettings,
   isR2Configured,
   listBanners,
+  listCustomerReviews,
+  reorderCustomerReviews,
+  saveCustomerReview,
+  setCustomerReviewActive,
   listHomepageSectionOptions,
   listHomepageSections,
   reorderBanners,
@@ -92,6 +97,23 @@ export const contentRouter = router({
   reorderBanners: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => reorderBanners(ctx.actor, input)),
+
+  // --- customer reviews --------------------------------------------------
+  // Admin-only both ways. The storefront never reads these directly: reviews
+  // reach it through `storefront.home`, already filtered and without phones.
+  customerReviews: adminProcedure.query(({ ctx }) => listCustomerReviews(ctx.actor)),
+  saveCustomerReview: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveCustomerReview(ctx.actor, input)),
+  setCustomerReviewActive: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => setCustomerReviewActive(ctx.actor, input)),
+  deleteCustomerReview: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => deleteCustomerReview(ctx.actor, input)),
+  reorderCustomerReviews: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => reorderCustomerReviews(ctx.actor, input)),
 
   saveHomepageSection: adminProcedure
     .input(payload)

@@ -67,6 +67,7 @@ export async function listMedia(
             brands: true,
             bannersDesktop: true,
             bannersMobile: true,
+            reviewMedia: true,
           },
         },
       },
@@ -104,7 +105,13 @@ export async function listMediaForPicker(
   const q = options.q?.trim() ?? '';
 
   const rows = await prisma.media.findMany({
-    where: { status: 'READY', ...(q ? { filename: { contains: q } } : {}) },
+    // Images only. Every slot this picker fills renders an `<img>`, so a review
+    // video — or an import's CSV — offered here would be a broken tile once chosen.
+    where: {
+      status: 'READY',
+      mimeType: { startsWith: 'image/' },
+      ...(q ? { filename: { contains: q } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: MEDIA_PICKER_PAGE_SIZE + 1,
     ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),

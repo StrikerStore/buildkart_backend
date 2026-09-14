@@ -113,6 +113,13 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'banner.enable': 'Turned a banner on',
   'banner.disable': 'Turned a banner off',
 
+  'review.create': 'Posted a customer review',
+  'review.update': 'Updated a customer review',
+  'review.delete': 'Deleted a customer review',
+  'review.reorder': 'Reordered the customer reviews',
+  'review.enable': 'Showed a customer review',
+  'review.disable': 'Hid a customer review',
+
   'homepage.create': 'Added a homepage section',
   'homepage.update': 'Updated a homepage section',
   'homepage.delete': 'Removed a homepage section',
@@ -182,6 +189,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   Banner: 'Banner',
   Category: 'Category',
   Customer: 'Customer',
+  CustomerReview: 'Customer review',
   Discount: 'Discount',
   HomepageSection: 'Homepage section',
   ImportJob: 'CSV import',
@@ -266,6 +274,8 @@ export function linkForEntity(entityType: string, entityId: string): string | nu
       return '/notifications';
     case 'Banner':
       return '/banners';
+    case 'CustomerReview':
+      return '/reviews';
     case 'HomepageSection':
       return '/homepage';
     case 'Media':

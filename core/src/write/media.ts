@@ -74,6 +74,7 @@ export async function deleteMedia(actor: Actor, id: string): Promise<ActionResul
           brands: true,
           bannersDesktop: true,
           bannersMobile: true,
+          reviewMedia: true,
         },
       },
     },
@@ -88,6 +89,7 @@ export async function deleteMedia(actor: Actor, id: string): Promise<ActionResul
   if (c.brands > 0) references.push(`${c.brands} brand${c.brands === 1 ? '' : 's'}`);
   const bannerCount = c.bannersDesktop + c.bannersMobile;
   if (bannerCount > 0) references.push(`${bannerCount} banner${bannerCount === 1 ? '' : 's'}`);
+  if (c.reviewMedia > 0) references.push(`${c.reviewMedia} customer review${c.reviewMedia === 1 ? '' : 's'}`);
 
   if (references.length > 0) {
     return actionError(
@@ -145,6 +147,7 @@ export async function deleteManyMedia(
           brands: true,
           bannersDesktop: true,
           bannersMobile: true,
+          reviewMedia: true,
         },
       },
     },
@@ -156,7 +159,13 @@ export async function deleteManyMedia(
   for (const row of rows) {
     const c = row._count;
     const used =
-      c.productImages + c.categories + c.brands + c.bannersDesktop + c.bannersMobile > 0;
+      c.productImages +
+        c.categories +
+        c.brands +
+        c.bannersDesktop +
+        c.bannersMobile +
+        c.reviewMedia >
+      0;
     if (used) blocked.push(row.filename);
     else deletable.push({ id: row.id, r2Key: row.r2Key });
   }

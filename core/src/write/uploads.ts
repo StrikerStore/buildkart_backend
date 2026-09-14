@@ -21,6 +21,9 @@ import {
   completeUploadSchema,
   MEDIA_EXTENSIONS,
   presignRequestSchema,
+  REVIEW_VIDEO_EXTENSIONS,
+  REVIEW_VIDEO_MAX_BYTES,
+  REVIEW_VIDEO_MIME,
   splitFilename,
   uniqueFilename,
 } from '@buildkart/shared';
@@ -105,17 +108,29 @@ export async function presignMediaUpload(
 
   const { filename, contentType, sizeBytes, prefix } = parsed.data;
 
+  /*
+   * A review may carry a video; nothing else may. Decided by the prefix the
+   * request names, and the prefix only picks a key folder — so a hand-crafted
+   * `reviews` upload of a clip still cannot be *attached* anywhere but a
+   * review: every other save path checks the file is an image.
+   */
+  const isReviewVideo =
+    prefix === 'reviews' && (REVIEW_VIDEO_MIME as readonly string[]).includes(contentType);
+
   // Re-checked here. The client validates too, but a hand-crafted request never
   // ran that code.
-  if (!config.allowedMime.includes(contentType)) {
+  if (!isReviewVideo && !config.allowedMime.includes(contentType)) {
     return fail('INVALID', `${contentType} is not an allowed file type.`);
   }
-  if (sizeBytes > config.maxBytes) {
-    const mb = (config.maxBytes / 1024 / 1024).toFixed(0);
-    return fail('INVALID', `Files must be under ${mb} MB.`);
+  const maxBytes = isReviewVideo ? REVIEW_VIDEO_MAX_BYTES : config.maxBytes;
+  if (sizeBytes > maxBytes) {
+    const mb = (maxBytes / 1024 / 1024).toFixed(0);
+    return fail('INVALID', `${isReviewVideo ? 'Videos' : 'Files'} must be under ${mb} MB.`);
   }
 
-  const extension = MEDIA_EXTENSIONS[contentType];
+  const extension = isReviewVideo
+    ? REVIEW_VIDEO_EXTENSIONS[contentType]
+    : MEDIA_EXTENSIONS[contentType];
   if (!extension) return fail('INVALID', `Unsupported file type ${contentType}.`);
 
   // ULID keys sort by creation time and cannot collide; the date partition keeps

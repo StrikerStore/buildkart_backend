@@ -147,7 +147,7 @@ export function mediaAlt(media: MediaRef, locale: 'en' | 'hi' = 'en'): string {
  * grows, and ULID-named so keys sort by creation time and never collide.
  */
 export function buildR2Key(
-  prefix: 'products' | 'categories' | 'banners' | 'imports' | 'support',
+  prefix: 'products' | 'categories' | 'banners' | 'imports' | 'support' | 'reviews',
   id: string,
   ext: string,
 ): string {
