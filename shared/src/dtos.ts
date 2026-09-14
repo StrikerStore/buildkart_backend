@@ -394,6 +394,8 @@ export type HomepageSectionDto = {
   /** TAG_CAROUSEL: the tag's slug. Resolved from a legacy id when the row predates slugs. */
   tagSlug: string | null;
   limit: number;
+  /** NEW_ARRIVALS only: days a product counts as new after it first went live. */
+  days: number;
   /** TRUST_STRIP only: which promises the row makes. */
   markers: TrustMarker[];
   position: number;
@@ -1410,12 +1412,12 @@ export type StorefrontSectionDto =
   | {
       id: string;
       /*
-       * Three kinds share a shape because they differ only in where the rows
-       * came from — hand-picked, by tag, or the rate-volatile lines. The
-       * renderer still tells them apart: RATE_TICKER shows the freshness stamp,
-       * the other two do not.
+       * Four kinds share a shape because they differ only in where the rows
+       * came from — hand-picked, by tag, recently listed, or the rate-volatile
+       * lines. The renderer still tells them apart: RATE_TICKER shows the
+       * freshness stamp, the others do not.
        */
-      type: 'PRODUCT_CAROUSEL' | 'TAG_CAROUSEL' | 'RATE_TICKER';
+      type: 'PRODUCT_CAROUSEL' | 'TAG_CAROUSEL' | 'NEW_ARRIVALS' | 'RATE_TICKER';
       titleEn: string | null;
       titleHi: string | null;
       products: StorefrontCardDto[];

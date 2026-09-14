@@ -1075,6 +1075,7 @@ async function resolveSection(
     tagSlug?: unknown;
     tagId?: unknown;
     limit?: unknown;
+    days?: unknown;
     markers?: unknown;
   };
   const ids = (value: unknown): string[] =>
@@ -1157,6 +1158,33 @@ async function resolveSection(
         // The tag is a collection, so the row has somewhere to lead.
         href: `/collections/${tag.slug}`,
       };
+    }
+
+    case 'NEW_ARRIVALS': {
+      /*
+       * "Listed" is `publishedAt`: when the product first went live. Every
+       * publish path stamps it once and never rewinds it, so a product archived
+       * and brought back does not come round as new again, and a copy made with
+       * Duplicate starts unset until it is published.
+       *
+       * The window is recomputed on every render rather than swept by a job, so
+       * a product leaves the band the moment its time is up — nothing has to run
+       * for that to happen, and nothing can forget to.
+       */
+      const days = typeof config.days === 'number' ? Math.min(Math.max(config.days, 1), 90) : 15;
+      const now = new Date();
+      const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+
+      const rows = await prisma.product.findMany({
+        where: { ...VISIBLE_PRODUCT, publishedAt: { gte: since, lte: now } },
+        orderBy: [{ publishedAt: 'desc' }],
+        take: limit,
+        select: CARD_SELECT,
+      });
+      // An empty window hides the band rather than rendering a titled gap.
+      if (rows.length === 0) return null;
+
+      return { ...head, type: 'NEW_ARRIVALS', products: rows.map(toCardDto), href: null };
     }
 
     case 'RATE_TICKER': {

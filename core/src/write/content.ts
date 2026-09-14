@@ -204,6 +204,7 @@ export async function saveHomepageSection(
     }
     config.tagSlug = tag.slug;
   }
+  if (data.type === 'NEW_ARRIVALS') config.days = data.config.days;
 
   const values = {
     type: data.type,

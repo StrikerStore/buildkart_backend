@@ -104,3 +104,24 @@ test('a marker this build does not know is dropped rather than rejected', () => 
   assert.ok(dto, 'a newer admin must not take the page down');
   assert.deepEqual(dto.markers, ['fast']);
 });
+
+test('a new arrivals section keeps the days it was saved with', () => {
+  const dto = toHomepageSectionDto(
+    row({ type: 'NEW_ARRIVALS', configJson: { limit: 10, days: 30 } }),
+  );
+  assert.ok(dto);
+  assert.equal(dto.type, 'NEW_ARRIVALS');
+  assert.equal(dto.days, 30);
+  assert.equal(dto.limit, 10);
+});
+
+/*
+ * `days` was added to a config column already holding rows. A section saved
+ * before it existed must read back with the fifteen-day default rather than
+ * failing to parse and falling back to an empty config.
+ */
+test('a config saved before days existed reads back as fifteen days', () => {
+  const dto = toHomepageSectionDto(row({ type: 'NEW_ARRIVALS', configJson: { limit: 12 } }));
+  assert.ok(dto);
+  assert.equal(dto.days, 15);
+});

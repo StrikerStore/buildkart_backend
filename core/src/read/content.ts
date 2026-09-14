@@ -96,6 +96,7 @@ export function toHomepageSectionDto(row: HomepageSectionRow): HomepageSectionDt
     productIds: config.productIds,
     tagSlug: config.tagSlug ?? null,
     limit: config.limit,
+    days: config.days,
     markers: config.markers,
     position: row.position,
     isActive: row.isActive,
@@ -139,9 +140,7 @@ export async function listHomepageSections(actor: Actor): Promise<HomepageSectio
 }
 
 /** What the section form can point at. See `loadPickerOptions` for the caps. */
-export async function listHomepageSectionOptions(
-  actor: Actor,
-): Promise<HomepageSectionOptionsDto> {
+export async function listHomepageSectionOptions(actor: Actor): Promise<HomepageSectionOptionsDto> {
   assertPermission(actor, 'content:write');
   // Active categories only: a section pointing at a hidden category renders an
   // empty rail on the storefront.

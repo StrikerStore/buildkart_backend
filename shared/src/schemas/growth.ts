@@ -266,6 +266,7 @@ export const HOMEPAGE_SECTION_TYPES = [
   'CATEGORY_GRID',
   'PRODUCT_CAROUSEL',
   'TAG_CAROUSEL',
+  'NEW_ARRIVALS',
   'BANNER_STRIP',
   'RATE_TICKER',
   'TRUST_STRIP',
@@ -276,6 +277,7 @@ export const HOMEPAGE_SECTION_LABELS: Record<HomepageSectionType, string> = {
   CATEGORY_GRID: 'Category grid',
   PRODUCT_CAROUSEL: 'Product carousel',
   TAG_CAROUSEL: 'Products by tag',
+  NEW_ARRIVALS: 'New arrivals',
   BANNER_STRIP: 'Banner strip',
   RATE_TICKER: "Today's rates ticker",
   TRUST_STRIP: 'Why buy here',
@@ -285,6 +287,8 @@ export const HOMEPAGE_SECTION_HINTS: Record<HomepageSectionType, string> = {
   CATEGORY_GRID: 'A grid of categories, in the order you choose.',
   PRODUCT_CAROUSEL: 'A hand-picked row of products.',
   TAG_CAROUSEL: 'Every product carrying a tag, kept up to date on its own.',
+  NEW_ARRIVALS:
+    'The latest products to go live, newest first. Each one drops off on its own once it has been listed longer than the days you set.',
   BANNER_STRIP:
     'The Home strip banners, three across on a desktop. Move this section up to sit it just under the hero.',
   RATE_TICKER: 'Live prices for the rate-volatile lines.',
@@ -337,6 +341,12 @@ export const homepageSectionConfigSchema = z.object({
   /** Legacy: sections saved before slugs. Read, never written. */
   tagId: z.string().max(64).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(12),
+  /*
+   * NEW_ARRIVALS: how long a product counts as new, measured from when it first
+   * went live (`Product.publishedAt`). Ninety at most — past a quarter, "new"
+   * stops meaning anything a shopper would recognise.
+   */
+  days: z.coerce.number().int().min(1).max(90).default(15),
   /*
    * Defaults to all of them, which is what makes this field safe to add to a
    * table already full of rows: a section saved before the field existed reads
