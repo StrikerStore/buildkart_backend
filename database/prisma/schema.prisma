@@ -1367,7 +1367,11 @@ model CustomerReview {
 
   /// 1–5, enforced by a CHECK in the migration as well as by the schema.
   rating Int
-  body   String @db.Text
+
+  /// No longer written: reviews are photos and videos only since contract
+  /// 0.3.6. Nullable rather than dropped, so the words on reviews posted before
+  /// then are not destroyed by a deploy. Drop it once nothing wants them back.
+  body String? @db.Text
 
   position Int     @default(0)
   isActive Boolean @default(true)

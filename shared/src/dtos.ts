@@ -399,7 +399,7 @@ export type CustomerReviewDto = {
   /** Admin only. The storefront's DTO carries `verified` instead. */
   customerPhone: string | null;
   rating: number;
-  body: string;
+  /** At least one — a review is its photos and videos. */
   media: CustomerReviewMediaDto[];
   position: number;
   isActive: boolean;
@@ -1427,7 +1427,6 @@ export type StorefrontReviewDto = {
   id: string;
   customerName: string;
   rating: number;
-  body: string;
   verified: boolean;
   media: StorefrontReviewMediaDto[];
 };

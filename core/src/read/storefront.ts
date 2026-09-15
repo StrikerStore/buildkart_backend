@@ -1243,10 +1243,19 @@ async function resolveSection(
        *
        * The average is over every showing review rather than the few in this
        * band, so capping the band at six does not quietly change the headline.
+       *
+       * "Showing" includes having a photo or video. The band is portrait media
+       * cards, so a review with none has nothing to put on one; that is only
+       * possible for a review posted before reviews went media-only.
        */
+      const showing = {
+        isActive: true,
+        media: { some: {} },
+      } satisfies Prisma.CustomerReviewWhereInput;
+
       const [rows, summary] = await Promise.all([
         prisma.customerReview.findMany({
-          where: { isActive: true },
+          where: showing,
           orderBy: [{ position: 'asc' }, { createdAt: 'desc' }],
           take: limit,
           select: {
@@ -1254,7 +1263,6 @@ async function resolveSection(
             customerName: true,
             customerPhone: true,
             rating: true,
-            body: true,
             media: {
               orderBy: { position: 'asc' },
               select: { media: { select: { r2Key: true, mimeType: true, width: true, height: true } } },
@@ -1262,7 +1270,7 @@ async function resolveSection(
           },
         }),
         prisma.customerReview.aggregate({
-          where: { isActive: true },
+          where: showing,
           _avg: { rating: true },
           _count: { _all: true },
         }),
@@ -1273,7 +1281,6 @@ async function resolveSection(
         id: row.id,
         customerName: row.customerName,
         rating: row.rating,
-        body: row.body,
         verified: row.customerPhone !== null,
         media: row.media.map(({ media }) => ({
           kind: isVideoMime(media.mimeType) ? 'video' : 'image',

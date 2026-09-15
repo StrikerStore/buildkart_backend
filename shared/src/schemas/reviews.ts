@@ -1,18 +1,20 @@
 import { z } from 'zod';
 
 /**
- * Customer reviews, written into the admin by the owner.
+ * Customer reviews, posted into the admin by the owner.
  *
  * There is no storefront form. A review arrives the way this trade collects
- * them — over WhatsApp, at the counter, on a call — and the owner posts it, so
- * every row was entered by someone signed in. That is why there is no
- * moderation state here: nothing is pending, it is either showing or it is not.
+ * them — a customer's photo or clip of the delivery over WhatsApp — and the
+ * owner posts it, so every row was entered by someone signed in. That is why
+ * there is no moderation state here: nothing is pending, it is showing or not.
+ *
+ * **Photos and videos, no written text.** The home band is a row of portrait
+ * media cards with the stars and the customer's name over them; a review is
+ * what the customer showed, not a paragraph about it. So media is required and
+ * there is no text field to fill.
  */
 
-/** Long enough for a paragraph; short enough to read on a card. */
-export const REVIEW_BODY_LIMIT = 1000;
-
-/** Photos and videos per review. A card shows a strip of them, not a gallery. */
+/** Photos and videos per review. The first is the card; the rest open from it. */
 export const REVIEW_MEDIA_LIMIT = 6;
 
 export const customerReviewSchema = z.object({
@@ -45,17 +47,11 @@ export const customerReviewSchema = z.object({
     .min(1, 'Choose a star rating')
     .max(5, 'Choose a star rating'),
 
-  body: z
-    .string()
-    .trim()
-    .min(1, 'Write what the customer said')
-    .max(REVIEW_BODY_LIMIT, `Keep the review under ${REVIEW_BODY_LIMIT} characters`),
-
-  /** In display order. */
+  /** In display order. The first one is the card on the home page. */
   mediaIds: z
     .array(z.string().min(1).max(64))
+    .min(1, 'Add at least one photo or video')
     .max(REVIEW_MEDIA_LIMIT, `Up to ${REVIEW_MEDIA_LIMIT} photos and videos`)
-    .default([])
     .refine((ids) => new Set(ids).size === ids.length, 'The same file is attached twice'),
 
   isActive: z.boolean().default(true),

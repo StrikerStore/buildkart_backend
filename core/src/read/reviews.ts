@@ -33,7 +33,6 @@ export async function listCustomerReviews(actor: Actor): Promise<CustomerReviewD
     customerName: row.customerName,
     customerPhone: row.customerPhone,
     rating: row.rating,
-    body: row.body,
     media: row.media.map(({ media }) => ({
       id: media.id,
       r2Key: media.r2Key,

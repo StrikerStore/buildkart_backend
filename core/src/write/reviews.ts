@@ -67,7 +67,6 @@ export async function saveCustomerReview(
     customerName: data.customerName,
     customerPhone: data.customerPhone === '' ? null : data.customerPhone,
     rating: data.rating,
-    body: data.body,
     isActive: data.isActive,
   };
 

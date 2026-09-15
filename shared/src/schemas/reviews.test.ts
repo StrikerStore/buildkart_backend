@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { customerReviewSchema, REVIEW_MEDIA_LIMIT } from './reviews.ts';
 
 function review(overrides: Record<string, unknown> = {}) {
-  return { customerName: 'Ramesh Patel', rating: 5, body: 'Cement arrived the same day.', ...overrides };
+  return { customerName: 'Ramesh Patel', rating: 5, mediaIds: ['m1'], ...overrides };
 }
 
 test('a review without a phone parses, with the phone left blank', () => {
   const parsed = customerReviewSchema.parse(review());
   assert.equal(parsed.customerPhone, '');
-  assert.deepEqual(parsed.mediaIds, []);
+  assert.deepEqual(parsed.mediaIds, ['m1']);
   assert.equal(parsed.isActive, true);
 });
 
@@ -40,9 +40,22 @@ test('the rating must be a whole star count from one to five', () => {
   }
 });
 
-test('a review needs a name and some words', () => {
+test('a review needs a name', () => {
   assert.equal(customerReviewSchema.safeParse(review({ customerName: '  ' })).success, false);
-  assert.equal(customerReviewSchema.safeParse(review({ body: '' })).success, false);
+});
+
+/*
+ * The home band is portrait media cards. A review with nothing to show would
+ * be an empty card, so it is refused at the door rather than hidden later.
+ */
+test('a review with no photo or video is refused', () => {
+  assert.equal(customerReviewSchema.safeParse(review({ mediaIds: [] })).success, false);
+  assert.equal(customerReviewSchema.safeParse(review({ mediaIds: undefined })).success, false);
+});
+
+test('written text is not part of a review, and is dropped if sent', () => {
+  const parsed = customerReviewSchema.parse(review({ body: 'Great service' }));
+  assert.equal('body' in parsed, false);
 });
 
 test('media is capped, and the same file cannot be attached twice', () => {
