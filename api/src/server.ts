@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { createHTTPHandler } from '@trpc/server/adapters/standalone';
+import { isSecretsKeyConfigured } from '@buildkart/core';
 import { createContext } from './context.ts';
 import { verifyAdminSession } from './auth/verifier.ts';
 import { verifyCustomerSession } from './auth/customer-verifier.ts';
@@ -80,5 +81,23 @@ server.listen(PORT, '0.0.0.0', () => {
     // Not a warning to be tidied away: without it every request is untrusted
     // and the whole surface refuses, which looks like a broken deploy.
     console.warn('[api] SERVICE_TOKEN is not set — every request will be rejected.');
+  }
+
+  /*
+   * Said at boot, and said with the byte count, because the failure is silent
+   * and misreads easily: the admin only reports that credentials cannot be
+   * saved, and the usual cause is a key that *is* set but is 32 *characters*
+   * rather than 32 bytes — a passphrase decodes to 24, hex to 48. The length is
+   * all that is logged; the value never is.
+   */
+  if (!isSecretsKeyConfigured()) {
+    const raw = process.env.SETTINGS_ENCRYPTION_KEY;
+    console.warn(
+      raw
+        ? `[api] SETTINGS_ENCRYPTION_KEY decodes to ${Buffer.from(raw, 'base64url').length} bytes, not 32 — ` +
+            'payment and notification credentials cannot be saved. ' +
+            'backend/.env.example has the command that generates a valid one.'
+        : '[api] SETTINGS_ENCRYPTION_KEY is not set — payment and notification credentials cannot be saved.',
+    );
   }
 });
