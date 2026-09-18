@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { announcementBarSchema, ANNOUNCEMENT_TEXT_LIMIT } from './content.ts';
+import {
+  announcementBarSchema,
+  whatsappHref,
+  ANNOUNCEMENT_TEXT_LIMIT,
+  CONTACT_WHATSAPP_NUMBER,
+} from './content.ts';
 
 function bar(overrides: Record<string, unknown> = {}) {
   return { enabled: true, rotateSeconds: 5, items: [], ...overrides };
@@ -92,4 +97,29 @@ test('a url is optional and a message without one is plain text', () => {
     bar({ items: [{ textEn: 'Rates updated daily', textHi: '', url: '', isActive: true }] }),
   );
   assert.equal(parsed.items[0]?.url, '');
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp links — what a Contact page resolves to
+// ---------------------------------------------------------------------------
+
+/*
+ * A bare ten-digit number is how every phone number in this admin is typed, and
+ * wa.me reads one without a country code as a different number entirely — so
+ * the assumption is made here rather than left to the owner to remember.
+ */
+test('a ten-digit mobile gains the country code', () => {
+  assert.equal(whatsappHref('7024449697'), 'https://wa.me/917024449697');
+  assert.equal(whatsappHref(CONTACT_WHATSAPP_NUMBER), 'https://wa.me/917024449697');
+});
+
+test('spacing, dashes and a leading plus are stripped, and a country code is kept', () => {
+  assert.equal(whatsappHref('+91 70244-49697'), 'https://wa.me/917024449697');
+  assert.equal(whatsappHref('91 7024449697'), 'https://wa.me/917024449697');
+});
+
+/* An unset setting must not produce `https://wa.me/` — the caller falls back. */
+test('a number with no digits in it is not a link', () => {
+  assert.equal(whatsappHref(''), null);
+  assert.equal(whatsappHref('  '), null);
 });

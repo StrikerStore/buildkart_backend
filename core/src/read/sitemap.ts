@@ -44,8 +44,12 @@ export async function getSitemap(): Promise<SitemapDto> {
       take: MAX_PER_KIND,
       select: { handle: true, updatedAt: true },
     }),
+    /*
+     * A contact page is left out: it renders nothing and redirects to WhatsApp,
+     * so listing it would advertise a URL that takes a crawler off the site.
+     */
     prisma.page.findMany({
-      where: { isPublished: true },
+      where: { isPublished: true, NOT: { kind: 'CONTACT' } },
       orderBy: { position: 'asc' },
       take: MAX_PER_KIND,
       select: { slug: true, updatedAt: true },

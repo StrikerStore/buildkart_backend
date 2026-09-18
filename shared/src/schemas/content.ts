@@ -34,13 +34,42 @@ const slugField = z
  * `HomepageSection.type` gives: page kinds churn and every MySQL enum change is
  * an ALTER on a live table.
  */
-export const PAGE_KINDS = ['STANDARD', 'POLICY'] as const;
+export const PAGE_KINDS = ['STANDARD', 'POLICY', 'CONTACT'] as const;
 export type PageKind = (typeof PAGE_KINDS)[number];
 
 export const PAGE_KIND_LABELS: Record<PageKind, string> = {
   STANDARD: 'Standard page',
   POLICY: 'Policy',
+  CONTACT: 'Contact us',
 };
+
+/**
+ * A `CONTACT` page has no body: opening it hands the visitor to WhatsApp.
+ *
+ * It is a `Page` row rather than a hard-coded link so it can be dropped into
+ * the footer menu, renamed and translated like every other page — the menu
+ * builder only offers `Page` rows, and a raw `wa.me` URL typed into a menu is a
+ * phone number nobody would ever find again to change.
+ *
+ * The number comes from the store's WhatsApp setting when the owner has filled
+ * one in; this is the fallback for a shop that has not, so the link works the
+ * day the page is created.
+ */
+export const CONTACT_WHATSAPP_NUMBER = '7024449697';
+
+/**
+ * A `wa.me` link for a number typed by a human.
+ *
+ * Strips spaces, dashes and a leading `+` — none of which wa.me accepts — and
+ * assumes India for a bare ten-digit mobile, because that is how every number
+ * in this admin is written and a link without a country code silently opens a
+ * chat with nobody.
+ */
+export function whatsappHref(number: string): string | null {
+  const digits = number.replace(/\D/g, '');
+  if (!digits) return null;
+  return `https://wa.me/${digits.length === 10 ? `91${digits}` : digits}`;
+}
 
 /**
  * The pages a payment gateway asks to see before approving a merchant account,
