@@ -174,6 +174,14 @@ export async function getPublishedMenu(handle: string) {
       labelEn: item.labelEn,
       labelHi: item.labelHi,
       url: item.url,
+      /*
+       * Sent as its own flag rather than left for the storefront to infer from
+       * an empty `url`. A row with no address could equally be a bug in an
+       * older save, and `<Link href="">` silently resolves to the current page
+       * — a footer column title that navigates is worse than one that is plainly
+       * not a link.
+       */
+      isHeading: item.targetKind === 'HEADING',
       children: item.children.map((child) => ({
         labelEn: child.labelEn,
         labelHi: child.labelHi,

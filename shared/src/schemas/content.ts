@@ -102,8 +102,24 @@ export const MENU_LABELS: Record<MenuHandle, string> = {
   mobile: 'Mobile menu',
 };
 
-export const MENU_TARGET_KINDS = ['CATEGORY', 'PAGE', 'BLOG', 'PRODUCT', 'URL'] as const;
+/**
+ * `HEADING` is the odd one out: it points at nothing. It exists because the
+ * footer is drawn as titled columns — "Company", "Policy" — and a column title
+ * is not a link. Without it the owner would have to aim "Policy" at some page
+ * nobody meant to open just to hold four sub-links underneath.
+ */
+export const MENU_TARGET_KINDS = [
+  'CATEGORY',
+  'PAGE',
+  'BLOG',
+  'PRODUCT',
+  'URL',
+  'HEADING',
+] as const;
 export type MenuTargetKind = (typeof MENU_TARGET_KINDS)[number];
+
+/** The kinds that resolve to an href. `HEADING` is deliberately not one. */
+export type MenuLinkKind = Exclude<MenuTargetKind, 'HEADING'>;
 
 export const MENU_TARGET_LABELS: Record<MenuTargetKind, string> = {
   CATEGORY: 'Category',
@@ -111,6 +127,7 @@ export const MENU_TARGET_LABELS: Record<MenuTargetKind, string> = {
   BLOG: 'Blog',
   PRODUCT: 'Product',
   URL: 'Web address',
+  HEADING: 'Group title',
 };
 
 /**
@@ -146,6 +163,10 @@ export const menuItemSchema = z
   })
   .superRefine((value, ctx) => {
     const check = (kind: MenuTargetKind, targetId?: string, url?: string, path: (string | number)[] = []) => {
+      // A group title carries a label and nothing else; there is no address to
+      // check because it is never rendered as a link.
+      if (kind === 'HEADING') return;
+
       if (kind === 'URL') {
         if (!url?.trim()) {
           ctx.addIssue({ code: 'custom', path: [...path, 'url'], message: 'Enter a web address' });
@@ -168,9 +189,22 @@ export const menuItemSchema = z
     };
 
     check(value.targetKind, value.targetId, value.url);
-    value.children.forEach((child, index) =>
-      check(child.targetKind, child.targetId, child.url, ['children', index]),
-    );
+    value.children.forEach((child, index) => {
+      /*
+       * Only the top level may be a group title. Nesting is one level deep, so
+       * a title inside a group would head nothing — it would render as dead
+       * text where a shopper expects a link.
+       */
+      if (child.targetKind === 'HEADING') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['children', index, 'targetKind'],
+          message: 'A sub-link has to point somewhere — only a top-level row can be a group title',
+        });
+        return;
+      }
+      check(child.targetKind, child.targetId, child.url, ['children', index]);
+    });
   });
 export type MenuItemInput = z.infer<typeof menuItemSchema>;
 

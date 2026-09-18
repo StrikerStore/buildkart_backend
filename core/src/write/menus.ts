@@ -17,13 +17,14 @@ import {
   actionOk,
   saveMenuSchema,
   type ActionResult,
+  type MenuLinkKind,
   type MenuTargetKind,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
 
-/** Where each kind of target lives on the storefront. */
-const URL_PREFIX: Record<Exclude<MenuTargetKind, 'URL'>, string> = {
+/** Where each kind of target lives on the storefront. `HEADING` and `URL` are absent — neither resolves through a slug. */
+const URL_PREFIX: Record<Exclude<MenuLinkKind, 'URL'>, string> = {
   CATEGORY: '/category',
   PAGE: '/pages',
   BLOG: '/blog',
@@ -61,7 +62,7 @@ async function loadTargets(items: Array<{ targetKind: MenuTargetKind; targetId?:
     }),
   ]);
 
-  const map: Record<Exclude<MenuTargetKind, 'URL'>, Resolver> = {
+  const map: Record<Exclude<MenuLinkKind, 'URL'>, Resolver> = {
     CATEGORY: new Map(categories.map((r) => [r.id, { slug: r.slug, label: r.nameEn }])),
     PAGE: new Map(pages.map((r) => [r.id, { slug: r.slug, label: r.titleEn }])),
     BLOG: new Map(posts.map((r) => [r.id, { slug: r.slug, label: r.titleEn }])),
@@ -86,7 +87,7 @@ export async function saveMenu(actor: Actor, input: unknown): Promise<ActionResu
    * save look successful while quietly shortening the header.
    */
   for (const item of flat) {
-    if (item.targetKind === 'URL') continue;
+    if (item.targetKind === 'URL' || item.targetKind === 'HEADING') continue;
     if (!targets[item.targetKind].has(item.targetId!)) {
       return actionError(
         `"${item.labelEn}" points at something that no longer exists. Pick a new target for it.`,
@@ -94,10 +95,17 @@ export async function saveMenu(actor: Actor, input: unknown): Promise<ActionResu
     }
   }
 
+  /*
+   * A group title stores an empty `url`. Empty rather than `#`: the storefront
+   * decides a row is a title by having nowhere to go, and `#` is a real href
+   * that a crawler would follow back to the same page.
+   */
   const hrefFor = (item: { targetKind: MenuTargetKind; targetId?: string; url?: string }) =>
-    item.targetKind === 'URL'
-      ? item.url!.trim()
-      : `${URL_PREFIX[item.targetKind]}/${targets[item.targetKind].get(item.targetId!)!.slug}`;
+    item.targetKind === 'HEADING'
+      ? ''
+      : item.targetKind === 'URL'
+        ? item.url!.trim()
+        : `${URL_PREFIX[item.targetKind]}/${targets[item.targetKind].get(item.targetId!)!.slug}`;
 
   const menu = await prisma.menu.findUnique({
     where: { handle: data.handle },
@@ -126,7 +134,10 @@ export async function saveMenu(actor: Actor, input: unknown): Promise<ActionResu
           labelEn: item.labelEn,
           labelHi: item.labelHi ?? null,
           targetKind: item.targetKind,
-          targetId: item.targetKind === 'URL' ? null : (item.targetId ?? null),
+          targetId:
+            item.targetKind === 'URL' || item.targetKind === 'HEADING'
+              ? null
+              : (item.targetId ?? null),
           url: hrefFor(item),
           position: index,
           isActive: item.isActive,
