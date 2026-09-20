@@ -12,7 +12,7 @@ import {
   type CustomerListQuery,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
-import { dateToIso, decimalToString } from '../dto.ts';
+import { coordinateToString, dateToIso, decimalToString } from '../dto.ts';
 import type { CustomerAddressDto, CustomerDetailDto, CustomerListItemDto, CustomerListResultDto, CustomerOrderDto } from '@buildkart/shared';
 export type { CustomerAddressDto, CustomerDetailDto, CustomerListItemDto, CustomerListResultDto, CustomerOrderDto };
 
@@ -186,8 +186,10 @@ export async function getCustomerDetail(
       city: address.city,
       state: address.state,
       pincode: address.pincode,
-      latitude: decimalToString(address.latitude),
-      longitude: decimalToString(address.longitude),
+      // Coordinates are Decimal(10, 7); `decimalToString` is the money helper
+      // and throws on anything past two places.
+      latitude: coordinateToString(address.latitude),
+      longitude: coordinateToString(address.longitude),
       isDefault: address.isDefault,
     })),
     orders: customer.orders.map((order) => ({

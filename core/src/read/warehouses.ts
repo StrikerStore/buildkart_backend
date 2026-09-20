@@ -20,7 +20,7 @@ import type {
   WarehouseStockRowDto,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
-import { decimalToString } from '../dto.ts';
+import { coordinateToString } from '../dto.ts';
 
 export type { WarehouseDto, WarehouseStockPageDto, WarehouseStockRowDto };
 
@@ -42,8 +42,10 @@ export async function listWarehouses(actor: Actor): Promise<WarehouseDto[]> {
     city: row.city,
     state: row.state,
     pincode: row.pincode,
-    latitude: decimalToString(row.latitude),
-    longitude: decimalToString(row.longitude),
+    // Coordinates are Decimal(10, 7); `decimalToString` is the money helper and
+    // rejects anything past two places.
+    latitude: coordinateToString(row.latitude),
+    longitude: coordinateToString(row.longitude),
     position: row.position,
     isActive: row.isActive,
     variantCount: row._count.stock,
