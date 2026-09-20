@@ -6,7 +6,7 @@
  * missing or corrupt row degrades to the default instead of crashing a page.
  */
 import { z } from 'zod';
-import { MONEY_PATTERN } from './money.ts';
+import { MONEY_PATTERN, toPaise } from './money.ts';
 import { EMPTY_SECRET, encryptedSecretSchema } from './secrets.ts';
 
 const money = z.string().regex(MONEY_PATTERN, 'Must be an amount like "10000.00"');
@@ -438,6 +438,73 @@ export const SETTING_SCHEMAS = {
   'delivery.promise': z
     .object({ hours: z.number().int().min(1).max(72).default(4), cutoffTime: z.string().default('18:00') })
     .default({ hours: 4, cutoffTime: '18:00' }),
+
+  /**
+   * Charging by distance from the warehouse that holds the goods, rather than
+   * by a flat rate per pincode.
+   *
+   * `enabled` is off by default and means exactly one thing: fall back to
+   * `ServiceablePincode.deliveryCharge`, which is what the shop already runs
+   * on. It stays off until the warehouses are entered, so the feature can ship
+   * before the data does.
+   *
+   * `roadFactor` turns a straight line into something like a road. A real
+   * driving distance would mean a paid Distance Matrix call on every cart
+   * re-price, for a number that lands in a five-kilometre bucket anyway.
+   *
+   * Every figure here is a promise made to a customer — "free over 1,000 within
+   * 10 km" — which is why this key is on the public list below and holds no
+   * secret.
+   */
+  'delivery.distancePricing': z
+    .object({
+      enabled: z.boolean().default(false),
+      roadFactor: z.number().min(1).max(3).default(1.3),
+      blockKm: z.number().min(1).max(50).default(5),
+      perBlockCharge: money.default('50.00'),
+      standardThreshold: money.default('1000.00'),
+      standardFreeKm: z.number().min(0).max(500).default(10),
+      highValueThreshold: money.default('50000.00'),
+      highValueFreeKm: z.number().min(0).max(500).default(30),
+      smallOrderFee: money.default('50.00'),
+      smallOrderIncludedKm: z.number().min(0).max(500).default(10),
+      /** Null is uncapped. Applies to the summed total, not to one leg. */
+      maxCharge: money.nullable().default(null),
+    })
+    .default({
+      enabled: false,
+      roadFactor: 1.3,
+      blockKm: 5,
+      perBlockCharge: '50.00',
+      standardThreshold: '1000.00',
+      standardFreeKm: 10,
+      highValueThreshold: '50000.00',
+      highValueFreeKm: 30,
+      smallOrderFee: '50.00',
+      smallOrderIncludedKm: 10,
+      maxCharge: null,
+    })
+    /*
+     * Spending more must never cost more to deliver. Without this an admin can
+     * set the high-value threshold below the standard one, or give it a smaller
+     * free radius, and a 60,000 order quietly pays more than a 1,200 one.
+     */
+    .superRefine((value, ctx) => {
+      if (toPaise(value.highValueThreshold) <= toPaise(value.standardThreshold)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['highValueThreshold'],
+          message: 'Must be above the standard threshold',
+        });
+      }
+      if (value.highValueFreeKm < value.standardFreeKm) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['highValueFreeKm'],
+          message: 'Cannot be less than the standard free distance',
+        });
+      }
+    }),
 } as const;
 
 /**
@@ -462,6 +529,7 @@ export const SETTINGS_DTO_KEYS = [
   'order.minimumValue',
   'order.numberSequence',
   'delivery.promise',
+  'delivery.distancePricing',
   'seo.defaults',
   'payments.cod',
   'payments.razorpay',

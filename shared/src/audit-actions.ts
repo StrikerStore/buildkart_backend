@@ -105,6 +105,12 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'delivery.pincode.delete': 'Removed a delivery area',
   'delivery.requests.notified': 'Marked area requests as notified',
 
+  'delivery.warehouse.create': 'Added a warehouse',
+  'delivery.warehouse.update': 'Updated a warehouse',
+  'delivery.warehouse.delete': 'Removed a warehouse',
+  'delivery.warehouse.stock': 'Updated what a warehouse stocks',
+  'delivery.distancePricing': 'Updated the distance delivery charges',
+
   // Content
   'banner.create': 'Created a banner',
   'banner.update': 'Updated a banner',
@@ -254,6 +260,7 @@ export function linkForEntity(entityType: string, entityId: string): string | nu
       if (entityId.startsWith('checkout.')) return '/checkout';
       if (entityId.startsWith('notifications.')) return '/notifications';
       if (entityId.startsWith('payments.')) return '/settings/payments';
+      if (entityId === 'delivery.distancePricing') return '/delivery/charges';
       if (entityId === 'seo.defaults') return '/seo';
       return '/settings';
     case 'TaxRate':
@@ -264,6 +271,8 @@ export function linkForEntity(entityType: string, entityId: string): string | nu
       return '/delivery/pincodes';
     case 'PincodeRequest':
       return '/delivery/requests';
+    case 'Warehouse':
+      return `/delivery/warehouses/${entityId}`;
     case 'Page':
       return `/pages/${entityId}`;
     case 'BlogPost':

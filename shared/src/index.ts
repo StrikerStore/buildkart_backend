@@ -25,6 +25,7 @@ export * from './support.ts';
 export * from './secrets.ts';
 export * from './audit-actions.ts';
 export * from './order-pricing.ts';
+export * from './delivery-pricing.ts';
 export * from './discounts.ts';
 export * from './analytics.ts';
 export * from './metafields/index.ts';

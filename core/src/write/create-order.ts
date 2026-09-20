@@ -262,6 +262,17 @@ export async function writeOrder(
         // prints as exclusive, which is the wording that stays true either way.
         taxInclusive: pricing.taxAddedTotal === '0.00',
         taxIntraState: intraState,
+        /*
+         * Frozen for the same reason as `taxBreakdown`: recomputing this later
+         * from live warehouse rows would answer for today's stock rather than
+         * the day the order was placed.
+         *
+         * Left out rather than set to null when there is nothing to record — a
+         * nullable Json column wants a Prisma sentinel, and an omitted field
+         * already creates the row with NULL. A counter sale and a flat-rate
+         * order both land here.
+         */
+        ...(data.deliveryLegs ? { deliveryLegs: data.deliveryLegs } : {}),
         // Frozen like the address: an invoice is raised under the number the
         // buyer gave that day, not under whatever is on their record now.
         buyerGstin: data.buyerGstin ?? null,

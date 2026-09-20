@@ -175,6 +175,72 @@ export const pincodeRequestSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Warehouses
+// ---------------------------------------------------------------------------
+
+/**
+ * A stocking point.
+ *
+ * The coordinates are required and bounded to India's box, unlike a customer's
+ * saved address where they are optional: a warehouse without a pin cannot be
+ * routed to, so a row that lacks one would sit in the table doing nothing but
+ * looking configured.
+ */
+export const warehouseSchema = z.object({
+  id: z.string().max(64).optional(),
+  name: z.string().trim().min(1, 'Give the warehouse a name').max(191),
+  /** Short handle shown on an order's delivery breakdown. */
+  code: z
+    .string()
+    .trim()
+    .min(1, 'Give the warehouse a short code')
+    .max(32)
+    .regex(/^[A-Za-z0-9_-]+$/, 'Use letters, numbers, hyphens or underscores')
+    .transform((v) => v.toUpperCase()),
+  line1: z.string().trim().min(1, 'Address is needed').max(255),
+  line2: optionalText(255),
+  city: z.string().trim().min(1, 'City is needed').max(100),
+  state: z.string().trim().min(1, 'State is needed').max(100),
+  pincode: z.string().trim().regex(/^\d{6}$/, 'Enter a 6-digit pincode'),
+  latitude: z.coerce
+    .number({ message: 'Set the warehouse location on the map' })
+    .min(6)
+    .max(38),
+  longitude: z.coerce
+    .number({ message: 'Set the warehouse location on the map' })
+    .min(68)
+    .max(98),
+  position: z.coerce.number().int().min(0).max(9999).default(0),
+  isActive: z.boolean().default(true),
+});
+export type WarehouseInput = z.infer<typeof warehouseSchema>;
+
+export const deleteWarehouseSchema = z.object({ id: z.string().min(1).max(64) });
+
+/**
+ * A batch of routing rows for one warehouse.
+ *
+ * Batched because the editor saves only what the admin changed, and a hundred
+ * one-row mutations would be a hundred round trips and a hundred audit entries
+ * for what was one action. Quantity zero is how a variant is removed — the
+ * writer deletes the row rather than storing a zero, so the routing index stays
+ * about warehouses that actually hold something.
+ */
+export const warehouseStockSchema = z.object({
+  warehouseId: z.string().min(1).max(64),
+  rows: z
+    .array(
+      z.object({
+        variantId: z.string().trim().min(1).max(64),
+        quantity: z.coerce.number().int().min(0).max(9_999_999),
+      }),
+    )
+    .min(1, 'Nothing to save')
+    .max(500),
+});
+export type WarehouseStockInput = z.infer<typeof warehouseStockSchema>;
+
+// ---------------------------------------------------------------------------
 // Content
 // ---------------------------------------------------------------------------
 
@@ -471,4 +537,52 @@ export const commerceSettingsSchema = z
     },
   );
 export type CommerceSettingsInput = z.infer<typeof commerceSettingsSchema>;
+
+/**
+ * The distance-pricing rules, as the admin form posts them.
+ *
+ * A mirror of the `delivery.distancePricing` setting rather than a reuse of it:
+ * the registry schema describes a *stored* value, where every field defaults
+ * and a corrupt row degrades quietly. A form must not default a missing field —
+ * an admin who clears a box is saying something, and silently restoring 50.00
+ * would be the screen lying about what it saved.
+ *
+ * The two guards are the same ones the registry enforces, repeated here so the
+ * admin gets them as field errors on the offending input rather than as a
+ * write that fails somewhere further down.
+ */
+export const distancePricingSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    roadFactor: z.coerce
+      .number({ message: 'Enter a number like 1.3' })
+      .min(1, 'Roads are never shorter than a straight line')
+      .max(3, 'Anything above 3 is almost certainly a typo'),
+    blockKm: z.coerce.number({ message: 'Enter a distance in km' }).min(1).max(50),
+    perBlockCharge: money,
+    standardThreshold: money,
+    standardFreeKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
+    highValueThreshold: money,
+    highValueFreeKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
+    smallOrderFee: money,
+    smallOrderIncludedKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
+    maxCharge: optionalMoney,
+  })
+  .superRefine((value, ctx) => {
+    if (Number(value.highValueThreshold) <= Number(value.standardThreshold)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['highValueThreshold'],
+        message: 'Must be above the standard threshold',
+      });
+    }
+    if (value.highValueFreeKm < value.standardFreeKm) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['highValueFreeKm'],
+        message: 'Cannot be less than the standard free distance',
+      });
+    }
+  });
+export type DistancePricingInput = z.infer<typeof distancePricingSchema>;
 export type StoreSettingsInput = z.infer<typeof storeSettingsSchema>;

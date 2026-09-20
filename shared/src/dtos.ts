@@ -535,6 +535,45 @@ export type PincodeDto = {
   isActive: boolean;
 };
 
+// from core/src/read/warehouses.ts
+export type WarehouseDto = {
+  id: string;
+  name: string;
+  code: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  /** Strings, like every other Decimal that crosses into a client component. */
+  latitude: string;
+  longitude: string;
+  position: number;
+  isActive: boolean;
+  /** How many variants this warehouse is listed as holding. */
+  variantCount: number;
+};
+
+// from core/src/read/warehouses.ts
+export type WarehouseStockRowDto = {
+  variantId: string;
+  productName: string;
+  variantLabel: string | null;
+  sku: string | null;
+  unitLabel: string | null;
+  /** The routing quantity held here. Not the sellable shelf — see `WarehouseStock`. */
+  quantity: number;
+  /** The real, sellable stock, shown beside it so the two are never confused. */
+  sellableStockQty: number;
+};
+
+// from core/src/read/warehouses.ts
+export type WarehouseStockPageDto = {
+  rows: WarehouseStockRowDto[];
+  /** Pass back as `cursor` for the next page. Null at the end. */
+  nextCursor: string | null;
+};
+
 // from core/src/read/growth.ts
 export type AreaRequestDto = {
   pincode: string;
@@ -830,6 +869,28 @@ export type CommerceSettingsDto = {
 export type SettingsDto = {
   store: StoreProfileDto;
   commerce: CommerceSettingsDto;
+  /**
+   * The distance-delivery rules.
+   *
+   * Public like the rest of this object, and for the same reason: every figure
+   * in it is a promise made to a customer — "free over ₹1,000 within 10 km" —
+   * so the storefront is entitled to render it. It holds no secret.
+   */
+  distancePricing: DistancePricingDto;
+};
+
+export type DistancePricingDto = {
+  enabled: boolean;
+  roadFactor: number;
+  blockKm: number;
+  perBlockCharge: string;
+  standardThreshold: string;
+  standardFreeKm: number;
+  highValueThreshold: string;
+  highValueFreeKm: number;
+  smallOrderFee: string;
+  smallOrderIncludedKm: number;
+  maxCharge: string | null;
 };
 
 // from core/src/read/stock.ts
@@ -1697,6 +1758,27 @@ export type CartDeliveryDto = {
   charge: string;
   freeAbove: string | null;
   promiseHours: number | null;
+  /**
+   * How `charge` was arrived at. `PINCODE` is the flat per-area rate this cart
+   * has always used; `DISTANCE` means it was worked out from how far the goods
+   * travel, and `legs` then says from where.
+   */
+  mode: 'PINCODE' | 'DISTANCE';
+  /**
+   * One entry per warehouse serving this cart, when the charge was worked out
+   * by distance. Empty otherwise. More than one entry means the basket is
+   * coming in more than one van, which is why the charge is what it is — so it
+   * is carried to the storefront rather than left as an unexplained total.
+   */
+  legs: CartDeliveryLegDto[];
+};
+
+export type CartDeliveryLegDto = {
+  warehouseId: string;
+  warehouseName: string;
+  /** Road-adjusted distance, to one decimal place. */
+  roadKm: number;
+  charge: string;
 };
 
 /** The outcome of a typed code, said in a way the cart can render directly. */

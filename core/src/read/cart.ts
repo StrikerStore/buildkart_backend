@@ -26,7 +26,11 @@ import {
   priceOrder,
   PricingError,
   type PricedLine,
+  quoteDelivery,
   subtractMoney,
+  type CartDeliveryDto,
+  type CartDeliveryLegDto,
+  type DeliveryQuote,
   type CartCouponDto,
   type CartCouponsInput,
   type CartDiscountDto,
@@ -37,6 +41,7 @@ import {
   type PriceCartInput,
 } from '@buildkart/shared';
 import { decimalToString } from '../dto.ts';
+import { findStockingWarehouses } from './warehouses.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 
 /** The empty answer, so a cleared cart and a cart of only-dead lines agree. */
@@ -114,12 +119,43 @@ function variantLabel(variant: CartVariant): string | null {
   return parts.length > 0 ? parts.join(' / ') : null;
 }
 
+/**
+ * What a quote says delivery costs, or the area's flat rate when it declined to
+ * answer. Null when there is no area at all — an unchosen pincode.
+ */
+function chargeFrom(
+  quote: DeliveryQuote,
+  area: { serviced: boolean; charge: string } | null,
+): string | null {
+  if (area === null) return null;
+  if (!area.serviced) return '0.00';
+  return quote.mode === 'DISTANCE' ? quote.deliveryCharge : area.charge;
+}
+
 export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   const settingsRows = await prisma.setting.findMany({
-    where: { key: { in: ['order.minimumValue'] } },
+    where: { key: { in: ['order.minimumValue', 'delivery.distancePricing'] } },
   });
   const byKey = new Map(settingsRows.map((row) => [row.key, row.value]));
   const minimumOrderValue = parseSetting('order.minimumValue', byKey.get('order.minimumValue')).amount;
+  const distanceConfig = parseSetting(
+    'delivery.distancePricing',
+    byKey.get('delivery.distancePricing'),
+  );
+
+  /*
+   * The pin the shopper dropped, when there is one.
+   *
+   * A coordinate the client supplied can only ever *understate* a distance, and
+   * here it only moves a preview. The authoritative charge is struck at order
+   * time, where `place-order.ts` re-prices from `address.latitude/longitude` —
+   * the pin the goods are actually going to — so a shopper who lies about it
+   * has lied about where their delivery goes.
+   */
+  const destination =
+    input.latitude !== undefined && input.longitude !== undefined
+      ? { latitude: input.latitude, longitude: input.longitude }
+      : null;
 
   const area = input.pincode
     ? await prisma.serviceablePincode.findUnique({ where: { pincode: input.pincode } })
@@ -134,6 +170,10 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
         charge: area?.isActive ? decimalToString(area.deliveryCharge) : '0.00',
         freeAbove: area?.isActive ? decimalToString(area.freeDeliveryAbove) : null,
         promiseHours: area?.isActive ? area.promiseHours : null,
+        // Overwritten below once the cart is known to hold something. An empty
+        // or undeliverable cart keeps the flat rate, which costs nothing.
+        mode: 'PINCODE' as CartDeliveryDto['mode'],
+        legs: [] as CartDeliveryLegDto[],
       }
     : null;
 
@@ -218,16 +258,74 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     throw error;
   }
 
+  /*
+   * The delivery quote is taken twice for the same reason the price is.
+   *
+   * A FREE_DELIVERY coupon is worth whatever delivery costs, so resolving it
+   * needs a charge — but the charge's tier is judged on the subtotal *after*
+   * the discount. The first quote breaks the circle by asking what delivery
+   * would cost with no discount at all, which is what the coupon is worth; the
+   * second is the one the customer pays. The warehouse lookup happens once and
+   * `quoteDelivery` is pure, so the second pass costs nothing.
+   */
+  const stockedBy = distanceConfig.enabled
+    ? await findStockingWarehouses(orderLines.map((line) => line.variantId))
+    : new Map();
+
+  const quoteArgs = {
+    destination,
+    lines: orderLines,
+    stockedBy,
+    config: distanceConfig,
+  };
+
+  const probeQuote = quoteDelivery({ ...quoteArgs, afterDiscount: probe.subtotal });
+
   const resolved = input.discountCode
-    ? await resolveDiscount(input.discountCode, probe, kept, delivery?.charge ?? '0.00')
+    ? await resolveDiscount(
+        input.discountCode,
+        probe,
+        kept,
+        chargeFrom(probeQuote, delivery) ?? '0.00',
+      )
     : null;
+
+  const afterDiscount = subtractMoney(
+    probe.subtotal,
+    resolved?.applied ? resolved.amount : '0.00',
+  );
+  const quote = quoteDelivery({ ...quoteArgs, afterDiscount });
+
+  /*
+   * Serviceability is still the pincode's to decide. Distance pricing only ever
+   * changes what a delivery costs, never whether there is one — so an unserviced
+   * area charges nothing here exactly as it did before.
+   */
+  const usesDistance = Boolean(delivery?.serviced) && quote.mode === 'DISTANCE';
+
+  if (delivery) {
+    if (usesDistance && quote.mode === 'DISTANCE') {
+      delivery.mode = 'DISTANCE';
+      delivery.charge = quote.deliveryCharge;
+      delivery.legs = quote.legs.map((leg) => ({
+        warehouseId: leg.warehouseId,
+        warehouseName: leg.warehouseName,
+        roadKm: leg.roadKm,
+        charge: leg.charge,
+      }));
+      // The free radius is inside the tiers now, so there is no threshold left
+      // to promise — and showing the area's would be promising the wrong thing.
+      delivery.freeAbove = null;
+    }
+  }
 
   const pricing = priceOrder(orderLines, catalog, {
     deliveryCharge: delivery?.serviced ? delivery.charge : '0.00',
     discountTotal: resolved?.applied ? resolved.amount : undefined,
     // A FREE_DELIVERY discount is expressed as a zero threshold, which is what
     // `priceOrder` already understands — rather than a second free-delivery
-    // concept it would have to be taught.
+    // concept it would have to be taught. It still zeroes a distance-computed
+    // charge, because the charge is what the threshold is tested against.
     freeDeliveryAbove: resolved?.applied && resolved.freeDelivery
       ? '0.00'
       : (delivery?.serviced ? delivery.freeAbove : null),

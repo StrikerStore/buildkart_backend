@@ -183,12 +183,12 @@ model Media {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  uploadedBy     AdminUser?        @relation(fields: [uploadedByAdminId], references: [id], onDelete: SetNull)
+  uploadedBy     AdminUser?            @relation(fields: [uploadedByAdminId], references: [id], onDelete: SetNull)
   productImages  ProductImage[]
   categories     Category[]
   brands         Brand[]
-  bannersDesktop Banner[]          @relation("BannerDesktop")
-  bannersMobile  Banner[]          @relation("BannerMobile")
+  bannersDesktop Banner[]              @relation("BannerDesktop")
+  bannersMobile  Banner[]              @relation("BannerMobile")
   blogCovers     BlogPost[]
   importTasks    ImportImageTask[]
   reviewMedia    CustomerReviewMedia[]
@@ -633,12 +633,13 @@ model ProductVariant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  product      Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
-  image        ProductImage?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
-  priceHistory PriceHistory[]
-  adjustments  InventoryAdjustment[]
-  orderItems   OrderItem[]
-  tiers        VariantPriceTier[]
+  product        Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  image          ProductImage?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  priceHistory   PriceHistory[]
+  adjustments    InventoryAdjustment[]
+  orderItems     OrderItem[]
+  tiers          VariantPriceTier[]
+  warehouseStock WarehouseStock[]
 
   @@unique([productId, matrixKey])
   /// Scoped to the product, not global. Shopify does not enforce global SKU
@@ -685,7 +686,7 @@ model VariantPriceTier {
   /// AMOUNT only. Inclusive, and measured against the line's *list* total
   /// (quantity × list price) — never the bulk-adjusted one, or a line could
   /// drop below its own rung by qualifying for it.
-  minAmount Decimal? @db.Decimal(10, 2)
+  minAmount   Decimal? @db.Decimal(10, 2)
 
   unitPrice Decimal @db.Decimal(10, 2)
   position  Int     @default(0)
@@ -709,13 +710,13 @@ model PriceHistory {
   id        String @id @default(cuid())
   variantId String
 
-  price     Decimal  @db.Decimal(10, 2)
+  price          Decimal  @db.Decimal(10, 2)
   /// The single bulk price this shop used to carry, before ladders. Kept so old
   /// rows still read correctly; never written any more.
-  bulkPrice Decimal? @db.Decimal(10, 2)
+  bulkPrice      Decimal? @db.Decimal(10, 2)
   /// The bulk ladder as it stood after the change, so the ledger keeps
   /// explaining bulk rates now that they are a list rather than one number.
-  tiersJson Json?
+  tiersJson      Json?
   /// The MRP at the time of the change. Nullable because rows written before
   /// the rates screen could edit it have no MRP to record.
   compareAtPrice Decimal? @db.Decimal(10, 2)
@@ -980,6 +981,15 @@ model Order {
   /// Frozen copy of the delivery address. The customer editing their saved
   /// address must not rewrite where a past order went.
   addressSnapshot Json
+
+  /// Frozen per-warehouse delivery breakdown, when the charge was worked out by
+  /// distance: [{ warehouseId, warehouseName, roadKm, charge, variantIds }].
+  ///
+  /// Frozen for the same reason as `taxBreakdown`: ops needs to know which
+  /// godown sent what, and recomputing it later from live warehouse rows would
+  /// answer for today's stock rather than the day the order was placed. Null on
+  /// orders charged by the per-pincode rule.
+  deliveryLegs Json?
 
   customerNote String? @db.Text
   internalNote String? @db.Text
@@ -1257,6 +1267,64 @@ model DiscountRedemption {
 
   @@unique([discountId, orderId])
   @@index([discountId, customerId])
+}
+
+/// A physical stocking point. `latitude`/`longitude` are the load-bearing
+/// columns — the delivery charge is worked out from the distance to them, and
+/// the postal address below is for the human reading the admin.
+model Warehouse {
+  id   String @id @default(cuid())
+  name String @db.VarChar(191)
+  /// Short handle shown on an order's delivery breakdown, where the full name
+  /// would not fit.
+  code String @unique @db.VarChar(32)
+
+  line1   String  @db.VarChar(255)
+  line2   String? @db.VarChar(255)
+  city    String  @db.VarChar(100)
+  state   String  @db.VarChar(100)
+  pincode String  @db.VarChar(10)
+
+  /// Decimal, not Float — the same choice `Address` makes, for the same reason:
+  /// this is navigated to, and a float drifts.
+  latitude  Decimal @db.Decimal(10, 7)
+  longitude Decimal @db.Decimal(10, 7)
+
+  /// Breaks ties between two equidistant warehouses, so a cart priced twice
+  /// picks the same one both times rather than whatever order MySQL returned.
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stock WarehouseStock[]
+
+  @@index([isActive, position])
+}
+
+/// Which warehouse can serve which variant.
+///
+/// **Routing only.** The shelf and the money are still `ProductVariant.stockQty`
+/// — nothing here is decremented when an order is placed, and nothing here can
+/// stop a sale. A row answers one question: "could this be sent from there",
+/// which is what fixes the distance the charge is computed from.
+model WarehouseStock {
+  id          String @id @default(cuid())
+  warehouseId String
+  variantId   String
+
+  quantity Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, variantId])
+  /// The routing query is "which warehouses hold this variant", so the variant
+  /// leads the index.
+  @@index([variantId, quantity])
 }
 
 /// Adding a row here expands the delivery area immediately — no deploy.

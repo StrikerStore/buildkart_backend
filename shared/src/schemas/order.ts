@@ -327,6 +327,25 @@ export const createOrderSchema = z.object({
   lines: z.array(orderLineSchema).min(1, 'Add at least one item').max(100),
 
   deliveryCharge: optionalMoney,
+  /**
+   * The per-warehouse breakdown behind `deliveryCharge`, when it was worked out
+   * by distance. Recorded, never recomputed: `writeOrder` freezes what it is
+   * given here because the caller is the only one who still knows which godown
+   * was nearest at the moment the charge was struck.
+   *
+   * Absent on a counter sale, where a person decided the charge.
+   */
+  deliveryLegs: z
+    .array(
+      z.object({
+        warehouseId: z.string().trim().min(1).max(64),
+        warehouseName: z.string().trim().max(191),
+        roadKm: z.number().min(0).max(100000),
+        charge: money,
+      }),
+    )
+    .max(50)
+    .optional(),
   discountTotal: optionalMoney,
   discountCode: optionalText(64),
 

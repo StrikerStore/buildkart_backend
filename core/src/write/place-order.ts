@@ -96,6 +96,17 @@ export async function placeCustomerOrder(
   const priced = await priceCart({
     lines: data.lines,
     pincode: data.address.pincode,
+    /*
+     * The pin from the *address*, not from whatever the cart was carrying.
+     *
+     * This is the moment the delivery charge stops being a quote. `priceCart`
+     * will take a coordinate from the storefront to preview a charge, where the
+     * worst a fabricated one can do is show the shopper a wrong number. Here it
+     * decides money, so it comes from the address the goods are being sent to —
+     * which `placeOrderSchema` requires for exactly this reason.
+     */
+    latitude: data.address.latitude,
+    longitude: data.address.longitude,
     ...(data.discountCode ? { discountCode: data.discountCode } : {}),
   });
 
@@ -162,6 +173,12 @@ export async function placeCustomerOrder(
       unitPriceOverride: undefined,
     })),
     deliveryCharge: priced.deliveryCharge,
+    /*
+     * Frozen alongside the charge, so an invoice can always say which godown
+     * each part of the order came from and what carrying it cost — even after
+     * that godown has been closed or its stock has moved.
+     */
+    deliveryLegs: priced.delivery?.mode === 'DISTANCE' ? priced.delivery.legs : undefined,
     discountTotal: priced.discount?.applied ? priced.discount.amount : undefined,
     discountCode: priced.discount?.applied ? priced.discount.code : undefined,
     paymentMethod: data.paymentMethod,

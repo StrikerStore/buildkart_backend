@@ -49,6 +49,10 @@ export async function getSettings(): Promise<SettingsDto> {
 
   const promise = parseSetting('delivery.promise', byKey.get('delivery.promise'));
   const sequence = parseSetting('order.numberSequence', byKey.get('order.numberSequence'));
+  const distance = parseSetting(
+    'delivery.distancePricing',
+    byKey.get('delivery.distancePricing'),
+  );
 
   return {
     store: parseSetting('store.profile', byKey.get('store.profile')),
@@ -69,6 +73,22 @@ export async function getSettings(): Promise<SettingsDto> {
       snapmintEnabled: parseSetting('payments.snapmint', byKey.get('payments.snapmint')).enabled,
       promiseHours: promise.hours,
       cutoffTime: promise.cutoffTime,
+    },
+    // Field by field like everything else here, though this key holds nothing
+    // sensitive: the rule is what keeps a future secret from riding along on a
+    // spread somebody added without thinking about this function.
+    distancePricing: {
+      enabled: distance.enabled,
+      roadFactor: distance.roadFactor,
+      blockKm: distance.blockKm,
+      perBlockCharge: distance.perBlockCharge,
+      standardThreshold: distance.standardThreshold,
+      standardFreeKm: distance.standardFreeKm,
+      highValueThreshold: distance.highValueThreshold,
+      highValueFreeKm: distance.highValueFreeKm,
+      smallOrderFee: distance.smallOrderFee,
+      smallOrderIncludedKm: distance.smallOrderIncludedKm,
+      maxCharge: distance.maxCharge,
     },
   };
 }

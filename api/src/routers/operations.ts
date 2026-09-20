@@ -19,6 +19,7 @@ import {
   deleteManyMedia,
   deleteMedia,
   deletePincode,
+  deleteWarehouse,
   getImportJob,
   getInventory,
   listAreaRequests,
@@ -29,6 +30,8 @@ import {
   listMedia,
   listMediaForPicker,
   listPincodes,
+  listWarehouseStock,
+  listWarehouses,
   listBulkTiers,
   listRates,
   loadDashboard,
@@ -36,7 +39,10 @@ import {
   presignMediaUpload,
   runImageBatch,
   saveDiscount,
+  saveDistancePricing,
   savePincode,
+  saveWarehouse,
+  saveWarehouseStock,
   saveBulkTiers,
   saveRates,
   setDiscountActive,
@@ -66,6 +72,30 @@ export const operationsRouter = router({
   markRequestsNotified: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => markRequestsNotified(ctx.actor, input)),
+
+  // --- warehouses --------------------------------------------------------
+  warehouses: adminProcedure.query(({ ctx }) => listWarehouses(ctx.actor)),
+  warehouseStock: adminProcedure
+    .input(
+      z.object({
+        warehouseId: z.string().trim().min(1).max(64),
+        search: z.string().trim().max(100).optional(),
+        cursor: z.string().trim().max(64).optional(),
+      }),
+    )
+    .query(({ ctx, input }) => listWarehouseStock(ctx.actor, input)),
+  saveWarehouse: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveWarehouse(ctx.actor, input)),
+  deleteWarehouse: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => deleteWarehouse(ctx.actor, input)),
+  saveWarehouseStock: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveWarehouseStock(ctx.actor, input)),
+  saveDistancePricing: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveDistancePricing(ctx.actor, input)),
 
   // --- discounts ---------------------------------------------------------
   discounts: adminProcedure.query(({ ctx }) => listDiscounts(ctx.actor)),

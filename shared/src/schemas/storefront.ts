@@ -136,6 +136,21 @@ export const priceCartSchema = z.object({
     .max(50),
   /** The chosen delivery area, when one has been chosen. */
   pincode: z.string().trim().regex(/^\d{6}$/).optional(),
+  /**
+   * The pin the shopper dropped, when the shop charges by distance.
+   *
+   * This is the one input here the client can move in its own favour, and the
+   * exception is deliberate rather than an oversight in the rule above. A
+   * fabricated coordinate cannot assert a price — it can only understate a
+   * distance, in a *preview*. The charge that is actually taken is struck in
+   * `place-order.ts`, which re-prices from `address.latitude/longitude`: the
+   * pin the goods are being sent to. Lying there sends the delivery somewhere
+   * else, which is not an exploit so much as a self-inflicted wound.
+   *
+   * Bounded to India's box, same as the checkout pin.
+   */
+  latitude: z.coerce.number().min(6).max(38).optional(),
+  longitude: z.coerce.number().min(68).max(98).optional(),
   /** A code the shopper typed. Upper-cased here so the lookup is exact. */
   discountCode: z.string().trim().max(64).toUpperCase().optional(),
 });
