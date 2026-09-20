@@ -20,7 +20,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "npm run dev --workspace @buildkart/api",
-    "start": "npm run db:deploy && npm run db:seed && npm run start --workspace @buildkart/api",
+    "start": "npm run db:generate && npm run db:deploy && npm run db:seed && npm run start --workspace @buildkart/api",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
