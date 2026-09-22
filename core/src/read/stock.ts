@@ -128,6 +128,7 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
     select: {
       id: true,
       nameEn: true,
+      bulkTierBasis: true,
       category: { select: { nameEn: true } },
       variants: {
         where: { isActive: true },
@@ -142,6 +143,9 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
           price: true,
           compareAtPrice: true,
           priceUpdatedAt: true,
+          // The rates screen retunes the ladder with the price — a cement rate
+          // that moves ₹10 moves its 50-bag rate too.
+          tiers: { orderBy: { position: 'asc' } },
         },
       },
     },
@@ -162,6 +166,14 @@ export async function listRates(actor: Actor): Promise<RateRowDto[]> {
         ? normalizeMoney(variant.compareAtPrice.toString())
         : '',
       priceUpdatedAt: dateToIso(variant.priceUpdatedAt),
+      basis: product.bulkTierBasis,
+      tiers: variant.tiers.map((tier) => ({
+        threshold:
+          tier.minQuantity !== null
+            ? String(tier.minQuantity)
+            : normalizeMoney(tier.minAmount!.toString()),
+        unitPrice: normalizeMoney(tier.unitPrice.toString()),
+      })),
     })),
   );
 }

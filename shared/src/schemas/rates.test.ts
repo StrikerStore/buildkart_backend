@@ -56,14 +56,43 @@ test('a malformed MRP is rejected like any other amount', () => {
 });
 
 /*
- * Bulk rates left this screen when they became ladders. Today's Rates edits the
- * selling price and the MRP; the ladder has its own screen, because a rung is a
- * list and cannot live in a column here.
+ * The old single bulk price is gone for good: bulk rates are ladders now, and
+ * this screen carries one only as a whole `tiers` list.
  */
-test('Today’s Rates no longer carries a bulk price', () => {
+test('Today’s Rates no longer carries a single bulk price', () => {
   const parsed = rateChangeSchema.safeParse(row({ bulkPrice: '395' }));
   assert.equal(parsed.success, true);
   assert.ok(!('bulkPrice' in (parsed.data ?? {})), 'a stray bulk price is dropped, not stored');
+});
+
+/*
+ * A ladder may ride along with the rate, so a price and its bulk rates land in
+ * one transaction. Absent means "leave the stored ladder alone" — which must
+ * stay distinct from an empty list, which clears it.
+ */
+test('a ladder is optional, and an empty one is kept as a clear', () => {
+  assert.equal(rateChangeSchema.safeParse(row()).data?.tiers, undefined);
+
+  const cleared = rateChangeSchema.safeParse(row({ tiers: [] }));
+  assert.equal(cleared.success, true);
+  assert.deepEqual(cleared.data?.tiers, []);
+
+  const ladder = rateChangeSchema.safeParse(
+    row({ tiers: [{ threshold: '50', unitPrice: '395' }, { threshold: '100', unitPrice: '390.50' }] }),
+  );
+  assert.equal(ladder.success, true);
+  assert.equal(ladder.data?.tiers?.length, 2);
+});
+
+test('a malformed rung rejects the row', () => {
+  assert.equal(
+    rateChangeSchema.safeParse(row({ tiers: [{ threshold: '50', unitPrice: 'abc' }] })).success,
+    false,
+  );
+  assert.equal(
+    rateChangeSchema.safeParse(row({ tiers: [{ threshold: '', unitPrice: '395' }] })).success,
+    false,
+  );
 });
 
 test('a save carries many rows and refuses an empty one', () => {

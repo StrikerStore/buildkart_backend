@@ -108,14 +108,53 @@ export async function saveRates(
       id: true,
       price: true,
       compareAtPrice: true,
-      product: { select: { id: true, nameEn: true } },
+      tiers: { orderBy: { position: 'asc' } },
+      product: { select: { id: true, nameEn: true, bulkTierBasis: true } },
     },
   });
   const byId = new Map(variants.map((variant) => [variant.id, variant]));
 
-  const real = changes.filter((change) => {
+  /*
+   * The ladder is checked against the price *being submitted*, not the stored
+   * one — the whole point of sending them together is that tomorrow's ₹420
+   * cement can carry a ₹410 bulk rate that today's ₹400 would reject.
+   *
+   * And checked when only the price moved, too: cutting cement to ₹390 under a
+   * stored ₹395 bulk rate leaves a rung the pricing engine silently skips, and
+   * the owner would never learn their bulk offer had vanished.
+   */
+  const fieldErrors: Record<string, string> = {};
+  for (const change of changes) {
     const existing = byId.get(change.variantId);
-    if (!existing) return false;
+    if (!existing) continue;
+    const priceMoved = normalizeMoney(existing.price.toString()) !== normalizeMoney(change.price);
+    if (!change.tiers && !priceMoved) continue;
+
+    const problems = validateTierLadder(
+      existing.product.bulkTierBasis,
+      normalizeMoney(change.price),
+      change.tiers ?? storedLadder(existing.tiers),
+    );
+    if (problems.length > 0) {
+      fieldErrors[change.variantId] = change.tiers
+        ? `${existing.product.nameEn}: ${problems[0]}`
+        : `${existing.product.nameEn}: the new price clashes with its bulk rates — ${problems[0]}`;
+    }
+  }
+  const errorCount = Object.keys(fieldErrors).length;
+  if (errorCount > 0) {
+    return actionError(
+      [
+        `${errorCount} row${errorCount === 1 ? ' needs' : 's need'} fixing.`,
+        ...Object.values(fieldErrors),
+      ],
+      fieldErrors,
+    );
+  }
+
+  const diffs = changes.flatMap((change) => {
+    const existing = byId.get(change.variantId);
+    if (!existing) return [];
 
     /*
      * Both sides are normalised before comparing. Prisma's Decimal.toString()
@@ -131,33 +170,45 @@ export async function saveRates(
       ? normalizeMoney(existing.compareAtPrice.toString())
       : undefined;
     const incomingMrp = change.compareAtPrice ? normalizeMoney(change.compareAtPrice) : undefined;
-    return !(samePrice && storedMrp === incomingMrp);
+    const priceChanged = !(samePrice && storedMrp === incomingMrp);
+    const ladderChanged = change.tiers !== undefined && !sameLadder(existing.tiers, change.tiers);
+
+    return priceChanged || ladderChanged
+      ? [{ change, existing, priceChanged, ladderChanged }]
+      : [];
   });
 
-  if (real.length === 0) {
+  if (diffs.length === 0) {
     return actionOk({ updated: 0, unchanged: changes.length });
   }
 
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    for (const change of real) {
+    for (const { change, existing, priceChanged, ladderChanged } of diffs) {
+      if (ladderChanged) {
+        await replaceLadder(tx, change.variantId, existing.product.bulkTierBasis, change.tiers!);
+      }
+
       await tx.productVariant.update({
         where: { id: change.variantId },
         data: {
-          price: change.price,
-          compareAtPrice: change.compareAtPrice ?? null,
-          // What the storefront reads for its "rate updated today" stamp.
+          ...(priceChanged
+            ? { price: change.price, compareAtPrice: change.compareAtPrice ?? null }
+            : {}),
+          // What the storefront reads for its "rate updated today" stamp — and
+          // a bulk rate is a rate, so a ladder-only change stamps it too.
           priceUpdatedAt: now,
         },
       });
     }
 
     await tx.priceHistory.createMany({
-      data: real.map((change) => ({
+      data: diffs.map(({ change, existing, priceChanged, ladderChanged }) => ({
         variantId: change.variantId,
-        price: change.price,
-        compareAtPrice: change.compareAtPrice ?? null,
+        price: priceChanged ? change.price : existing.price,
+        compareAtPrice: priceChanged ? (change.compareAtPrice ?? null) : existing.compareAtPrice,
+        ...(ladderChanged ? { tiersJson: change.tiers } : {}),
         changedByAdminId: adminId,
         source: 'RATES_SCREEN' as const,
       })),
@@ -167,20 +218,23 @@ export async function saveRates(
   await recordAudit(actor, {
     action: 'rates.save',
     entityType: 'ProductVariant',
-    entityId: `${real.length} variants`,
+    entityId: `${diffs.length} variants`,
     diff: {
-      changes: real.map((change) => ({
+      changes: diffs.map(({ change, existing, ladderChanged }) => ({
         variantId: change.variantId,
-        product: byId.get(change.variantId)?.product.nameEn,
-        from: byId.get(change.variantId)?.price.toString(),
+        product: existing.product.nameEn,
+        from: existing.price.toString(),
         to: change.price,
-        mrpFrom: byId.get(change.variantId)?.compareAtPrice?.toString() ?? null,
+        mrpFrom: existing.compareAtPrice?.toString() ?? null,
         mrpTo: change.compareAtPrice ?? null,
+        ...(ladderChanged
+          ? { tiersFrom: storedLadder(existing.tiers), tiersTo: change.tiers }
+          : {}),
       })),
     },
   });
 
-  return actionOk({ updated: real.length, unchanged: changes.length - real.length });
+  return actionOk({ updated: diffs.length, unchanged: changes.length - diffs.length });
 }
 
 /**
@@ -258,21 +312,7 @@ export async function saveBulkTiers(
   await prisma.$transaction(async (tx) => {
     for (const change of real) {
       const existing = byId.get(change.variantId)!;
-      const basis = existing.product.bulkTierBasis;
-
-      await tx.variantPriceTier.deleteMany({ where: { variantId: change.variantId } });
-      if (change.tiers.length > 0) {
-        await tx.variantPriceTier.createMany({
-          data: change.tiers.map((tier, index) => ({
-            variantId: change.variantId,
-            basis,
-            minQuantity: basis === 'QUANTITY' ? Number.parseInt(tier.threshold, 10) : null,
-            minAmount: basis === 'AMOUNT' ? normalizeMoney(tier.threshold) : null,
-            unitPrice: tier.unitPrice,
-            position: index,
-          })),
-        });
-      }
+      await replaceLadder(tx, change.variantId, existing.product.bulkTierBasis, change.tiers);
 
       /*
        * Stamped even though the list price did not move: the storefront's "Rate
@@ -318,7 +358,7 @@ export async function saveBulkTiers(
 
 /** Whether a stored ladder and a submitted one say the same thing. */
 function sameLadder(
-  stored: ReadonlyArray<{ minQuantity: number | null; minAmount: Prisma.Decimal | null; unitPrice: Prisma.Decimal }>,
+  stored: ReadonlyArray<StoredRung>,
   incoming: ReadonlyArray<{ threshold: string; unitPrice: string }>,
 ): boolean {
   if (stored.length !== incoming.length) return false;
@@ -332,5 +372,50 @@ function sameLadder(
       storedThreshold === nextThreshold &&
       normalizeMoney(row.unitPrice.toString()) === normalizeMoney(next.unitPrice)
     );
+  });
+}
+
+type StoredRung = {
+  minQuantity: number | null;
+  minAmount: Prisma.Decimal | null;
+  unitPrice: Prisma.Decimal;
+};
+
+/** A stored ladder in the shape the forms submit, for validating and auditing. */
+function storedLadder(
+  stored: ReadonlyArray<StoredRung>,
+): Array<{ threshold: string; unitPrice: string }> {
+  return stored.map((row) => ({
+    threshold:
+      row.minQuantity !== null ? String(row.minQuantity) : normalizeMoney(row.minAmount!.toString()),
+    unitPrice: normalizeMoney(row.unitPrice.toString()),
+  }));
+}
+
+/**
+ * Deletes a variant's ladder and writes the submitted one in its place.
+ *
+ * Shared by both rate screens so a rung is stored one way. Nothing references
+ * a rung — an order freezes the tier it was charged at as scalars — so
+ * recreating is safe, and makes "the ladder is exactly what was submitted" true
+ * by construction.
+ */
+async function replaceLadder(
+  tx: Prisma.TransactionClient,
+  variantId: string,
+  basis: 'QUANTITY' | 'AMOUNT',
+  tiers: ReadonlyArray<{ threshold: string; unitPrice: string }>,
+): Promise<void> {
+  await tx.variantPriceTier.deleteMany({ where: { variantId } });
+  if (tiers.length === 0) return;
+  await tx.variantPriceTier.createMany({
+    data: tiers.map((tier, index) => ({
+      variantId,
+      basis,
+      minQuantity: basis === 'QUANTITY' ? Number.parseInt(tier.threshold, 10) : null,
+      minAmount: basis === 'AMOUNT' ? normalizeMoney(tier.threshold) : null,
+      unitPrice: tier.unitPrice,
+      position: index,
+    })),
   });
 }

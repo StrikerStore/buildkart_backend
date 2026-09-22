@@ -14,6 +14,19 @@ const optionalMoney = z
   });
 
 /**
+ * A whole bulk ladder, as both the rates screen and the bulk-rates screen send
+ * it. Sent complete rather than as a diff of rungs — see `bulkTierChangeSchema`.
+ */
+const ladderSchema = z
+  .array(
+    z.object({
+      threshold: z.string().trim().min(1).max(20),
+      unitPrice: money,
+    }),
+  )
+  .max(MAX_PRICE_TIERS);
+
+/**
  * One line of the morning rate update.
  *
  * Only rows the owner actually changed are sent. The whole point of this screen
@@ -27,6 +40,16 @@ export const rateChangeSchema = z
     price: money,
     /** The MRP, struck through on the storefront. Blank clears it. */
     compareAtPrice: optionalMoney,
+    /**
+     * The variant's whole bulk ladder, when the owner retuned it alongside the
+     * price. Absent leaves the stored ladder as it is.
+     *
+     * On this schema rather than a second call to `saveBulkTiers`, because a
+     * rate and its ladder move together — cement up ₹10 means the 50-bag rate
+     * is up ₹10 too — and two calls could land one and fail the other, leaving
+     * a bulk rate above the new price or below yesterday's.
+     */
+    tiers: ladderSchema.optional(),
   })
   /*
    * Same rule the product form enforces: an MRP at or below the selling price
@@ -80,14 +103,7 @@ export type StockAdjustInput = z.infer<typeof stockAdjustSchema>;
  */
 export const bulkTierChangeSchema = z.object({
   variantId: z.string().min(1).max(64),
-  tiers: z
-    .array(
-      z.object({
-        threshold: z.string().trim().min(1).max(20),
-        unitPrice: money,
-      }),
-    )
-    .max(MAX_PRICE_TIERS),
+  tiers: ladderSchema,
 });
 export type BulkTierChange = z.infer<typeof bulkTierChangeSchema>;
 

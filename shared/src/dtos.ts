@@ -941,6 +941,10 @@ export type RateRowDto = {
   /** The MRP. Empty string when the product has none. */
   compareAtPrice: string;
   priceUpdatedAt: string | null;
+  /** From the product, so the screen knows how to read the thresholds. */
+  basis: BulkTierBasis;
+  /** The bulk ladder, ascending. Empty when the variant has none. */
+  tiers: Array<{ threshold: string; unitPrice: string }>;
 };
 
 // from core/src/read/stock.ts
