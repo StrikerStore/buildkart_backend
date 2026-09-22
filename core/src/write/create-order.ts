@@ -19,6 +19,7 @@ import {
   actionErrorFromZod,
   actionOk,
   canFulfil,
+  cashbackBase,
   createOrderSchema,
   type CreateOrderInput,
   type PlacedOrderDto,
@@ -26,13 +27,16 @@ import {
   parseSetting,
   priceOrder,
   PricingError,
+  quoteCashback,
+  quoteWalletRedemption,
   type ActionResult,
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
-import { refreshCustomerTotals } from './orders.ts';
+import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
+import { debitWallet, loadWalletRules, refreshWalletBalance } from './wallet.ts';
 
 /*
  * Re-exported, not declared. The shape lives in `@buildkart/shared` because
@@ -77,6 +81,13 @@ export async function createOrder(
 export async function writeOrder(
   actor: Actor,
   data: CreateOrderInput,
+  /**
+   * Storefront only: the customer ticked "use wallet balance". A flag, never
+   * an amount — how much the wallet pays is decided here, inside the
+   * transaction, against the balance as it stands once the wallet is locked.
+   * `createOrderSchema` has no field for it, so the admin path cannot say it.
+   */
+  options: { useWallet?: boolean } = {},
 ): Promise<ActionResult<PlacedOrderDto>> {
   const adminId = adminIdOf(actor);
 
@@ -195,6 +206,7 @@ export async function writeOrder(
   );
 
   const now = new Date();
+  const walletRules = await loadWalletRules();
 
   // --- write it ------------------------------------------------------------
   const created = await prisma.$transaction(async (tx) => {
@@ -396,6 +408,64 @@ export async function writeOrder(
       });
     }
 
+    /*
+     * Store credit, spent after the order row exists so the wallet statement
+     * can point at it. Recorded as a STORE_CREDIT payment rather than a
+     * discount: the invoice and GST are on the full price, and the ledger then
+     * says how much is still to collect — which is what the rider needs.
+     */
+    let walletApplied = '0.00';
+    if (options.useWallet && !data.payment) {
+      const balance = await refreshWalletBalance(tx, customer.id, now);
+      const quote = quoteWalletRedemption(
+        { grandTotal: pricing.grandTotal, balance },
+        walletRules,
+      );
+      if (quote.eligible) {
+        walletApplied = quote.amount;
+        await debitWallet(tx, {
+          customerId: customer.id,
+          type: 'REDEMPTION',
+          amount: walletApplied,
+          orderId: order.id,
+          note: order.orderNumber,
+          now,
+        });
+        await tx.paymentTransaction.create({
+          data: {
+            orderId: order.id,
+            type: 'PAYMENT',
+            status: 'SUCCESS',
+            gateway: 'STORE_CREDIT',
+            amount: walletApplied,
+            note: 'Paid from wallet',
+            occurredAt: now,
+          },
+        });
+        await refreshOrderPaymentState(tx, order.id);
+      }
+    }
+
+    /*
+     * Cashback is decided now, against today's slabs, and frozen — a slab
+     * changed next week must not change what this order was promised. It
+     * waits as PENDING until the order is delivered and the hold has passed.
+     */
+    const cashback = quoteCashback(
+      { base: cashbackBase(pricing.subtotal, pricing.discountTotal), walletApplied },
+      walletRules,
+    );
+    if (walletApplied !== '0.00' || cashback) {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          walletApplied,
+          cashbackAmount: cashback?.amount ?? '0.00',
+          cashbackStatus: cashback ? 'PENDING' : 'NONE',
+        },
+      });
+    }
+
     if (data.payment) {
       await tx.paymentTransaction.create({
         data: {
@@ -426,7 +496,12 @@ export async function writeOrder(
 
     await refreshCustomerTotals(tx, customer.id);
 
-    return { blocked: false as const, order };
+    return {
+      blocked: false as const,
+      order,
+      walletApplied,
+      cashbackAmount: cashback?.amount ?? '0.00',
+    };
   });
 
   if (created.blocked) {
@@ -447,6 +522,8 @@ export async function writeOrder(
       bulkPricingApplied: pricing.bulkPricingApplied,
       overrides: pricing.lines.filter((line) => line.wasOverridden).length,
       paid: Boolean(data.payment),
+      walletApplied: created.walletApplied,
+      cashback: created.cashbackAmount,
     },
   });
 
@@ -454,5 +531,7 @@ export async function writeOrder(
     orderId: created.order.id,
     orderNumber: created.order.orderNumber,
     grandTotal: created.order.grandTotal.toString(),
+    walletApplied: created.walletApplied,
+    cashbackAmount: created.cashbackAmount,
   });
 }

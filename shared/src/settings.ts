@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { MONEY_PATTERN, toPaise } from './money.ts';
 import { EMPTY_SECRET, encryptedSecretSchema } from './secrets.ts';
+import { DEFAULT_WALLET_RULES, walletRulesSchema } from './wallet.ts';
 
 const money = z.string().regex(MONEY_PATTERN, 'Must be an amount like "10000.00"');
 
@@ -505,6 +506,20 @@ export const SETTING_SCHEMAS = {
         });
       }
     }),
+
+  /**
+   * Store credit: the signup bonus, cashback slabs, and how much of an order
+   * the wallet may pay for.
+   *
+   * Public (see `SETTINGS_DTO_KEYS`): the product page advertises the cashback
+   * slabs and the checkout explains the redemption rule, and none of it is a
+   * secret. The arithmetic lives in `wallet.ts`; this is only the stored shape.
+   *
+   * Validity is in days, null meaning the credit never expires. Each credit
+   * carries its own expiry from the moment it lands, so shortening a validity
+   * here affects only credit granted afterwards.
+   */
+  'rewards.wallet': walletRulesSchema.default(DEFAULT_WALLET_RULES),
 } as const;
 
 /**
@@ -535,6 +550,7 @@ export const SETTINGS_DTO_KEYS = [
   'payments.razorpay',
   'payments.payu',
   'payments.snapmint',
+  'rewards.wallet',
 ] as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;

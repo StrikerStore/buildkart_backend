@@ -23,6 +23,7 @@ import {
   type OtpRequestDto,
 } from '@buildkart/shared';
 import { z } from 'zod';
+import { grantSignupBonus, loadWalletRules } from './wallet.ts';
 
 /** Six digits: what fits in an SMS and what a person can hold in their head. */
 const CODE_LENGTH = 6;
@@ -250,6 +251,25 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
 
   if (customer.isBlocked) {
     return actionError('This number cannot be used to sign in. Please call us.');
+  }
+
+  /*
+   * The welcome bonus, on the first sign-in of an account created after the
+   * wallet launched — including one the shop created for a phone order, whose
+   * owner is only now showing up. `grantSignupBonus` settles it exactly once.
+   *
+   * Its own transaction, after the sign-in has committed, and best-effort: a
+   * wallet hiccup must never be the reason somebody cannot log in. A bonus
+   * missed this way is still owed — `signupBonusAt` stays null, so the next
+   * sign-in grants it.
+   */
+  try {
+    await prisma.$transaction(async (tx) => {
+      const rules = await loadWalletRules(tx);
+      await grantSignupBonus(tx, customer.id, rules, now);
+    });
+  } catch (error) {
+    console.error('[wallet] signup bonus failed', error);
   }
 
   return actionOk({ id: customer.id, phone: customer.phone, name: customer.name });

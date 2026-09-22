@@ -8,12 +8,14 @@
  */
 import { z } from 'zod';
 import {
+  adjustWallet,
   advanceOrderStatus,
   cancelOrder,
   createOrder,
   deletePaymentTransaction,
   getCustomerDetail,
   getCustomerLabel,
+  getCustomerWallet,
   getOrderDetail,
   getOrderNumber,
   listCustomers,
@@ -88,6 +90,14 @@ export const ordersRouter = router({
   updateCustomer: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => updateCustomer(ctx.actor, input)),
+
+  // --- store credit ------------------------------------------------------
+  customerWallet: adminProcedure
+    .input(payload)
+    .query(({ ctx, input }) => getCustomerWallet(ctx.actor, input)),
+  adjustWallet: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => adjustWallet(ctx.actor, input)),
   setCustomerBlocked: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => setCustomerBlocked(ctx.actor, input)),

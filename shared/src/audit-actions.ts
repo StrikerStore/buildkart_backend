@@ -167,6 +167,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
 
   'settings.store': 'Updated the store details',
   'settings.commerce': 'Updated the order and payment settings',
+  'settings.wallet': 'Updated the wallet and cashback rules',
+  'wallet.credit': "Added to a customer's wallet",
+  'wallet.debit': "Took from a customer's wallet",
 };
 
 /** The label, or the raw action when nothing has been written for it yet. */

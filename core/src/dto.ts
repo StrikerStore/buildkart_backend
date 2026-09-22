@@ -5,6 +5,7 @@ import {
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
+  type CashbackStatus,
   type OrderStatus,
   type PaymentGateway,
   type PaymentInstrument,
@@ -388,6 +389,10 @@ type OrderDetailRow = {
   taxInclusive: boolean;
   taxIntraState: boolean;
   discountCode: string | null;
+  walletApplied: DecimalLike;
+  cashbackAmount: DecimalLike;
+  cashbackStatus: CashbackStatus;
+  cashbackReleaseAt: Date | null;
   addressSnapshot: unknown;
   customerNote: string | null;
   internalNote: string | null;
@@ -485,6 +490,10 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
     taxInclusive: row.taxInclusive,
     taxIntraState: row.taxIntraState,
     discountCode: row.discountCode,
+    walletApplied: decimalToString(row.walletApplied),
+    cashbackAmount: decimalToString(row.cashbackAmount),
+    cashbackStatus: row.cashbackStatus,
+    cashbackReleaseAt: dateToIso(row.cashbackReleaseAt),
     address: parseAddressSnapshot(row.addressSnapshot),
     customerNote: row.customerNote,
     internalNote: row.internalNote,

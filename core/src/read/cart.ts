@@ -15,17 +15,21 @@
 import { prisma, type Prisma } from '@buildkart/database';
 import {
   addMoney,
+  allocateCashback,
   canFulfil,
+  cashbackBase,
   compareMoney,
   describeDiscount,
   DISCOUNT_REJECTION_MESSAGES,
   evaluateDiscount,
   formatINR,
   multiplyMoney,
+  nextCashbackSlab,
   parseSetting,
   priceOrder,
   PricingError,
   type PricedLine,
+  quoteCashback,
   quoteDelivery,
   subtractMoney,
   type CartDeliveryDto,
@@ -134,7 +138,7 @@ function chargeFrom(
 
 export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   const settingsRows = await prisma.setting.findMany({
-    where: { key: { in: ['order.minimumValue', 'delivery.distancePricing'] } },
+    where: { key: { in: ['order.minimumValue', 'delivery.distancePricing', 'rewards.wallet'] } },
   });
   const byKey = new Map(settingsRows.map((row) => [row.key, row.value]));
   const minimumOrderValue = parseSetting('order.minimumValue', byKey.get('order.minimumValue')).amount;
@@ -142,6 +146,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     'delivery.distancePricing',
     byKey.get('delivery.distancePricing'),
   );
+  const walletRules = parseSetting('rewards.wallet', byKey.get('rewards.wallet'));
 
   /*
    * The pin the shopper dropped, when there is one.
@@ -177,7 +182,15 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
       }
     : null;
 
-  const base = { delivery, minimumOrderValue, discount: null, dropped: [], meetsMinimum: false };
+  const base = {
+    delivery,
+    minimumOrderValue,
+    discount: null,
+    dropped: [],
+    meetsMinimum: false,
+    cashback: null,
+    cashbackNext: null,
+  };
 
   if (input.lines.length === 0) return { ...EMPTY, ...base };
 
@@ -333,6 +346,22 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
 
   const pricedById = new Map(pricing.lines.map((line) => [line.variantId, line]));
 
+  /*
+   * The most this cart can earn — paid in full, nothing from the wallet. The
+   * checkout shows the smaller figure once the wallet is ticked; the order
+   * write freezes whichever applies. Same function all three times.
+   */
+  const earningBase = cashbackBase(pricing.subtotal, pricing.discountTotal);
+  const cashback = quoteCashback({ base: earningBase }, walletRules);
+  const lineCashback = new Map<string, string>();
+  if (cashback) {
+    const shares = allocateCashback(
+      pricing.lines.map((line) => subtractMoney(line.lineTotal, line.discountShare)),
+      cashback.amount,
+    );
+    pricing.lines.forEach((line, i) => lineCashback.set(line.variantId, shares[i] ?? '0.00'));
+  }
+
   const lines: CartLineDto[] = kept.map(({ variant, quantity }) => {
     const priced = pricedById.get(variant.id)!;
 
@@ -365,6 +394,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
       appliedTier: priced.appliedTier,
       nextTier: priced.nextTier,
       availableQty: short ? variant.stockQty : null,
+      cashback: lineCashback.get(variant.id) ?? '0.00',
     };
   });
 
@@ -388,6 +418,8 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     minimumOrderValue,
     // At or above, not over: a minimum of ₹500 should accept a ₹500 order.
     meetsMinimum: compareMoney(pricing.subtotal, minimumOrderValue) >= 0,
+    cashback: cashback ? { ...cashback, holdHours: walletRules.cashback.holdHours } : null,
+    cashbackNext: nextCashbackSlab(earningBase, walletRules),
   };
 }
 

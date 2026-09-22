@@ -84,6 +84,7 @@ export async function listCustomers(
         totalSpend: true,
         lastOrderAt: true,
         createdAt: true,
+        walletBalance: true,
       },
     }),
     prisma.customer.count({ where }),
@@ -103,6 +104,7 @@ export async function listCustomers(
       totalSpend: decimalToString(customer.totalSpend),
       lastOrderAt: dateToIso(customer.lastOrderAt),
       createdAt: dateToIso(customer.createdAt),
+      walletBalance: decimalToString(customer.walletBalance),
     })),
     total,
     totalPages: Math.max(1, Math.ceil(total / CUSTOMER_PAGE_SIZE)),
@@ -171,6 +173,7 @@ export async function getCustomerDetail(
     isBlocked: customer.isBlocked,
     totalOrders: customer.totalOrders,
     totalSpend: decimalToString(customer.totalSpend),
+    walletBalance: decimalToString(customer.walletBalance),
     averageOrderValue:
       customer.totalOrders > 0
         ? (decimalToString(Number(customer.totalSpend) / customer.totalOrders) ?? '0.00')

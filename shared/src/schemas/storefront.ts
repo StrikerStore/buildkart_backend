@@ -251,6 +251,12 @@ export const placeOrderSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS),
   discountCode: z.string().trim().max(64).toUpperCase().optional(),
   customerNote: z.string().trim().max(2000).optional(),
+
+  /**
+   * Pay part of the order from the wallet. A yes/no, never an amount — the
+   * server works out how much the rules and the balance allow.
+   */
+  useWallet: z.boolean().default(false),
 });
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
 

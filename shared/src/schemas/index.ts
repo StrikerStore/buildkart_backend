@@ -18,3 +18,4 @@ export * from './notification.ts';
 export * from './support.ts';
 export * from './storefront.ts';
 export * from './reviews.ts';
+export * from './wallet.ts';

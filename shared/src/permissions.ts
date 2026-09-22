@@ -50,6 +50,12 @@ export const PERMISSIONS = [
    * live and in which mode.
    */
   'payments:write',
+  /*
+   * Adding or taking away a customer's store credit by hand. Its own permission
+   * because it is money: a balance an admin can raise is a balance that can be
+   * spent on goods, and "can edit a customer's name" must not imply it.
+   */
+  'wallet:write',
   'admins:manage',
   'audit:read',
 ] as const;

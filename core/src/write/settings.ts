@@ -9,9 +9,13 @@
 import { prisma } from '@buildkart/database';
 import {
   actionErrorFromZod,
+  actionErrorFromZodDeep,
   actionOk,
   commerceSettingsSchema,
+  normalizeMoney,
   storeSettingsSchema,
+  walletRulesInputSchema,
+  walletRulesSchema,
   type ActionResult,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
@@ -95,6 +99,62 @@ export async function saveCommerceSettings(
     entityType: 'Setting',
     entityId: 'commerce',
     diff: data,
+  });
+
+  return actionOk();
+}
+
+/**
+ * Saves the wallet and cashback rules.
+ *
+ * Takes effect for what happens next only: an order already placed keeps the
+ * cashback it was promised, and credit already granted keeps its expiry. That
+ * is what freezing both at the moment they happen buys.
+ */
+export async function saveWalletRules(actor: Actor, input: unknown): Promise<ActionResult<void>> {
+  assertPermission(actor, 'settings:write');
+
+  const parsed = walletRulesInputSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZodDeep(parsed.error);
+  const data = parsed.data;
+
+  // Normalised through the registry schema, which also sorts the slabs.
+  const value = walletRulesSchema.parse({
+    enabled: data.enabled,
+    signupBonus: {
+      enabled: data.signupBonus.enabled,
+      amount: normalizeMoney(data.signupBonus.amount),
+      validityDays: data.signupBonus.validityDays,
+    },
+    cashback: {
+      enabled: data.cashback.enabled,
+      holdHours: data.cashback.holdHours,
+      validityDays: data.cashback.validityDays,
+      slabs: data.cashback.slabs.map((slab) => ({
+        minOrderValue: normalizeMoney(slab.minOrderValue),
+        percent: slab.percent,
+        maxAmount: slab.maxAmount === null ? null : normalizeMoney(slab.maxAmount),
+      })),
+    },
+    redemption: {
+      enabled: data.redemption.enabled,
+      minOrderValue: normalizeMoney(data.redemption.minOrderValue),
+      maxPercentOfOrder: data.redemption.maxPercentOfOrder,
+      maxAmountPerOrder:
+        data.redemption.maxAmountPerOrder === null
+          ? null
+          : normalizeMoney(data.redemption.maxAmountPerOrder),
+    },
+    adminCreditValidityDays: data.adminCreditValidityDays,
+  });
+
+  await writeSettings([{ key: 'rewards.wallet', value }]);
+
+  await recordAudit(actor, {
+    action: 'settings.wallet',
+    entityType: 'Setting',
+    entityId: 'rewards.wallet',
+    diff: value,
   });
 
   return actionOk();

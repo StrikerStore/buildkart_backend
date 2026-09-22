@@ -51,6 +51,8 @@ import {
   saveCheckoutFlow,
   saveCheckoutLocation,
   saveCommerceSettings,
+  saveWalletRules,
+  getWalletRules,
   saveMenu,
   savePage,
   saveAnnouncementBar,
@@ -134,6 +136,11 @@ export const contentRouter = router({
   saveCommerceSettings: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveCommerceSettings(ctx.actor, input)),
+
+  walletRules: adminProcedure.query(({ ctx }) => getWalletRules(ctx.actor)),
+  saveWalletRules: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveWalletRules(ctx.actor, input)),
 
   // --- pages -------------------------------------------------------------
   pages: adminProcedure.query(({ ctx }) => listPages(ctx.actor)),

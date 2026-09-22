@@ -61,6 +61,7 @@ model AdminUser {
   importJobs     ImportJob[]
   paymentRecords PaymentTransaction[]
   supportReplies SupportMessage[]
+  walletEntries  WalletEntry[]
 
   @@index([isActive])
 }
@@ -874,6 +875,16 @@ model Customer {
   totalSpend  Decimal   @default(0) @db.Decimal(12, 2)
   lastOrderAt DateTime?
 
+  /// Spendable store credit: the sum of `remaining` over this customer's
+  /// unexpired wallet lots. A cache, recomputed (never incremented) inside every
+  /// transaction that moves a lot, the same way `totalSpend` is.
+  walletBalance Decimal @default(0) @db.Decimal(10, 2)
+
+  /// When the signup bonus was settled for this customer — granted, or marked
+  /// as not owed. Null means "not yet decided", which is only ever true of an
+  /// account created after the wallet launched that has not logged in yet.
+  signupBonusAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -881,6 +892,8 @@ model Customer {
   orders         Order[]
   redemptions    DiscountRedemption[]
   supportTickets SupportTicket[]
+  walletLots     WalletLot[]
+  walletEntries  WalletEntry[]
 
   @@index([createdAt])
   @@index([lastOrderAt])
@@ -1016,6 +1029,19 @@ model Order {
   amountPaid     Decimal @default(0) @db.Decimal(10, 2)
   amountRefunded Decimal @default(0) @db.Decimal(10, 2)
 
+  /// Store credit spent on this order. Not a discount: `grandTotal` and the
+  /// invoice are unchanged, and the same amount is recorded as a STORE_CREDIT
+  /// payment in the ledger, so "outstanding" and COD collection fall out of the
+  /// existing payment arithmetic.
+  walletApplied Decimal @default(0) @db.Decimal(10, 2)
+
+  /// Cashback this order earns, frozen at placement against the rules in force
+  /// then. It becomes wallet credit `cashbackReleaseAt`, which is set when the
+  /// order is delivered — see `runWalletJobs`.
+  cashbackAmount    Decimal        @default(0) @db.Decimal(10, 2)
+  cashbackStatus    CashbackStatus @default(NONE)
+  cashbackReleaseAt DateTime?
+
   placedAt    DateTime  @default(now())
   deliveredAt DateTime?
   createdAt   DateTime  @default(now())
@@ -1029,12 +1055,95 @@ model Order {
   adjustments    InventoryAdjustment[]
   redemptions    DiscountRedemption[]
   supportTickets SupportTicket[]
+  walletLots     WalletLot[]
+  walletEntries  WalletEntry[]
 
   @@index([status, placedAt])
   @@index([customerId, placedAt])
   @@index([paymentStatus, paymentMethod])
   @@index([paymentReference])
   @@index([placedAt])
+  @@index([cashbackStatus, cashbackReleaseAt])
+}
+
+// ---------------------------------------------------------------------------
+// Wallet (store credit)
+// ---------------------------------------------------------------------------
+
+/// One credit into a customer's wallet — a signup bonus, a cashback, an admin
+/// top-up. Credit is held in lots rather than as a single number because each
+/// credit can expire on its own date: spending draws from the lot that expires
+/// soonest, and expiring a lot takes only what is left of it.
+model WalletLot {
+  id         String       @id @default(cuid())
+  customerId String
+  source     WalletSource
+
+  /// What was credited, and what is still unspent. `remaining` only goes down
+  /// (spend, expiry) or back up to at most `amount` (a cancelled order's spend
+  /// being returned).
+  amount    Decimal @db.Decimal(10, 2)
+  remaining Decimal @db.Decimal(10, 2)
+
+  /// Null means it never expires.
+  expiresAt DateTime?
+
+  /// The order that earned it, for cashback.
+  orderId String?
+
+  createdAt DateTime @default(now())
+
+  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order    Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  entries  WalletEntry[]
+  uses     WalletLotUse[]
+
+  @@index([customerId, expiresAt])
+  @@index([expiresAt, remaining])
+}
+
+/// The wallet statement: every movement, signed, with the balance after it.
+/// Append-only — a mistake is corrected by a further entry, never an edit.
+model WalletEntry {
+  id         String          @id @default(cuid())
+  customerId String
+  type       WalletEntryType
+
+  /// Positive for credit, negative for debit.
+  amount       Decimal @db.Decimal(10, 2)
+  balanceAfter Decimal @db.Decimal(10, 2)
+
+  orderId     String?
+  /// The lot a credit created, or the lot an expiry emptied.
+  lotId       String?
+  note        String? @db.VarChar(255)
+  adminUserId String?
+
+  createdAt DateTime @default(now())
+
+  customer  Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order     Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  lot       WalletLot?     @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  adminUser AdminUser?     @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+  lotUses   WalletLotUse[]
+
+  @@index([customerId, createdAt])
+  @@index([orderId])
+}
+
+/// Which lots a debit drew from, and how much from each — so a cancelled
+/// order's spend goes back into the lots it came out of, with their expiry.
+model WalletLotUse {
+  id      String  @id @default(cuid())
+  entryId String
+  lotId   String
+  amount  Decimal @db.Decimal(10, 2)
+
+  entry WalletEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  lot   WalletLot   @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@index([lotId])
 }
 
 model OrderItem {
@@ -1969,6 +2078,9 @@ enum PaymentGateway {
   BANK_TRANSFER
   /// Appended for the same reason as PaymentMethod.PAYU above.
   PAYU
+  /// The customer's own wallet balance. Recorded as a payment so an order part
+  /// paid from the wallet shows the right amount outstanding.
+  STORE_CREDIT
 }
 
 /// The instrument behind the payment. Razorpay reports this per payment, and it
@@ -2074,4 +2186,29 @@ enum ImportImageStatus {
   RUNNING
   DONE
   FAILED
+}
+
+enum WalletSource {
+  SIGNUP_BONUS
+  CASHBACK
+  ADMIN_CREDIT
+}
+
+enum WalletEntryType {
+  SIGNUP_BONUS
+  CASHBACK
+  REDEMPTION
+  REDEMPTION_REVERSAL
+  ADMIN_CREDIT
+  ADMIN_DEBIT
+  EXPIRY
+}
+
+/// NONE: the order earns nothing. PENDING: earned, not yet in the wallet.
+/// CREDITED: in the wallet. VOIDED: the order was cancelled first.
+enum CashbackStatus {
+  NONE
+  PENDING
+  CREDITED
+  VOIDED
 }

@@ -28,8 +28,26 @@ export const PAYMENT_GATEWAYS = [
   // ordinal, so inserting a member in the middle rewrites the table and remaps
   // every existing row. Display order comes from the labels below anyway.
   'PAYU',
+  // The customer's wallet balance, recorded as a payment so an order part-paid
+  // from it shows the right amount outstanding. Written only by the order and
+  // cancel paths — never recordable by hand; see MANUAL_PAYMENT_GATEWAYS.
+  'STORE_CREDIT',
 ] as const;
 export type PaymentGateway = (typeof PAYMENT_GATEWAYS)[number];
+
+/**
+ * The gateways an admin can record a payment through. STORE_CREDIT is left out
+ * because a wallet payment must move a wallet: typed in by hand it would mark
+ * an order paid with money that never left anyone's balance.
+ */
+export const MANUAL_PAYMENT_GATEWAYS = [
+  'RAZORPAY',
+  'SNAPMINT',
+  'CASH',
+  'UPI_DIRECT',
+  'BANK_TRANSFER',
+  'PAYU',
+] as const satisfies readonly PaymentGateway[];
 
 export const PAYMENT_GATEWAY_LABELS: Record<PaymentGateway, string> = {
   RAZORPAY: 'Razorpay',
@@ -38,6 +56,7 @@ export const PAYMENT_GATEWAY_LABELS: Record<PaymentGateway, string> = {
   CASH: 'Cash',
   UPI_DIRECT: 'UPI to shop',
   BANK_TRANSFER: 'Bank transfer',
+  STORE_CREDIT: 'Wallet',
 };
 
 /** Whether the gateway is an external processor with a dashboard to reconcile against. */

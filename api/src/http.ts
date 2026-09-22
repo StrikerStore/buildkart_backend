@@ -19,6 +19,7 @@ import {
   getImportIssuesForCsv,
   loadExportProducts,
   publishScheduledProducts,
+  runWalletJobs,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
 import { buildProductRows } from '@buildkart/shared';
@@ -77,13 +78,23 @@ export async function handleHttpRoute(
   }
 
   // --- cron --------------------------------------------------------------
-  if (path === '/cron/media-gc' || path === '/cron/publish-scheduled') {
+  if (
+    path === '/cron/media-gc' ||
+    path === '/cron/publish-scheduled' ||
+    path === '/cron/wallet'
+  ) {
     const auth = cronAuthorised(req);
     if (auth === 'unset') return (json(res, 503, { error: 'CRON_SECRET is not set.' }), true);
     if (auth === 'denied') return (json(res, 401, { error: 'Unauthorized.' }), true);
 
+    // `/cron/wallet` pays out cashback whose hold has passed and expires old
+    // credit. Hourly is plenty: nothing is promised to the minute.
     const result =
-      path === '/cron/media-gc' ? await collectMediaGarbage() : await publishScheduledProducts();
+      path === '/cron/media-gc'
+        ? await collectMediaGarbage()
+        : path === '/cron/wallet'
+          ? await runWalletJobs()
+          : await publishScheduledProducts();
     json(res, 200, { ok: true, ...result });
     return true;
   }

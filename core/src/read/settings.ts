@@ -11,6 +11,7 @@ import { prisma } from '@buildkart/database';
 import { SETTINGS_DTO_KEYS, parseSetting } from '@buildkart/shared';
 import type { CommerceSettingsDto, SettingsDto, StoreProfileDto } from '@buildkart/shared';
 export type { CommerceSettingsDto, SettingsDto, StoreProfileDto };
+import { toWalletRulesDto } from './wallet.ts';
 
 
 
@@ -90,5 +91,6 @@ export async function getSettings(): Promise<SettingsDto> {
       smallOrderIncludedKm: distance.smallOrderIncludedKm,
       maxCharge: distance.maxCharge,
     },
+    wallet: toWalletRulesDto(parseSetting('rewards.wallet', byKey.get('rewards.wallet'))),
   };
 }

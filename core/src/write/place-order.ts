@@ -200,5 +200,5 @@ export async function placeCustomerOrder(
    * One call, one transaction. The pin travels inside `payload.address`, so
    * there is no second write to fail after the order has already committed.
    */
-  return writeOrder(actor, payload);
+  return writeOrder(actor, payload, { useWallet: data.useWallet });
 }

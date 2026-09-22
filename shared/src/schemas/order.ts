@@ -4,6 +4,7 @@ import { optionalText } from './common.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
 import { ORDER_STATUSES, PAYMENT_METHODS, PAYMENT_STATUSES } from '../orders.ts';
 import {
+  MANUAL_PAYMENT_GATEWAYS,
   PAYMENT_GATEWAYS,
   PAYMENT_INSTRUMENTS,
   PAYMENT_TRANSACTION_STATUSES,
@@ -200,7 +201,7 @@ export const recordPaymentSchema = z
     orderId: z.string().min(1).max(64),
     type: z.enum(PAYMENT_TRANSACTION_TYPES),
     status: z.enum(PAYMENT_TRANSACTION_STATUSES),
-    gateway: z.enum(PAYMENT_GATEWAYS),
+    gateway: z.enum(MANUAL_PAYMENT_GATEWAYS),
     instrument: z.enum(PAYMENT_INSTRUMENTS).optional(),
     /// Always positive. Direction lives in `type`, never in the sign.
     amount: z.string().trim().regex(MONEY_PATTERN, 'Enter an amount like 4320 or 4320.50'),
@@ -357,7 +358,7 @@ export const createOrderSchema = z.object({
    */
   payment: z
     .object({
-      gateway: z.enum(PAYMENT_GATEWAYS),
+      gateway: z.enum(MANUAL_PAYMENT_GATEWAYS),
       instrument: z.enum(PAYMENT_INSTRUMENTS).optional(),
       reference: optionalText(191),
     })

@@ -61,6 +61,7 @@ import type {
   SupportTopic,
   VariantSnapshot,
 } from './index.ts';
+import type { CashbackStatus, WalletEntryType } from './wallet.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
 import type { ImportIssue, ParsedProduct } from './csv/index.ts';
 
@@ -290,6 +291,11 @@ export type OrderDetailDto = {
   /** True when the supply stayed in-state, so tax prints as CGST + SGST. */
   taxIntraState: boolean;
   discountCode: string | null;
+  /** Store credit spent on the order — already inside `amountPaid`. */
+  walletApplied: string;
+  cashbackAmount: string;
+  cashbackStatus: CashbackStatus;
+  cashbackReleaseAt: string | null;
   address: AddressSnapshot;
   customerNote: string | null;
   internalNote: string | null;
@@ -462,6 +468,7 @@ export type CustomerListItemDto = {
   totalSpend: string;
   lastOrderAt: string | null;
   createdAt: string;
+  walletBalance: string;
 };
 
 // from core/src/read/customers.ts
@@ -513,6 +520,7 @@ export type CustomerDetailDto = {
   totalSpend: string;
   /** Lifetime spend over the order counter. See the note in `getCustomerDetail`. */
   averageOrderValue: string;
+  walletBalance: string;
   createdAt: string;
   lastOrderAt: string | null;
   addresses: CustomerAddressDto[];
@@ -877,6 +885,8 @@ export type SettingsDto = {
    * so the storefront is entitled to render it. It holds no secret.
    */
   distancePricing: DistancePricingDto;
+  /** The wallet and cashback rules — advertised on the product page and cart. */
+  wallet: WalletRulesDto;
 };
 
 export type DistancePricingDto = {
@@ -1745,6 +1755,12 @@ export type CartLineDto = {
    * to warn about.
    */
   availableQty: number | null;
+  /**
+   * This line's share of the order's cashback, for the pill beside the item.
+   * The shares add up to `CartDto.cashback.amount`. "0.00" when nothing is
+   * earned.
+   */
+  cashback: string;
 };
 
 /*
@@ -1826,7 +1842,78 @@ export type CartDto = {
   /** The owner's minimum, and whether this cart clears it. */
   minimumOrderValue: string;
   meetsMinimum: boolean;
+  /**
+   * What this cart would earn as wallet cashback if paid in full — the most it
+   * can earn, since paying from the wallet reduces it. Null when it earns
+   * nothing (below the first slab, or cashback is off).
+   */
+  cashback: CartCashbackDto | null;
+  /** The next slab up, when there is one: "Add ₹X more to earn 2%". */
+  cashbackNext: { shortfall: string; percent: number; minOrderValue: string } | null;
 };
+
+export type CartCashbackDto = {
+  amount: string;
+  percent: number;
+  minOrderValue: string;
+  /** Hours after delivery before it lands in the wallet. */
+  holdHours: number;
+};
+
+// ---------------------------------------------------------------------------
+// Wallet
+// ---------------------------------------------------------------------------
+
+/** The public rules, as the product page and checkout explain them. */
+export type WalletRulesDto = {
+  enabled: boolean;
+  signupBonus: { enabled: boolean; amount: string; validityDays: number | null };
+  cashback: {
+    enabled: boolean;
+    holdHours: number;
+    validityDays: number | null;
+    slabs: Array<{ minOrderValue: string; percent: number; maxAmount: string | null }>;
+  };
+  redemption: {
+    enabled: boolean;
+    minOrderValue: string;
+    maxPercentOfOrder: number;
+    maxAmountPerOrder: string | null;
+  };
+};
+
+export type WalletEntryDto = {
+  id: string;
+  type: WalletEntryType;
+  /** Signed: "+500.00" is written as "500.00" with `direction: 'CREDIT'`. */
+  amount: string;
+  direction: 'CREDIT' | 'DEBIT';
+  balanceAfter: string;
+  note: string | null;
+  orderId: string | null;
+  orderNumber: string | null;
+  /** For a credit: when what is left of it expires. */
+  expiresAt: string | null;
+  createdAt: string;
+  /** Admin view only: who made a manual adjustment. */
+  adminName?: string | null;
+};
+
+export type WalletSummaryDto = {
+  enabled: boolean;
+  balance: string;
+  /** Credit that expires within the next 30 days, soonest first. */
+  expiringSoon: { amount: string; expiresAt: string } | null;
+  /** Cashback earned on orders not yet delivered or still in the hold window. */
+  pendingCashback: string;
+  rules: WalletRulesDto;
+};
+
+export type WalletEntriesPageDto = {
+  entries: WalletEntryDto[];
+  nextCursor: string | null;
+};
+
 
 /**
  * One offer, as the coupon list shows it.
@@ -1955,6 +2042,12 @@ export type MyOrderDetailDto = {
   taxTotal: string;
   grandTotal: string;
   amountPaid: string;
+  /** Paid from the wallet — part of `amountPaid`. */
+  walletApplied: string;
+  cashbackAmount: string;
+  cashbackStatus: CashbackStatus;
+  /** When PENDING cashback lands in the wallet; null until delivered. */
+  cashbackReleaseAt: string | null;
   bulkPricingApplied: boolean;
   /** Frozen at the time of the order, not the live address-book row. */
   address: {
@@ -2086,6 +2179,8 @@ export type PlacedOrderDto = {
   orderId: string;
   orderNumber: string;
   grandTotal: string;
+  walletApplied: string;
+  cashbackAmount: string;
 };
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   referenceLabelFor,
   referenceLooksWrong,
   totalPayments,
+  MANUAL_PAYMENT_GATEWAYS,
   PAYMENT_GATEWAYS,
   type LedgerEntry,
 } from './payments.ts';
@@ -111,7 +112,10 @@ test('every method offers every gateway, led by the likely one', () => {
     const offered = gatewaysForMethod(method);
     // Ordered, not restricted: a COD order really can be settled by transfer,
     // and refusing to record that only pushes the truth into a note field.
-    assert.equal(offered.length, PAYMENT_GATEWAYS.length, `${method} dropped a gateway`);
+    // Every gateway a person can record — STORE_CREDIT is written only by the
+    // wallet, never picked from a list.
+    assert.equal(offered.length, MANUAL_PAYMENT_GATEWAYS.length, `${method} dropped a gateway`);
+    assert.ok(!offered.includes('STORE_CREDIT'), `${method} offered the wallet`);
     assert.equal(new Set(offered).size, offered.length, `${method} repeated one`);
   }
   assert.equal(gatewaysForMethod('COD')[0], 'CASH');

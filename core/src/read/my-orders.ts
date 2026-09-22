@@ -113,6 +113,10 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       taxTotal: true,
       grandTotal: true,
       amountPaid: true,
+      walletApplied: true,
+      cashbackAmount: true,
+      cashbackStatus: true,
+      cashbackReleaseAt: true,
       bulkPricingApplied: true,
       addressSnapshot: true,
       customerNote: true,
@@ -161,6 +165,10 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
     taxTotal: decimalToString(order.taxTotal),
     grandTotal: decimalToString(order.grandTotal),
     amountPaid: decimalToString(order.amountPaid),
+    walletApplied: decimalToString(order.walletApplied),
+    cashbackAmount: decimalToString(order.cashbackAmount),
+    cashbackStatus: order.cashbackStatus,
+    cashbackReleaseAt: dateToIso(order.cashbackReleaseAt),
     bulkPricingApplied: order.bulkPricingApplied,
     /*
      * The snapshot, not the live address row. The order shipped to what was

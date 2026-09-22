@@ -19,6 +19,7 @@ import {
   advanceOrderStatusSchema,
   cancelOrderSchema,
   canTransition,
+  cashbackReleaseFrom,
   deletePaymentTransactionSchema,
   derivePaymentStatus,
   fromPaise,
@@ -37,6 +38,14 @@ import {
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { decimalToString } from '../dto.ts';
+import {
+  debitWallet,
+  loadWalletRules,
+  refreshWalletBalance,
+  reverseOrderRedemption,
+} from './wallet.ts';
+import { releaseOrderCashback } from './wallet-jobs.ts';
 
 /**
  * Recomputes a customer's denormalised order counters.
@@ -194,17 +203,35 @@ export async function advanceOrderStatus(
   ).outstanding;
   const collectsCash = settlesCod && owed !== '0.00';
 
+  const now = new Date();
+  // Delivery starts the cashback clock; the hold comes from today's rules.
+  const cashbackReleaseAt =
+    toStatus === 'DELIVERED' ? cashbackReleaseFrom(now, await loadWalletRules()) : null;
+
   const changed = await prisma.$transaction(async (tx) => {
     const result = await tx.order.updateMany({
       where: { id: orderId, status: expectedStatus },
       data: {
         status: toStatus,
-        ...(toStatus === 'DELIVERED' ? { deliveredAt: new Date() } : {}),
+        ...(toStatus === 'DELIVERED' ? { deliveredAt: now } : {}),
       },
     });
 
     // Zero means the compare-and-swap lost: someone moved this order first.
     if (result.count === 0) return false;
+
+    /*
+     * Cashback still waiting follows the delivery: it gets a release time when
+     * the order is delivered, and loses it again if the order is stepped back
+     * from Delivered — a delivery marked by mistake must not pay out a day
+     * later. Cashback already credited is left alone.
+     */
+    if (toStatus === 'DELIVERED' || expectedStatus === 'DELIVERED') {
+      await tx.order.updateMany({
+        where: { id: orderId, cashbackStatus: 'PENDING' },
+        data: { cashbackReleaseAt },
+      });
+    }
 
     await tx.orderStatusEvent.create({
       data: {
@@ -248,6 +275,11 @@ export async function advanceOrderStatus(
     });
     const label = ORDER_STATUS_LABELS[current?.status ?? expectedStatus].toLowerCase();
     return actionError(`This order is already ${label}. Refresh to see where it is now.`);
+  }
+
+  // With no hold configured, cashback is due the moment the order is delivered.
+  if (cashbackReleaseAt && cashbackReleaseAt <= new Date()) {
+    await releaseOrderCashback(orderId);
   }
 
   await recordAudit(actor, {
@@ -355,7 +387,14 @@ export async function cancelOrder(
     // A cancelled order is not spend, so the customer's lifetime figures move.
     await refreshCustomerTotals(tx, order.customerId);
 
-    return { restocked };
+    const wallet = await settleWalletOnCancel(tx, {
+      orderId,
+      orderNumber: order.orderNumber,
+      customerId: order.customerId,
+      adminId,
+    });
+
+    return { restocked, ...wallet };
   });
 
   if (!outcome) {
@@ -371,6 +410,8 @@ export async function cancelOrder(
       from: expectedStatus,
       reason,
       restocked: outcome.restocked,
+      walletReturned: outcome.walletReturned,
+      cashbackVoided: outcome.cashbackVoided,
       items: order.items.map((item) => ({
         sku: parseVariantSnapshot(item.variantSnapshot).sku,
         quantity: item.quantity,
@@ -560,6 +601,11 @@ export async function deletePaymentTransaction(
   // The id is guessable, so the order it belongs to has to be checked rather
   // than trusted from the caller.
   if (existing.orderId !== orderId) return actionError('That entry belongs to another order.');
+  // A wallet entry mirrors a movement in the customer's wallet. Deleting it here
+  // would leave the wallet debited for a payment the order no longer shows.
+  if (existing.gateway === 'STORE_CREDIT') {
+    return actionError('Wallet payments cannot be removed. Cancel the order to return the credit.');
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.paymentTransaction.delete({ where: { id: transactionId } });
@@ -584,4 +630,77 @@ export async function deletePaymentTransaction(
   });
 
   return actionOk();
+}
+
+/**
+ * What cancelling does to the wallet: the spend goes back, and the cashback
+ * the order would have earned is withdrawn.
+ *
+ * The spend returns to the lots it came from (see `reverseOrderRedemption`),
+ * and a matching STORE_CREDIT refund goes in the payment ledger so the order
+ * stops showing as part-paid.
+ *
+ * Cashback is normally still PENDING here — delivered orders cannot be
+ * cancelled. The exception is an order stepped back from Delivered after its
+ * cashback landed; that credit is taken back as far as the balance allows,
+ * since part of it may already have been spent.
+ */
+async function settleWalletOnCancel(
+  tx: Prisma.TransactionClient,
+  input: { orderId: string; orderNumber: string; customerId: string; adminId: string | null },
+): Promise<{ walletReturned: string; cashbackVoided: string }> {
+  const order = await tx.order.findUnique({
+    where: { id: input.orderId },
+    select: { cashbackStatus: true, cashbackAmount: true },
+  });
+  if (!order) return { walletReturned: '0.00', cashbackVoided: '0.00' };
+
+  const { restored } = await reverseOrderRedemption(tx, {
+    orderId: input.orderId,
+    customerId: input.customerId,
+    note: `${input.orderNumber} cancelled`,
+  });
+  if (restored !== '0.00') {
+    await tx.paymentTransaction.create({
+      data: {
+        orderId: input.orderId,
+        type: 'REFUND',
+        status: 'SUCCESS',
+        gateway: 'STORE_CREDIT',
+        amount: restored,
+        note: 'Returned to wallet',
+        recordedByAdminId: input.adminId,
+      },
+    });
+    await refreshOrderPaymentState(tx, input.orderId);
+  }
+
+  let cashbackVoided = '0.00';
+  if (order.cashbackStatus === 'PENDING') {
+    cashbackVoided = decimalToString(order.cashbackAmount);
+  } else if (order.cashbackStatus === 'CREDITED') {
+    const balance = await refreshWalletBalance(tx, input.customerId);
+    const take = fromPaise(
+      Math.min(toPaise(balance), toPaise(decimalToString(order.cashbackAmount))),
+    );
+    if (take !== '0.00') {
+      await debitWallet(tx, {
+        customerId: input.customerId,
+        type: 'ADMIN_DEBIT',
+        amount: take,
+        orderId: input.orderId,
+        note: `Cashback withdrawn — ${input.orderNumber} cancelled`,
+        adminUserId: input.adminId,
+      });
+    }
+    cashbackVoided = take;
+  }
+  if (order.cashbackStatus === 'PENDING' || order.cashbackStatus === 'CREDITED') {
+    await tx.order.update({
+      where: { id: input.orderId },
+      data: { cashbackStatus: 'VOIDED', cashbackReleaseAt: null },
+    });
+  }
+
+  return { walletReturned: restored, cashbackVoided };
 }

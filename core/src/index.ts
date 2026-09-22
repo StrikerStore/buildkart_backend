@@ -101,3 +101,6 @@ export * from './write/tags.ts';
 export * from './write/tax-rates.ts';
 export * from './write/uploads.ts';
 export * from './write/stock.ts';
+export * from './write/wallet.ts';
+export * from './write/wallet-jobs.ts';
+export * from './read/wallet.ts';

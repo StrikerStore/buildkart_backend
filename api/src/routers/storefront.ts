@@ -31,10 +31,12 @@ import {
   getMyInvoice,
   getMyOrder,
   getMyProfile,
+  getMyWallet,
   getSitemap,
   listCartCoupons,
   listMyAddresses,
   listMyOrders,
+  listMyWalletEntries,
   listServiceableAreas,
   placeCustomerOrder,
   priceCart,
@@ -338,4 +340,11 @@ export const storefrontRouter = router({
   deleteAddress: customerProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => deleteMyAddress(ctx.actor, input)),
+
+  /** Balance, what expires soon, cashback still on its way, and the rules. */
+  wallet: customerProcedure.query(({ ctx }) => getMyWallet(ctx.actor)),
+
+  walletEntries: customerProcedure
+    .input(z.unknown())
+    .query(({ ctx, input }) => listMyWalletEntries(ctx.actor, input)),
 });
