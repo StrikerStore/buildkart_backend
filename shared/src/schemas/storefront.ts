@@ -153,6 +153,8 @@ export const priceCartSchema = z.object({
   longitude: z.coerce.number().min(68).max(98).optional(),
   /** A code the shopper typed. Upper-cased here so the lookup is exact. */
   discountCode: z.string().trim().max(64).toUpperCase().optional(),
+  /** The shopper added the unloading service. A yes/no; the price is the shop's. */
+  unloading: z.boolean().optional(),
 });
 export type PriceCartInput = z.infer<typeof priceCartSchema>;
 
@@ -257,6 +259,9 @@ export const placeOrderSchema = z.object({
    * server works out how much the rules and the balance allow.
    */
   useWallet: z.boolean().default(false),
+
+  /** Add the unloading service. The fee is read from settings, never posted. */
+  unloading: z.boolean().default(false),
 });
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
 

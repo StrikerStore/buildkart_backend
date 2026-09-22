@@ -138,7 +138,11 @@ function chargeFrom(
 
 export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   const settingsRows = await prisma.setting.findMany({
-    where: { key: { in: ['order.minimumValue', 'delivery.distancePricing', 'rewards.wallet'] } },
+    where: {
+      key: {
+        in: ['order.minimumValue', 'delivery.distancePricing', 'rewards.wallet', 'delivery.unloading'],
+      },
+    },
   });
   const byKey = new Map(settingsRows.map((row) => [row.key, row.value]));
   const minimumOrderValue = parseSetting('order.minimumValue', byKey.get('order.minimumValue')).amount;
@@ -147,6 +151,23 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     byKey.get('delivery.distancePricing'),
   );
   const walletRules = parseSetting('rewards.wallet', byKey.get('rewards.wallet'));
+  const unloadingSetting = parseSetting('delivery.unloading', byKey.get('delivery.unloading'));
+  /*
+   * The offer, and whether this shopper took it. Only ever the shop's price:
+   * the input is a yes/no. Off in the admin, it is neither offered nor charged,
+   * even to a cart that asked for it before it was switched off.
+   */
+  const unloadingOffer = unloadingSetting.enabled
+    ? {
+        selected: input.unloading === true,
+        price: unloadingSetting.price,
+        nameEn: unloadingSetting.nameEn,
+        nameHi: unloadingSetting.nameHi,
+        notesEn: unloadingSetting.notesEn,
+        notesHi: unloadingSetting.notesHi,
+      }
+    : null;
+  const unloadingCharge = unloadingOffer?.selected ? unloadingOffer.price : '0.00';
 
   /*
    * The pin the shopper dropped, when there is one.
@@ -190,6 +211,9 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     meetsMinimum: false,
     cashback: null,
     cashbackNext: null,
+    // An empty cart has nothing to unload, so nothing is offered or charged.
+    unloading: null,
+    unloadingCharge: '0.00',
   };
 
   if (input.lines.length === 0) return { ...EMPTY, ...base };
@@ -342,6 +366,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     freeDeliveryAbove: resolved?.applied && resolved.freeDelivery
       ? '0.00'
       : (delivery?.serviced ? delivery.freeAbove : null),
+    unloadingCharge,
   });
 
   const pricedById = new Map(pricing.lines.map((line) => [line.variantId, line]));
@@ -420,6 +445,8 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     meetsMinimum: compareMoney(pricing.subtotal, minimumOrderValue) >= 0,
     cashback: cashback ? { ...cashback, holdHours: walletRules.cashback.holdHours } : null,
     cashbackNext: nextCashbackSlab(earningBase, walletRules),
+    unloading: unloadingOffer,
+    unloadingCharge: pricing.unloadingCharge,
   };
 }
 

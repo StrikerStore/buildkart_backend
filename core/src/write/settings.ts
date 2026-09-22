@@ -112,7 +112,9 @@ export async function saveCommerceSettings(
  * is what freezing both at the moment they happen buys.
  */
 export async function saveWalletRules(actor: Actor, input: unknown): Promise<ActionResult<void>> {
-  assertPermission(actor, 'settings:write');
+  // Edited from the Discounts section, so it takes that section's permission —
+  // cashback is a promotion, and whoever may run coupons may run this.
+  assertPermission(actor, 'discounts:write');
 
   const parsed = walletRulesInputSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZodDeep(parsed.error);

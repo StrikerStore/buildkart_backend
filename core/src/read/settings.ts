@@ -92,5 +92,24 @@ export async function getSettings(): Promise<SettingsDto> {
       maxCharge: distance.maxCharge,
     },
     wallet: toWalletRulesDto(parseSetting('rewards.wallet', byKey.get('rewards.wallet'))),
+    unloading: toUnloadingDto(parseSetting('delivery.unloading', byKey.get('delivery.unloading'))),
+  };
+}
+
+function toUnloadingDto(value: {
+  enabled: boolean;
+  nameEn: string;
+  nameHi: string;
+  price: string;
+  notesEn: string[];
+  notesHi: string[];
+}) {
+  return {
+    enabled: value.enabled,
+    nameEn: value.nameEn,
+    nameHi: value.nameHi,
+    price: value.price,
+    notesEn: value.notesEn,
+    notesHi: value.notesHi,
   };
 }

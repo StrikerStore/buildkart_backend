@@ -616,3 +616,19 @@ test('a cart-level discount allocates correctly across tiered lines', () => {
   const taxes = result.lines.reduce((sum, line) => sum + toPaise(line.taxAmount), 0);
   assert.equal(taxes, toPaise(result.taxTotal), 'per-line tax must reconcile with the total');
 });
+
+test('the unloading fee adds to the total like delivery, and is not discounted', () => {
+  const lines = [{ variantId: 'wire', quantity: 1 }];
+  const priced = priceOrder(lines, CATALOG, {
+    deliveryCharge: '50.00',
+    discountTotal: '100.00',
+    unloadingCharge: '199.00',
+  });
+  assert.equal(priced.unloadingCharge, '199.00');
+  // 1,250 − 100 discount + 50 delivery + 199 unloading.
+  assert.equal(priced.grandTotal, '1399.00');
+
+  const without = priceOrder(lines, CATALOG, NONE);
+  assert.equal(without.unloadingCharge, '0.00');
+  assert.equal(without.grandTotal, '1250.00');
+});

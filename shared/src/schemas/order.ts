@@ -329,6 +329,11 @@ export const createOrderSchema = z.object({
 
   deliveryCharge: optionalMoney,
   /**
+   * Add the unloading service. A flag, like the storefront's: the fee comes
+   * from the `delivery.unloading` setting inside `writeOrder`.
+   */
+  unloading: z.boolean().default(false),
+  /**
    * The per-warehouse breakdown behind `deliveryCharge`, when it was worked out
    * by distance. Recorded, never recomputed: `writeOrder` freezes what it is
    * given here because the caller is the only one who still knows which godown

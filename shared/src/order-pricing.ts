@@ -127,6 +127,8 @@ export type OrderPricing = {
   subtotal: string;
   discountTotal: string;
   deliveryCharge: string;
+  /** The unloading service, when added. "0.00" otherwise. */
+  unloadingCharge: string;
   grandTotal: string;
   /** True when at least one line reached a rung on its ladder. */
   bulkPricingApplied: boolean;
@@ -145,6 +147,12 @@ export type PricingOptions = {
   discountTotal?: string;
   /** Free delivery at or above this subtotal, when the area sets one. */
   freeDeliveryAbove?: string | null;
+  /**
+   * The unloading service fee, when the customer added it. Added to the total
+   * as it stands, the way delivery is — a service on top of the goods, so it
+   * is neither discounted nor counted towards free delivery.
+   */
+  unloadingCharge?: string;
 };
 
 export class PricingError extends Error {}
@@ -488,9 +496,13 @@ export function priceOrder(
     subtotal,
     discountTotal,
     deliveryCharge,
+    unloadingCharge: options.unloadingCharge ?? '0.00',
     // Only the tax that was *added* moves the total; tax already inside the
     // prices is part of `subtotal` and must not be counted twice.
-    grandTotal: addMoney(addMoney(afterDiscount, taxAddedTotal), deliveryCharge),
+    grandTotal: addMoney(
+      addMoney(addMoney(afterDiscount, taxAddedTotal), deliveryCharge),
+      options.unloadingCharge ?? '0.00',
+    ),
     bulkPricingApplied: lines.some((line) => line.wasBulkPrice),
     listSubtotal,
     taxTotal: fromPaise(taxTotalPaise),

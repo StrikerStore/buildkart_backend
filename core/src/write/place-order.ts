@@ -108,6 +108,7 @@ export async function placeCustomerOrder(
     latitude: data.address.latitude,
     longitude: data.address.longitude,
     ...(data.discountCode ? { discountCode: data.discountCode } : {}),
+    unloading: data.unloading,
   });
 
   if (priced.lines.length === 0) {
@@ -182,6 +183,8 @@ export async function placeCustomerOrder(
     discountTotal: priced.discount?.applied ? priced.discount.amount : undefined,
     discountCode: priced.discount?.applied ? priced.discount.code : undefined,
     paymentMethod: data.paymentMethod,
+    // Re-read and re-priced from settings inside `writeOrder`; a flag only.
+    unloading: data.unloading,
     // No `payment`: nothing has been collected yet. Online payments record
     // theirs when the gateway confirms; COD records it on delivery.
     payment: undefined,

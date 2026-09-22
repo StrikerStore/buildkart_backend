@@ -945,10 +945,13 @@ model Order {
   paymentMethod PaymentMethod
   paymentStatus PaymentStatus @default(PENDING)
 
-  subtotal       Decimal @db.Decimal(10, 2)
-  discountTotal  Decimal @default(0) @db.Decimal(10, 2)
-  deliveryCharge Decimal @default(0) @db.Decimal(10, 2)
-  grandTotal     Decimal @db.Decimal(10, 2)
+  subtotal        Decimal @db.Decimal(10, 2)
+  discountTotal   Decimal @default(0) @db.Decimal(10, 2)
+  deliveryCharge  Decimal @default(0) @db.Decimal(10, 2)
+  /// The unloading service, when the customer added it. A flat fee frozen at
+  /// the price in force that day; part of `grandTotal`, like delivery.
+  unloadingCharge Decimal @default(0) @db.Decimal(10, 2)
+  grandTotal      Decimal @db.Decimal(10, 2)
 
   bulkPricingApplied Boolean @default(false)
 

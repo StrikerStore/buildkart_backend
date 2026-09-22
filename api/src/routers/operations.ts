@@ -40,6 +40,7 @@ import {
   runImageBatch,
   saveDiscount,
   saveDistancePricing,
+  saveUnloadingService,
   savePincode,
   saveWarehouse,
   saveWarehouseStock,
@@ -93,6 +94,9 @@ export const operationsRouter = router({
   saveWarehouseStock: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveWarehouseStock(ctx.actor, input)),
+  saveUnloadingService: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveUnloadingService(ctx.actor, input)),
   saveDistancePricing: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveDistancePricing(ctx.actor, input)),

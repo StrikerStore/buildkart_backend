@@ -54,7 +54,8 @@ export function toWalletRulesDto(rules: WalletRules): WalletRulesDto {
 
 /** The full stored rules, for the admin form — including admin-only fields. */
 export async function getWalletRules(actor: Actor): Promise<WalletRules> {
-  assertPermission(actor, 'settings:write');
+  // The screen lives under Discounts, so it takes that section's permission.
+  assertPermission(actor, 'discounts:write');
   const row = await prisma.setting.findUnique({ where: { key: 'rewards.wallet' } });
   return parseSetting('rewards.wallet', row?.value);
 }

@@ -390,6 +390,7 @@ type OrderDetailRow = {
   taxIntraState: boolean;
   discountCode: string | null;
   walletApplied: DecimalLike;
+  unloadingCharge: DecimalLike;
   cashbackAmount: DecimalLike;
   cashbackStatus: CashbackStatus;
   cashbackReleaseAt: Date | null;
@@ -491,6 +492,7 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
     taxIntraState: row.taxIntraState,
     discountCode: row.discountCode,
     walletApplied: decimalToString(row.walletApplied),
+    unloadingCharge: decimalToString(row.unloadingCharge),
     cashbackAmount: decimalToString(row.cashbackAmount),
     cashbackStatus: row.cashbackStatus,
     cashbackReleaseAt: dateToIso(row.cashbackReleaseAt),

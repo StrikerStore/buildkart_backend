@@ -585,4 +585,21 @@ export const distancePricingSchema = z
     }
   });
 export type DistancePricingInput = z.infer<typeof distancePricingSchema>;
+
+/** One fine-print line per row; blank rows are dropped rather than refused. */
+const noteLines = z
+  .array(z.string().trim().max(200, 'Keep each line under 200 characters'))
+  .max(6, 'At most 6 lines')
+  .transform((lines) => lines.filter((line) => line !== ''));
+
+/** The unloading service, as the admin form posts it. */
+export const unloadingServiceSchema = z.object({
+  enabled: z.boolean(),
+  nameEn: z.string().trim().min(1, 'Give the service a name').max(80),
+  nameHi: z.string().trim().max(80),
+  price: money,
+  notesEn: noteLines,
+  notesHi: noteLines,
+});
+export type UnloadingServiceInput = z.input<typeof unloadingServiceSchema>;
 export type StoreSettingsInput = z.infer<typeof storeSettingsSchema>;

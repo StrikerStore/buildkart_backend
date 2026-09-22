@@ -293,6 +293,7 @@ export type OrderDetailDto = {
   discountCode: string | null;
   /** Store credit spent on the order — already inside `amountPaid`. */
   walletApplied: string;
+  unloadingCharge: string;
   cashbackAmount: string;
   cashbackStatus: CashbackStatus;
   cashbackReleaseAt: string | null;
@@ -887,6 +888,8 @@ export type SettingsDto = {
   distancePricing: DistancePricingDto;
   /** The wallet and cashback rules — advertised on the product page and cart. */
   wallet: WalletRulesDto;
+  /** The unloading service offered in the cart. */
+  unloading: UnloadingServiceDto;
 };
 
 export type DistancePricingDto = {
@@ -1850,7 +1853,23 @@ export type CartDto = {
   cashback: CartCashbackDto | null;
   /** The next slab up, when there is one: "Add ₹X more to earn 2%". */
   cashbackNext: { shortfall: string; percent: number; minOrderValue: string } | null;
+  /** The unloading service on offer, or null when the shop has it off. */
+  unloading: CartUnloadingDto | null;
+  /** What the service adds to this cart: its price when selected, else "0.00". */
+  unloadingCharge: string;
 };
+
+export type CartUnloadingDto = {
+  selected: boolean;
+  price: string;
+  nameEn: string;
+  nameHi: string;
+  notesEn: string[];
+  notesHi: string[];
+};
+
+/** The unloading service settings, as the admin edits them. */
+export type UnloadingServiceDto = Omit<CartUnloadingDto, 'selected'> & { enabled: boolean };
 
 export type CartCashbackDto = {
   amount: string;
@@ -2044,6 +2063,7 @@ export type MyOrderDetailDto = {
   amountPaid: string;
   /** Paid from the wallet — part of `amountPaid`. */
   walletApplied: string;
+  unloadingCharge: string;
   cashbackAmount: string;
   cashbackStatus: CashbackStatus;
   /** When PENDING cashback lands in the wallet; null until delivered. */

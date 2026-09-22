@@ -16,6 +16,8 @@ import {
   actionOk,
   deleteWarehouseSchema,
   distancePricingSchema,
+  normalizeMoney,
+  unloadingServiceSchema,
   warehouseSchema,
   warehouseStockSchema,
   type ActionResult,
@@ -226,6 +228,50 @@ export async function saveDistancePricing(
     action: 'delivery.distancePricing',
     entityType: 'Setting',
     entityId: 'delivery.distancePricing',
+    diff: value,
+  });
+
+  return actionOk();
+}
+
+/**
+ * Saves the unloading service offered in the cart.
+ *
+ * Behind `delivery:write` beside the delivery charges it sits with: it is a
+ * fee for the last few metres of the same trip. A price change reaches carts
+ * on their next re-price; orders already placed keep the fee they were given.
+ */
+export async function saveUnloadingService(
+  actor: Actor,
+  input: unknown,
+): Promise<ActionResult<void>> {
+  assertPermission(actor, 'delivery:write');
+
+  const parsed = unloadingServiceSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+  const data = parsed.data;
+
+  const value = {
+    enabled: data.enabled,
+    nameEn: data.nameEn,
+    // A blank Hindi name falls back to the English one rather than rendering
+    // an empty heading to Hindi readers.
+    nameHi: data.nameHi || data.nameEn,
+    price: normalizeMoney(data.price),
+    notesEn: data.notesEn,
+    notesHi: data.notesHi,
+  };
+
+  await prisma.setting.upsert({
+    where: { key: 'delivery.unloading' },
+    create: { key: 'delivery.unloading', value },
+    update: { value },
+  });
+
+  await recordAudit(actor, {
+    action: 'delivery.unloading',
+    entityType: 'Setting',
+    entityId: 'delivery.unloading',
     diff: value,
   });
 

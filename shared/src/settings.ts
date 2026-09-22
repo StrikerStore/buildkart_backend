@@ -520,6 +520,50 @@ export const SETTING_SCHEMAS = {
    * here affects only credit granted afterwards.
    */
   'rewards.wallet': walletRulesSchema.default(DEFAULT_WALLET_RULES),
+
+  /**
+   * The unloading service offered in the cart: a flat fee per order for
+   * taking the goods off the truck and putting them where the customer says,
+   * on the ground floor.
+   *
+   * Public (it is shown to shoppers) and holds no secret. The notes are the
+   * fine print under the offer, one line each, in both languages.
+   */
+  'delivery.unloading': z
+    .object({
+      enabled: z.boolean().default(true),
+      nameEn: z.string().max(80).default('Unloading Service'),
+      nameHi: z.string().max(80).default('अनलोडिंग सेवा'),
+      price: money.default('199.00'),
+      notesEn: z
+        .array(z.string().max(200))
+        .max(6)
+        .default([
+          "Doesn't include shifting to upper floors.",
+          'Includes unloading & keeping at designated place on ground level.',
+        ]),
+      notesHi: z
+        .array(z.string().max(200))
+        .max(6)
+        .default([
+          'ऊपरी मंज़िलों पर पहुँचाना शामिल नहीं है।',
+          'सामान उतारना और ग्राउंड फ़्लोर पर बताई जगह पर रखना शामिल है।',
+        ]),
+    })
+    .default({
+      enabled: true,
+      nameEn: 'Unloading Service',
+      nameHi: 'अनलोडिंग सेवा',
+      price: '199.00',
+      notesEn: [
+        "Doesn't include shifting to upper floors.",
+        'Includes unloading & keeping at designated place on ground level.',
+      ],
+      notesHi: [
+        'ऊपरी मंज़िलों पर पहुँचाना शामिल नहीं है।',
+        'सामान उतारना और ग्राउंड फ़्लोर पर बताई जगह पर रखना शामिल है।',
+      ],
+    }),
 } as const;
 
 /**
@@ -551,6 +595,7 @@ export const SETTINGS_DTO_KEYS = [
   'payments.payu',
   'payments.snapmint',
   'rewards.wallet',
+  'delivery.unloading',
 ] as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;

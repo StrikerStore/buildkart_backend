@@ -162,10 +162,23 @@ export async function writeOrder(
   }
 
   // --- price it ------------------------------------------------------------
-  const [storeProfileSetting, area] = await Promise.all([
+  const [storeProfileSetting, area, unloadingSetting] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'store.profile' } }),
     prisma.serviceablePincode.findUnique({ where: { pincode: data.address.pincode } }),
+    data.unloading
+      ? prisma.setting.findUnique({ where: { key: 'delivery.unloading' } })
+      : Promise.resolve(null),
   ]);
+
+  /*
+   * The unloading fee is the shop's current price, read here — the caller only
+   * says whether it was wanted. Switched off since the cart was priced, it is
+   * simply not charged rather than refusing the order.
+   */
+  const unloading = data.unloading
+    ? parseSetting('delivery.unloading', unloadingSetting?.value)
+    : null;
+  const unloadingCharge = unloading?.enabled ? unloading.price : undefined;
 
   let pricing;
   try {
@@ -186,6 +199,7 @@ export async function writeOrder(
         discountTotal: data.discountTotal,
         freeDeliveryAbove:
           data.deliveryCharge === undefined ? (area?.freeDeliveryAbove?.toString() ?? null) : null,
+        unloadingCharge,
       },
     );
   } catch (error) {
@@ -265,6 +279,7 @@ export async function writeOrder(
         subtotal: pricing.subtotal,
         discountTotal: pricing.discountTotal,
         deliveryCharge: pricing.deliveryCharge,
+        unloadingCharge: pricing.unloadingCharge,
         grandTotal: pricing.grandTotal,
         bulkPricingApplied: pricing.bulkPricingApplied,
         taxTotal: pricing.taxTotal,
