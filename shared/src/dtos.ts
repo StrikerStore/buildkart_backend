@@ -1584,6 +1584,8 @@ export type StorefrontSectionDto =
 export type StorefrontHomeDto = {
   hero: StorefrontBannerDto[];
   sections: StorefrontSectionDto[];
+  /** `HOME_BOTTOM` banners — the wide artwork closing the page. */
+  bottom: StorefrontBannerDto[];
 };
 
 /** The category tree the header strip and the nav sheet render. */

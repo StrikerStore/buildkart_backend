@@ -249,14 +249,14 @@ export const BANNER_PLACEMENTS = [
   'HOME_STRIP',
   'CATEGORY_TOP',
   'PRODUCT_PAGE',
-  'OFFER_STRIP',
+  'HOME_BOTTOM',
 ] as const;
 export type BannerPlacement = (typeof BANNER_PLACEMENTS)[number];
 
 export const BANNER_PLACEMENT_LABELS: Record<BannerPlacement, string> = {
   HOME_HERO: 'Home hero',
   HOME_STRIP: 'Home strip',
-  OFFER_STRIP: 'Offer strip',
+  HOME_BOTTOM: 'Home bottom banner',
   CATEGORY_TOP: 'Top of a category',
   PRODUCT_PAGE: 'Product page',
 };
@@ -264,7 +264,7 @@ export const BANNER_PLACEMENT_LABELS: Record<BannerPlacement, string> = {
 export const BANNER_PLACEMENT_HINTS: Record<BannerPlacement, string> = {
   HOME_HERO: 'The wide artwork at the very top of the home page.',
   HOME_STRIP: 'The row of promo cards under the hero, three across on a desktop.',
-  OFFER_STRIP: 'A promotional bar above the header, on every page.',
+  HOME_BOTTOM: 'One wide banner at the end of the home page, just above the brand tagline.',
   CATEGORY_TOP: 'Above the products on a category page.',
   PRODUCT_PAGE: 'A strip on every product page.',
 };
@@ -290,7 +290,7 @@ export const BANNER_PLACEMENT_SIZES: Record<
   // One crop serves both: the card is 7:4 at every width, and the phone rail
   // renders it at 340px, well inside the 840px the desktop card asks for.
   HOME_STRIP: { desktop: '840 × 480 (7:4)', mobile: 'same crop — 840 × 480 (7:4)' },
-  OFFER_STRIP: { desktop: '1600 × 400 (4:1)', mobile: '800 × 500 (8:5)' },
+  HOME_BOTTOM: { desktop: '2172 × 724 (3:1)', mobile: '1672 × 941 (16:9)' },
   CATEGORY_TOP: { desktop: '1600 × 400 (4:1)', mobile: '800 × 500 (8:5)' },
   PRODUCT_PAGE: { desktop: '1600 × 400 (4:1)', mobile: '800 × 500 (8:5)' },
 };
@@ -304,7 +304,6 @@ export const BANNER_PLACEMENT_SIZES: Record<
  * says so on the tin.
  */
 export const BANNER_PLACEMENTS_NOT_LIVE: readonly BannerPlacement[] = [
-  'OFFER_STRIP',
   'CATEGORY_TOP',
   'PRODUCT_PAGE',
 ];

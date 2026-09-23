@@ -1012,7 +1012,7 @@ const BANNER_SELECT = {
 export async function getHomeFeed(): Promise<StorefrontHomeDto> {
   const now = new Date();
 
-  const [hero, strip, sections] = await Promise.all([
+  const [hero, strip, bottom, sections] = await Promise.all([
     prisma.banner.findMany({
       where: { ...liveBannerWhere(now), placement: 'HOME_HERO' },
       orderBy: { position: 'asc' },
@@ -1020,6 +1020,11 @@ export async function getHomeFeed(): Promise<StorefrontHomeDto> {
     }),
     prisma.banner.findMany({
       where: { ...liveBannerWhere(now), placement: 'HOME_STRIP' },
+      orderBy: { position: 'asc' },
+      select: BANNER_SELECT,
+    }),
+    prisma.banner.findMany({
+      where: { ...liveBannerWhere(now), placement: 'HOME_BOTTOM' },
       orderBy: { position: 'asc' },
       select: BANNER_SELECT,
     }),
@@ -1049,6 +1054,7 @@ export async function getHomeFeed(): Promise<StorefrontHomeDto> {
     // A section whose products were all archived resolves to null and is
     // dropped, rather than rendering as a titled empty band.
     sections: resolved.flatMap((section) => (section ? [section] : [])),
+    bottom: bottom.map(toBannerDto),
   };
 }
 

@@ -2123,8 +2123,10 @@ enum BannerPlacement {
   CATEGORY_TOP
   /// Appended, never inserted. A strip on a product detail page.
   PRODUCT_PAGE
-  /// A site-wide promotional bar, above the header.
-  OFFER_STRIP
+  /// One wide banner closing the home page, just above the brand tagline.
+  /// Took over `OFFER_STRIP`'s slot (and ordinal), which never had a place on
+  /// the storefront.
+  HOME_BOTTOM
 }
 
 enum NotificationChannel {
