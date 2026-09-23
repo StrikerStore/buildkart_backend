@@ -78,7 +78,7 @@ Taken from the existing logo (`logo.png`):
 | Auth (admin) | Email + password, signed JWT session cookie (via `jose`), edge middleware guard | Simple owner login for now; NextAuth can be added if OAuth/staff roles are needed later |
 | Payments | **Razorpay** (UPI, cards, netbanking, wallets) + COD flag + **Snapmint** (no-credit-card EMI / pay-later) | Best UPI experience in India; Snapmint lets contractors split big orders into EMIs without a credit card |
 | Images | **Cloudflare R2** (owner already has Cloudflare) | Admin uploads product images to R2; served via Cloudflare CDN, resized/optimized for slow networks |
-| Maps (address pin) | **Leaflet + OpenStreetMap** (free, no API key) | Pin-drop + "use current location" at checkout; swappable for Google Maps later if India geocoding accuracy needs it (adds cost/billing account) |
+| Maps (address pin) | **Google Maps** when chosen in Admin → Checkout → Location (Maps JavaScript + Places autocomplete + Geocoding; Maps Embed in the admin), else **Leaflet + OpenStreetMap** (free, no API key) | Pin-drop + "use current location" at checkout. The provider is a setting, not a build choice: the storefront falls back to Leaflet/OSM tiles if the Google browser key is refused, and the server falls back to OSM geocoding with no server key |
 | i18n | `next-intl` | Clean En/Hi routing and dictionaries |
 | Analytics (admin) | Built from our own order data + optional Google Analytics on the storefront | Shopify-style dashboard needs our own numbers anyway |
 | Hosting | **Railway** — both apps + PostgreSQL in one project | Owner's choice; DB and apps live together (low latency), simple env management, custom domain later |

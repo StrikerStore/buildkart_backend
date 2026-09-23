@@ -2324,6 +2324,19 @@ export type DeviceLocationDto = {
 export type PlaceSuggestionDto = {
   label: string;
   sublabel: string | null;
+  /**
+   * Google Places autocomplete only. Its suggestions carry an ID and no
+   * coordinate; the coordinate comes from `storefront.placeLocation` once the
+   * customer picks one. Null for every other provider.
+   */
+  placeId: string | null;
+  /** Null exactly when `placeId` is set and the coordinate is still to fetch. */
+  latitude: number | null;
+  longitude: number | null;
+};
+
+/** A picked suggestion's coordinate. */
+export type PlaceLocationDto = {
   latitude: number;
   longitude: number;
 };

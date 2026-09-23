@@ -39,6 +39,7 @@ import {
   listMyWalletEntries,
   listServiceableAreas,
   placeCustomerOrder,
+  placeLocation,
   priceCart,
   requestOtp,
   requestPincode,
@@ -59,6 +60,7 @@ import {
 import {
   cartCouponsSchema,
   deviceLocationSchema,
+  placeLocationSchema,
   placeSearchSchema,
   priceCartSchema,
   storefrontCardsByHandlesSchema,
@@ -166,7 +168,16 @@ export const storefrontRouter = router({
    */
   searchPlaces: publicProcedure
     .input(placeSearchSchema)
-    .query(({ input }) => searchPlaces(input.q)),
+    .query(({ input }) => searchPlaces(input.q, input.sessionToken)),
+
+  /*
+   * The coordinate of a picked Google autocomplete suggestion, which arrives
+   * as a place ID only. Null when the shop is not on Google or the lookup
+   * failed; like `searchPlaces`, it only moves the map.
+   */
+  placeLocation: publicProcedure
+    .input(placeLocationSchema)
+    .query(({ input }) => placeLocation(input.placeId, input.sessionToken)),
 
   /**
    * Every area the shop delivers to.

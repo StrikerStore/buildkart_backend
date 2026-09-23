@@ -327,6 +327,18 @@ export const deviceLocationSchema = z.object({
 export type DeviceLocationInput = z.infer<typeof deviceLocationSchema>;
 
 /**
+ * Groups one customer's search keystrokes and their final pick into a single
+ * billable Google Places session. A UUID from the browser; other providers
+ * ignore it.
+ */
+const placesSessionToken = z
+  .string()
+  .trim()
+  .min(8)
+  .max(64)
+  .regex(/^[A-Za-z0-9-]+$/);
+
+/**
  * A locality search, for the customer who will not share their location.
  *
  * Capped at 120 characters: this reaches an external geocoder on every call,
@@ -334,5 +346,19 @@ export type DeviceLocationInput = z.infer<typeof deviceLocationSchema>;
  */
 export const placeSearchSchema = z.object({
   q: z.string().trim().min(3, 'Type at least three letters').max(120),
+  sessionToken: placesSessionToken.optional(),
 });
 export type PlaceSearchInput = z.infer<typeof placeSearchSchema>;
+
+/**
+ * Where a picked autocomplete suggestion actually is.
+ *
+ * Google's autocomplete answers with place IDs, not coordinates, so the pick is
+ * a second call. The session token ties the two together: Google bills the
+ * keystrokes of a session that ends in one details lookup as that lookup alone.
+ */
+export const placeLocationSchema = z.object({
+  placeId: z.string().trim().min(1).max(300),
+  sessionToken: placesSessionToken.optional(),
+});
+export type PlaceLocationInput = z.infer<typeof placeLocationSchema>;
