@@ -55,7 +55,7 @@ export const PAGE_KIND_LABELS: Record<PageKind, string> = {
  * one in; this is the fallback for a shop that has not, so the link works the
  * day the page is created.
  */
-export const CONTACT_WHATSAPP_NUMBER = '7024449697';
+export const CONTACT_WHATSAPP_NUMBER = '7477075458';
 
 /**
  * A `wa.me` link for a number typed by a human.

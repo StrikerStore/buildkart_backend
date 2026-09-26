@@ -109,13 +109,13 @@ test('a url is optional and a message without one is plain text', () => {
  * the assumption is made here rather than left to the owner to remember.
  */
 test('a ten-digit mobile gains the country code', () => {
-  assert.equal(whatsappHref('7024449697'), 'https://wa.me/917024449697');
-  assert.equal(whatsappHref(CONTACT_WHATSAPP_NUMBER), 'https://wa.me/917024449697');
+  assert.equal(whatsappHref('7477075458'), 'https://wa.me/917477075458');
+  assert.equal(whatsappHref(CONTACT_WHATSAPP_NUMBER), 'https://wa.me/917477075458');
 });
 
 test('spacing, dashes and a leading plus are stripped, and a country code is kept', () => {
-  assert.equal(whatsappHref('+91 70244-49697'), 'https://wa.me/917024449697');
-  assert.equal(whatsappHref('91 7024449697'), 'https://wa.me/917024449697');
+  assert.equal(whatsappHref('+91 74770-75458'), 'https://wa.me/917477075458');
+  assert.equal(whatsappHref('91 7477075458'), 'https://wa.me/917477075458');
 });
 
 /* An unset setting must not produce `https://wa.me/` — the caller falls back. */
