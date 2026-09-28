@@ -426,7 +426,7 @@ export type HomepageSectionDto = {
   limit: number;
   /**
    * NEW_ARRIVALS: days a product counts as new after it first went live.
-   * TRENDING: days of search activity ranked.
+   * TRENDING: days of shopper activity ranked.
    */
   days: number;
   /** TRUST_STRIP only: which promises the row makes. */

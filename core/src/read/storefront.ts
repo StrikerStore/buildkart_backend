@@ -26,10 +26,14 @@ import {
   formatMetafieldCell,
   isPassthroughNamespace,
   parseOptionFilter,
+  PRODUCT_SIGNAL_KINDS,
+  rankTrending,
   STOREFRONT_PAGE_SIZE,
   storeDayKey,
+  storeDaysAgo,
   TRUST_MARKERS,
   isVideoMime,
+  type ProductSignalKind,
   type SettingsDto,
   type TrustMarker,
   type StorefrontAreaDto,
@@ -1198,35 +1202,59 @@ async function resolveSection(
 
     case 'TRENDING': {
       /*
-       * Ranked by distinct shoppers who opened each product from search over
-       * the last `days` store days, today included — see `recordSearchHit` for
-       * why a row is a shopper and not a click.
+       * Ranked by weighted interest over the last `days` store days, today
+       * included: every product page view, a bonus for opening it from
+       * search, every cart add, and every order that was not cancelled —
+       * weights in `TRENDING_WEIGHTS`, arithmetic in `rankTrending`. See
+       * `recordProductSignal` for why a signal is a shopper and not a click.
+       *
+       * Orders are counted by distinct order rather than by line, so an order
+       * holding two sizes of the same tile is one purchase of it, not two.
        *
        * Over-fetched before the visibility check: a product archived since it
-       * was searched still has its hits, and dropping it after taking exactly
-       * `limit` would leave the band short for no reason a shopper could see.
+       * was popular still has its signals, and dropping it after taking
+       * exactly `limit` would leave the band short for no reason a shopper
+       * could see.
        */
       const days = typeof config.days === 'number' ? Math.min(Math.max(config.days, 1), 90) : 15;
-      const firstDay = storeDayKey(new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000));
+      const since = storeDaysAgo(days - 1);
+      const firstDay = new Date(`${storeDayKey(since)}T00:00:00.000Z`);
 
-      const ranked = await prisma.productSearchHit.groupBy({
-        by: ['productId'],
-        where: { day: { gte: new Date(`${firstDay}T00:00:00.000Z`) } },
-        _count: { productId: true },
-        orderBy: [{ _count: { productId: 'desc' } }, { productId: 'asc' }],
-        take: limit * 2,
-      });
+      const [signals, orders] = await Promise.all([
+        prisma.productSignal.groupBy({
+          by: ['productId', 'kind'],
+          where: { day: { gte: firstDay } },
+          _count: { _all: true },
+        }),
+        prisma.$queryRaw<Array<{ productId: string; orders: bigint | number }>>`
+          SELECT oi.productId AS productId, COUNT(DISTINCT oi.orderId) AS orders
+          FROM \`OrderItem\` oi
+          JOIN \`Order\` o ON o.id = oi.orderId
+          WHERE oi.productId IS NOT NULL
+            AND o.status <> 'CANCELLED'
+            AND o.placedAt >= ${since}
+          GROUP BY oi.productId`,
+      ]);
+
+      const ranked = rankTrending(
+        signals.flatMap((row) =>
+          (PRODUCT_SIGNAL_KINDS as readonly string[]).includes(row.kind)
+            ? [{ productId: row.productId, kind: row.kind as ProductSignalKind, count: row._count._all }]
+            : [],
+        ),
+        orders.map((row) => ({ productId: row.productId, count: Number(row.orders) })),
+      ).slice(0, limit * 2);
       if (ranked.length === 0) return null;
 
       const rows = await prisma.product.findMany({
-        where: { ...VISIBLE_PRODUCT, id: { in: ranked.map((hit) => hit.productId) } },
+        where: { ...VISIBLE_PRODUCT, id: { in: ranked } },
         select: { ...CARD_SELECT, id: true },
       });
       // The ranking's order, not the database's.
       const byId = new Map(rows.map((product) => [product.id, product]));
       const products = ranked
-        .flatMap((hit) => {
-          const found = byId.get(hit.productId);
+        .flatMap((productId) => {
+          const found = byId.get(productId);
           return found ? [toCardDto(found)] : [];
         })
         .slice(0, limit);

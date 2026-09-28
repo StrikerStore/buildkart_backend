@@ -41,7 +41,7 @@ import {
   placeCustomerOrder,
   placeLocation,
   priceCart,
-  recordSearchHit,
+  recordProductSignal,
   requestOtp,
   requestPincode,
   reorderLines,
@@ -205,13 +205,14 @@ export const storefrontRouter = router({
   requestArea: publicProcedure.input(z.unknown()).mutation(({ input }) => requestPincode(input)),
 
   /*
-   * A product opened from search, for the TRENDING band. The client IP comes
-   * off the context, as for `requestOtp`: it is what makes a repeat from the
-   * same shopper one vote, so a caller must not be able to name its own.
+   * A shopper viewed a product, opened it from search, or added it to the
+   * cart — the signals the TRENDING band ranks. The client IP comes off the
+   * context, as for `requestOtp`: it is what makes a repeat from the same
+   * shopper one vote, so a caller must not be able to name its own.
    */
-  recordSearchHit: publicProcedure
+  recordProductSignal: publicProcedure
     .input(z.unknown())
-    .mutation(({ ctx, input }) => recordSearchHit(input, ctx.clientIp)),
+    .mutation(({ ctx, input }) => recordProductSignal(input, ctx.clientIp)),
 
   // --- sign-in ------------------------------------------------------------
 

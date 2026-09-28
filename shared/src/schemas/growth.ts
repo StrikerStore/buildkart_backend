@@ -359,7 +359,7 @@ export const HOMEPAGE_SECTION_HINTS: Record<HomepageSectionType, string> = {
   NEW_ARRIVALS:
     'The latest products to go live, newest first. Each one drops off on its own once it has been listed longer than the days you set.',
   TRENDING:
-    'The products shoppers open most from search, over the days you set. Fills itself — and hides itself until there is search activity to rank.',
+    'The products shoppers are most interested in over the days you set — views, searches, cart adds and orders. Fills itself, and hides itself until there is activity to rank.',
   BANNER_STRIP:
     'The Home strip banners, three across on a desktop. Move this section up to sit it just under the hero.',
   RATE_TICKER: 'Live prices for the rate-volatile lines.',
@@ -421,8 +421,8 @@ export const homepageSectionConfigSchema = z.object({
    * went live (`Product.publishedAt`). Ninety at most — past a quarter, "new"
    * stops meaning anything a shopper would recognise.
    *
-   * TRENDING: how many days of search activity are ranked. The same ceiling,
-   * for the same reason — last season's searches are not trending.
+   * TRENDING: how many days of shopper activity are ranked. The same ceiling,
+   * for the same reason — last season's interest is not trending.
    */
   days: z.coerce.number().int().min(1).max(90).default(15),
   /*

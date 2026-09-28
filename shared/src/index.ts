@@ -29,6 +29,7 @@ export * from './delivery-pricing.ts';
 export * from './discounts.ts';
 export * from './wallet.ts';
 export * from './analytics.ts';
+export * from './trending.ts';
 export * from './metafields/index.ts';
 export * from './csv/index.ts';
 export * from './schemas/index.ts';
