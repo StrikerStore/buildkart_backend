@@ -376,7 +376,7 @@ export const HOMEPAGE_SECTION_HINTS: Record<HomepageSectionType, string> = {
  * anywhere to notice. Choosing which of these appear is the control that was
  * missing; writing new ones is not.
  */
-export const TRUST_MARKERS = ['fast', 'cod', 'genuine', 'rates'] as const;
+export const TRUST_MARKERS = ['fast', 'cod', 'genuine', 'rates', 'cashback'] as const;
 export type TrustMarker = (typeof TRUST_MARKERS)[number];
 
 export const TRUST_MARKER_LABELS: Record<TrustMarker, string> = {
@@ -384,6 +384,7 @@ export const TRUST_MARKER_LABELS: Record<TrustMarker, string> = {
   cod: 'Cash on delivery',
   genuine: 'Genuine brands',
   rates: "Today's rates",
+  cashback: 'Assured cashback',
 };
 
 export const TRUST_MARKER_HINTS: Record<TrustMarker, string> = {
@@ -391,6 +392,7 @@ export const TRUST_MARKER_HINTS: Record<TrustMarker, string> = {
   cod: 'Hides itself while cash on delivery is off in Settings › Payments.',
   genuine: 'A plain claim about the catalogue — nothing to configure.',
   rates: 'Says prices are refreshed daily. Pair it with the rates ticker.',
+  cashback: 'Hides itself while the wallet or cashback is off, or no cashback slab is set.',
 };
 
 /**

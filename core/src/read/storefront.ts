@@ -29,7 +29,7 @@ import {
   STOREFRONT_PAGE_SIZE,
   TRUST_MARKERS,
   isVideoMime,
-  type CommerceSettingsDto,
+  type SettingsDto,
   type TrustMarker,
   type StorefrontAreaDto,
   type StorefrontBadgeDto,
@@ -1041,12 +1041,12 @@ export async function getHomeFeed(): Promise<StorefrontHomeDto> {
    * most-hit query in the shop — an unconditional extra read here would be paid
    * on every visit to buy a row most stores will have exactly one of.
    */
-  const commerce = sections.some((section) => section.type === 'TRUST_STRIP')
-    ? (await getSettings()).commerce
+  const settings = sections.some((section) => section.type === 'TRUST_STRIP')
+    ? await getSettings()
     : null;
 
   const resolved = await Promise.all(
-    sections.map((section) => resolveSection(section, strip.map(toBannerDto), commerce)),
+    sections.map((section) => resolveSection(section, strip.map(toBannerDto), settings)),
   );
 
   return {
@@ -1069,7 +1069,7 @@ type SectionRow = {
 async function resolveSection(
   row: SectionRow,
   stripBanners: StorefrontBannerDto[],
-  commerce: CommerceSettingsDto | null,
+  settings: Pick<SettingsDto, 'commerce' | 'wallet'> | null,
 ): Promise<StorefrontSectionDto | null> {
   /*
    * `configJson` is `Json` and its shape follows `type` — which is exactly why
@@ -1219,13 +1219,16 @@ async function resolveSection(
       // Only reachable with settings loaded — `getHomeFeed` fetches them when a
       // row of this type is present — but a null here drops the band rather
       // than inventing a delivery promise.
-      if (!commerce) return null;
+      if (!settings) return null;
+      const { commerce, wallet } = settings;
 
       /*
        * The owner chooses which promises appear; the shop decides whether each
        * one is still true. A `cod` marker the owner ticked is dropped here the
        * moment cash on delivery is switched off in Payments, because the strip
-       * sits directly above a checkout that would refuse it.
+       * sits directly above a checkout that would refuse it. `cashback` goes the
+       * same way when the wallet or cashback is off, or no slab is set — an
+       * "assured" cashback that no order can earn is the worst claim to leave up.
        *
        * An absent `markers` key means a row saved before the field existed:
        * those show everything, which is what they were showing already.
@@ -1234,7 +1237,13 @@ async function resolveSection(
         ? config.markers.filter((m): m is TrustMarker => TRUST_MARKERS.includes(m as TrustMarker))
         : [...TRUST_MARKERS];
 
-      const markers = chosen.filter((marker) => marker !== 'cod' || commerce.codEnabled);
+      const cashbackLive =
+        wallet.enabled && wallet.cashback.enabled && wallet.cashback.slabs.length > 0;
+      const markers = chosen.filter((marker) => {
+        if (marker === 'cod') return commerce.codEnabled;
+        if (marker === 'cashback') return cashbackLive;
+        return true;
+      });
       if (markers.length === 0) return null;
 
       return { ...head, type: 'TRUST_STRIP', markers, promiseHours: commerce.promiseHours };

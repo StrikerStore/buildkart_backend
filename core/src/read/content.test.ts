@@ -94,7 +94,7 @@ test('a trust strip keeps the markers it was saved with', () => {
 test('a config saved before markers existed shows every marker', () => {
   const dto = toHomepageSectionDto(row({ type: 'TRUST_STRIP', configJson: { limit: 12 } }));
   assert.ok(dto);
-  assert.deepEqual(dto.markers, ['fast', 'cod', 'genuine', 'rates']);
+  assert.deepEqual(dto.markers, ['fast', 'cod', 'genuine', 'rates', 'cashback']);
 });
 
 test('a marker this build does not know is dropped rather than rejected', () => {
