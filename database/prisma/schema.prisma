@@ -531,6 +531,7 @@ model Product {
   orderItems       OrderItem[]
   discountTargets  DiscountProduct[]
   importImageTasks ImportImageTask[]
+  searchHits       ProductSearchHit[]
 
   @@index([status, publishedAt])
   @@index([categoryId, status])
@@ -1528,6 +1529,25 @@ model HomepageSection {
   updatedAt DateTime @updatedAt
 
   @@index([isActive, position])
+}
+
+/// One shopper opening one product from search, on one day — what the
+/// homepage's TRENDING band ranks by.
+///
+/// A row per *distinct* visitor rather than a counter: the composite key means
+/// a shopper opening the same product twenty times in a day, or a script
+/// replaying the call, is still one vote. `visitor` is a SHA-256 of the IP and
+/// the day, never the IP itself — enough to tell two shoppers apart for a day
+/// and useless for following one across days.
+model ProductSearchHit {
+  productId String   @db.VarChar(191)
+  day       DateTime @db.Date
+  visitor   String   @db.Char(64)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([productId, day, visitor])
+  @@index([day, productId])
 }
 
 /// A customer's review, posted by the owner on their behalf.

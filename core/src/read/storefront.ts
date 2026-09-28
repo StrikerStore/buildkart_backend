@@ -27,6 +27,7 @@ import {
   isPassthroughNamespace,
   parseOptionFilter,
   STOREFRONT_PAGE_SIZE,
+  storeDayKey,
   TRUST_MARKERS,
   isVideoMime,
   type SettingsDto,
@@ -1193,6 +1194,45 @@ async function resolveSection(
       if (rows.length === 0) return null;
 
       return { ...head, type: 'NEW_ARRIVALS', products: rows.map(toCardDto), href: null };
+    }
+
+    case 'TRENDING': {
+      /*
+       * Ranked by distinct shoppers who opened each product from search over
+       * the last `days` store days, today included — see `recordSearchHit` for
+       * why a row is a shopper and not a click.
+       *
+       * Over-fetched before the visibility check: a product archived since it
+       * was searched still has its hits, and dropping it after taking exactly
+       * `limit` would leave the band short for no reason a shopper could see.
+       */
+      const days = typeof config.days === 'number' ? Math.min(Math.max(config.days, 1), 90) : 15;
+      const firstDay = storeDayKey(new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000));
+
+      const ranked = await prisma.productSearchHit.groupBy({
+        by: ['productId'],
+        where: { day: { gte: new Date(`${firstDay}T00:00:00.000Z`) } },
+        _count: { productId: true },
+        orderBy: [{ _count: { productId: 'desc' } }, { productId: 'asc' }],
+        take: limit * 2,
+      });
+      if (ranked.length === 0) return null;
+
+      const rows = await prisma.product.findMany({
+        where: { ...VISIBLE_PRODUCT, id: { in: ranked.map((hit) => hit.productId) } },
+        select: { ...CARD_SELECT, id: true },
+      });
+      // The ranking's order, not the database's.
+      const byId = new Map(rows.map((product) => [product.id, product]));
+      const products = ranked
+        .flatMap((hit) => {
+          const found = byId.get(hit.productId);
+          return found ? [toCardDto(found)] : [];
+        })
+        .slice(0, limit);
+      if (products.length === 0) return null;
+
+      return { ...head, type: 'TRENDING', products, href: null };
     }
 
     case 'RATE_TICKER': {

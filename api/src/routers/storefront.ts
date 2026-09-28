@@ -41,6 +41,7 @@ import {
   placeCustomerOrder,
   placeLocation,
   priceCart,
+  recordSearchHit,
   requestOtp,
   requestPincode,
   reorderLines,
@@ -202,6 +203,15 @@ export const storefrontRouter = router({
    * above, whose inputs come from a query string a stranger can edit.
    */
   requestArea: publicProcedure.input(z.unknown()).mutation(({ input }) => requestPincode(input)),
+
+  /*
+   * A product opened from search, for the TRENDING band. The client IP comes
+   * off the context, as for `requestOtp`: it is what makes a repeat from the
+   * same shopper one vote, so a caller must not be able to name its own.
+   */
+  recordSearchHit: publicProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => recordSearchHit(input, ctx.clientIp)),
 
   // --- sign-in ------------------------------------------------------------
 

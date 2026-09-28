@@ -424,7 +424,10 @@ export type HomepageSectionDto = {
   /** TAG_CAROUSEL: the tag's slug. Resolved from a legacy id when the row predates slugs. */
   tagSlug: string | null;
   limit: number;
-  /** NEW_ARRIVALS only: days a product counts as new after it first went live. */
+  /**
+   * NEW_ARRIVALS: days a product counts as new after it first went live.
+   * TRENDING: days of search activity ranked.
+   */
   days: number;
   /** TRUST_STRIP only: which promises the row makes. */
   markers: TrustMarker[];
@@ -1541,7 +1544,7 @@ export type StorefrontSectionDto =
        * lines. The renderer still tells them apart: RATE_TICKER shows the
        * freshness stamp, the others do not.
        */
-      type: 'PRODUCT_CAROUSEL' | 'TAG_CAROUSEL' | 'NEW_ARRIVALS' | 'RATE_TICKER';
+      type: 'PRODUCT_CAROUSEL' | 'TAG_CAROUSEL' | 'NEW_ARRIVALS' | 'TRENDING' | 'RATE_TICKER';
       titleEn: string | null;
       titleHi: string | null;
       products: StorefrontCardDto[];

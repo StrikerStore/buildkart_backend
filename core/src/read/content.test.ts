@@ -115,6 +115,14 @@ test('a new arrivals section keeps the days it was saved with', () => {
   assert.equal(dto.limit, 10);
 });
 
+test('a trending section keeps the window it was saved with', () => {
+  const dto = toHomepageSectionDto(row({ type: 'TRENDING', configJson: { limit: 8, days: 7 } }));
+  assert.ok(dto);
+  assert.equal(dto.type, 'TRENDING');
+  assert.equal(dto.days, 7);
+  assert.equal(dto.limit, 8);
+});
+
 /*
  * `days` was added to a config column already holding rows. A section saved
  * before it existed must read back with the fifteen-day default rather than

@@ -332,6 +332,7 @@ export const HOMEPAGE_SECTION_TYPES = [
   'PRODUCT_CAROUSEL',
   'TAG_CAROUSEL',
   'NEW_ARRIVALS',
+  'TRENDING',
   'BANNER_STRIP',
   'RATE_TICKER',
   'TRUST_STRIP',
@@ -344,6 +345,7 @@ export const HOMEPAGE_SECTION_LABELS: Record<HomepageSectionType, string> = {
   PRODUCT_CAROUSEL: 'Product carousel',
   TAG_CAROUSEL: 'Products by tag',
   NEW_ARRIVALS: 'New arrivals',
+  TRENDING: 'Trending',
   BANNER_STRIP: 'Banner strip',
   RATE_TICKER: "Today's rates ticker",
   TRUST_STRIP: 'Why buy here',
@@ -356,6 +358,8 @@ export const HOMEPAGE_SECTION_HINTS: Record<HomepageSectionType, string> = {
   TAG_CAROUSEL: 'Every product carrying a tag, kept up to date on its own.',
   NEW_ARRIVALS:
     'The latest products to go live, newest first. Each one drops off on its own once it has been listed longer than the days you set.',
+  TRENDING:
+    'The products shoppers open most from search, over the days you set. Fills itself — and hides itself until there is search activity to rank.',
   BANNER_STRIP:
     'The Home strip banners, three across on a desktop. Move this section up to sit it just under the hero.',
   RATE_TICKER: 'Live prices for the rate-volatile lines.',
@@ -416,6 +420,9 @@ export const homepageSectionConfigSchema = z.object({
    * NEW_ARRIVALS: how long a product counts as new, measured from when it first
    * went live (`Product.publishedAt`). Ninety at most — past a quarter, "new"
    * stops meaning anything a shopper would recognise.
+   *
+   * TRENDING: how many days of search activity are ranked. The same ceiling,
+   * for the same reason — last season's searches are not trending.
    */
   days: z.coerce.number().int().min(1).max(90).default(15),
   /*

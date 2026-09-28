@@ -204,7 +204,7 @@ export async function saveHomepageSection(
     }
     config.tagSlug = tag.slug;
   }
-  if (data.type === 'NEW_ARRIVALS') config.days = data.config.days;
+  if (data.type === 'NEW_ARRIVALS' || data.type === 'TRENDING') config.days = data.config.days;
   /*
    * Always written, even when every marker is ticked. A row with no `markers`
    * key reads back as "all of them" (the pre-field default), so leaving it out
