@@ -62,6 +62,7 @@ import type {
   VariantSnapshot,
 } from './index.ts';
 import type { CashbackStatus, WalletEntryType } from './wallet.ts';
+import type { CheckoutOption, OnlineGateway } from './checkout-options.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
 import type { ImportIssue, ParsedProduct } from './csv/index.ts';
 
@@ -1098,6 +1099,8 @@ export type PaymentProviderDto = {
   secrets: Record<string, SecretFieldDto>;
   /** COD only; "0.00" means no ceiling. */
   maxOrderValue: string;
+  /** Razorpay and PayU only; empty for the others. */
+  checkoutOptions: CheckoutOption[];
 };
 
 // from core/src/read/payment-settings.ts
@@ -1105,7 +1108,89 @@ export type PaymentSettingsDto = {
   providers: PaymentProviderDto[];
   /** False when SETTINGS_ENCRYPTION_KEY is absent; the screen explains why. */
   secretsKeyConfigured: boolean;
+  /** Where each checkout option goes, best gateway first — what checkout will do. */
+  routing: Array<{ option: CheckoutOption; gateways: OnlineGateway[] }>;
+  /** The URLs to paste into each gateway's dashboard. Null when API_PUBLIC_URL is unset. */
+  webhookUrls: Record<OnlineGateway, string> | null;
+  /** Paid sessions that could not become an order — money to follow up on. */
+  issues: PaymentIssueDto[];
 };
+
+// from core/src/read/payment-settings.ts
+/** A payment that was taken but did not become an order, so it was refunded. */
+export type PaymentIssueDto = {
+  sessionId: string;
+  gateway: OnlineGateway;
+  amount: string;
+  customerPhone: string;
+  customerName: string | null;
+  status: 'REFUNDED' | 'REFUND_PENDING';
+  reason: string | null;
+  gatewayPaymentId: string | null;
+  createdAt: string;
+};
+
+// from core/src/read/payment-settings.ts
+/** One way to pay, as the storefront offers it. No gateway name. */
+export type CheckoutOptionDto = {
+  option: CheckoutOption;
+  label: string;
+  labelHi: string;
+  hint: string;
+  hintHi: string;
+};
+
+// from core/src/payments/saved-cards.ts
+/** A card the gateway holds a token for. Never more than the last four. */
+export type SavedCardDto = {
+  gateway: OnlineGateway;
+  tokenId: string;
+  network: string | null;
+  issuer: string | null;
+  last4: string;
+  /** CREDIT / DEBIT / PREPAID, where the gateway says. */
+  cardType: string | null;
+};
+
+// from core/src/write/payment-session.ts
+/**
+ * What the browser needs to take the customer to the gateway.
+ *
+ * `PAID` is the zero-to-pay case — the wallet covered the order, so it was
+ * written at once and there is no gateway step at all.
+ */
+export type PaymentStartDto =
+  | {
+      gateway: 'RAZORPAY';
+      sessionId: string;
+      keyId: string;
+      gatewayOrderId: string;
+      amountPaise: number;
+      /** Razorpay `cust_…`, so its checkout can offer and save cards. */
+      customerId: string | null;
+      prefill: { name: string; contact: string; email: string };
+      /** Razorpay `config.display`, restricting the modal to the chosen option. */
+      display: Record<string, unknown>;
+      /** For Razorpay's `method` hint when a saved card was picked. */
+      method: string | null;
+    }
+  | {
+      gateway: 'PAYU';
+      sessionId: string;
+      /** The hosted page the browser POSTs `fields` to. */
+      action: string;
+      fields: Record<string, string>;
+    }
+  | { gateway: 'NONE'; order: PlacedOrderDto };
+
+// from core/src/write/payment-session.ts
+/**
+ * How a payment ended, as the customer is told. `PAID` carries the order the
+ * money became; the rest carry a sentence to show them.
+ */
+export type PaymentOutcomeDto =
+  | { status: 'PAID'; order: PlacedOrderDto }
+  | { status: 'FAILED' | 'REFUNDED' | 'PENDING'; message: string };
 
 // from core/src/read/payment-settings.ts
 /** What the storefront's checkout may see: no credentials, no modes. */
@@ -1292,6 +1377,11 @@ export type StorefrontCheckoutDto = Omit<
   location: StorefrontLocationDto;
   /** Enabled payment methods, in the order they should be offered. */
   methods: CheckoutMethodDto[];
+  /**
+   * The online ways to pay that some enabled gateway will take, in storefront
+   * order. Which gateway takes each is decided when the customer pays.
+   */
+  paymentOptions: CheckoutOptionDto[];
   /** Orders below this are refused when `flow.minimumOrderEnforced` is on. */
   minimumOrderValue: string;
 };
@@ -2059,6 +2149,8 @@ export type MyOrderDetailDto = {
   status: OrderStatus;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  /** "UPI", "Visa •••• 4242" — how an online payment was made. Null for cash or unpaid. */
+  paidWith: string | null;
   subtotal: string;
   discountTotal: string;
   discountCode: string | null;

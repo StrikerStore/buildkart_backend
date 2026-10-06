@@ -5,12 +5,12 @@
  * it, so the two cannot drift into disagreeing about which field is a secret —
  * which is the one disagreement that would put a salt in a `*Dto`.
  *
- * Nothing here talks to a gateway. This milestone stores credentials and the
- * customer-facing presentation; there is no storefront checkout to call a
- * gateway from yet, and a half-wired integration is worse than none.
+ * Nothing here talks to a gateway — `core/src/payments/` does. This is the
+ * vocabulary both the admin form and those clients agree on.
  */
 import { z } from 'zod';
 import { MONEY_PATTERN } from '../money.ts';
+import { CHECKOUT_OPTIONS } from '../checkout-options.ts';
 
 export const PAYMENT_PROVIDERS = ['RAZORPAY', 'PAYU', 'SNAPMINT', 'COD'] as const;
 export type PaymentProvider = (typeof PAYMENT_PROVIDERS)[number];
@@ -33,7 +33,7 @@ export const PAYMENT_PROVIDER_LABELS: Record<PaymentProvider, string> = {
 export const PAYMENT_PROVIDER_HINTS: Record<PaymentProvider, string> = {
   RAZORPAY: 'Cards, UPI, net banking and wallets.',
   PAYU: 'Cards, UPI, net banking and EMI.',
-  SNAPMINT: 'Pay in instalments.',
+  SNAPMINT: 'Pay in instalments. Not offered at checkout yet.',
   COD: 'The rider collects at the door, in cash or by QR code.',
 };
 
@@ -142,6 +142,11 @@ export const paymentProviderConfigSchema = z
     clearSecrets: z.array(z.string().max(32)).max(8).default([]),
     /** COD only. "0.00" means no ceiling. */
     maxOrderValue: money.default('0.00'),
+    /**
+     * Razorpay and PayU only: which checkout options this gateway may take.
+     * Absent means "leave as stored", so an older form cannot wipe it.
+     */
+    checkoutOptions: z.array(z.enum(CHECKOUT_OPTIONS)).max(CHECKOUT_OPTIONS.length).optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.enabled) return;

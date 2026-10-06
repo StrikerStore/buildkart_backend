@@ -9,8 +9,15 @@ import { z } from 'zod';
 import { MONEY_PATTERN, toPaise } from './money.ts';
 import { EMPTY_SECRET, encryptedSecretSchema } from './secrets.ts';
 import { DEFAULT_WALLET_RULES, walletRulesSchema } from './wallet.ts';
+import { CHECKOUT_OPTIONS } from './checkout-options.ts';
 
 const money = z.string().regex(MONEY_PATTERN, 'Must be an amount like "10000.00"');
+
+/**
+ * Which checkout options a gateway is allowed to take. Defaults to all of them,
+ * so a row saved before routing existed keeps taking everything it could.
+ */
+const checkoutOptions = z.array(z.enum(CHECKOUT_OPTIONS)).default([...CHECKOUT_OPTIONS]);
 
 export const SETTING_SCHEMAS = {
   /*
@@ -80,6 +87,7 @@ export const SETTING_SCHEMAS = {
       keyId: z.string().default(''),
       keySecretEnc: encryptedSecretSchema,
       webhookSecretEnc: encryptedSecretSchema,
+      checkoutOptions,
     })
     .default({
       enabled: false,
@@ -89,6 +97,7 @@ export const SETTING_SCHEMAS = {
       keyId: '',
       keySecretEnc: EMPTY_SECRET,
       webhookSecretEnc: EMPTY_SECRET,
+      checkoutOptions: [...CHECKOUT_OPTIONS],
     }),
 
   'payments.payu': z
@@ -102,6 +111,7 @@ export const SETTING_SCHEMAS = {
       saltEnc: encryptedSecretSchema,
       /** Blank when the merchant account only has a v1 salt. */
       saltV2Enc: encryptedSecretSchema,
+      checkoutOptions,
     })
     .default({
       enabled: false,
@@ -111,6 +121,7 @@ export const SETTING_SCHEMAS = {
       merchantKey: '',
       saltEnc: EMPTY_SECRET,
       saltV2Enc: EMPTY_SECRET,
+      checkoutOptions: [...CHECKOUT_OPTIONS],
     }),
 
   'payments.snapmint': z

@@ -889,12 +889,14 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  addresses      Address[]
-  orders         Order[]
-  redemptions    DiscountRedemption[]
-  supportTickets SupportTicket[]
-  walletLots     WalletLot[]
-  walletEntries  WalletEntry[]
+  addresses       Address[]
+  orders          Order[]
+  redemptions     DiscountRedemption[]
+  supportTickets  SupportTicket[]
+  walletLots      WalletLot[]
+  walletEntries   WalletEntry[]
+  paymentSessions PaymentSession[]
+  gatewayAccounts CustomerGatewayAccount[]
 
   @@index([createdAt])
   @@index([lastOrderAt])
@@ -1061,6 +1063,7 @@ model Order {
   supportTickets SupportTicket[]
   walletLots     WalletLot[]
   walletEntries  WalletEntry[]
+  paymentSession PaymentSession?
 
   @@index([status, placedAt])
   @@index([customerId, placedAt])
@@ -1270,6 +1273,67 @@ model PaymentTransaction {
   @@index([orderId, occurredAt])
   @@index([reference])
   @@index([status, occurredAt])
+}
+
+/// One attempt to pay online for a cart that is not an order yet.
+///
+/// An online order is written only once the gateway confirms the money, so
+/// between "Pay" and that confirmation the order exists only as this row: the
+/// payload `writeOrder` will be handed, frozen by the server at the moment the
+/// customer agreed to the total. Four paths can confirm a payment — the
+/// browser, PayU's return POST, a webhook and the reconcile cron — and all of
+/// them land in `finalizePaymentSession`, which claims this row first so that
+/// exactly one of them writes the order.
+model PaymentSession {
+  id         String @id @default(cuid())
+  customerId String
+
+  status PaymentSessionStatus @default(CREATED)
+
+  /// What the customer chose (UPI, CREDIT_CARD, ...) — a `CheckoutOption`.
+  option     String             @db.VarChar(16)
+  gateway    PaymentGateway
+  instrument PaymentInstrument?
+
+  /// Charged at the gateway: the grand total less what the wallet covers.
+  amount       Decimal @db.Decimal(10, 2)
+  grandTotal   Decimal @db.Decimal(10, 2)
+  walletQuoted Decimal @default(0) @db.Decimal(10, 2)
+
+  /// The frozen `CreateOrderInput`, plus `useWallet`. Server-built, never posted.
+  payload Json
+
+  /// Razorpay `order_...` or PayU `txnid`.
+  gatewayOrderId   String? @unique @db.VarChar(64)
+  gatewayPaymentId String? @db.VarChar(64)
+
+  orderId String? @unique
+
+  failureReason String?  @db.VarChar(255)
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+}
+
+/// A customer's identity at a gateway — Razorpay's `cust_...` — which is what
+/// its saved cards hang off. PayU keys saved cards by `merchantKey:customerId`
+/// and needs no row.
+model CustomerGatewayAccount {
+  id         String         @id @default(cuid())
+  customerId String
+  gateway    PaymentGateway
+  externalId String         @db.VarChar(64)
+  createdAt  DateTime       @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, gateway])
 }
 
 model OrderStatusEvent {
@@ -2121,6 +2185,24 @@ enum PaymentInstrument {
   EMI
   CASH
   OTHER
+  /// Appended, never inserted — see PaymentMethod.
+  PAYLATER
+}
+
+enum PaymentSessionStatus {
+  /// Waiting on the customer at the gateway. Retryable until `expiresAt`.
+  CREATED
+  /// Claimed by one confirmation path, which is writing the order now.
+  FINALIZING
+  ORDER_CREATED
+  /// The last attempt failed; still retryable until `expiresAt`.
+  FAILED
+  /// Nothing was paid before the window closed.
+  EXPIRED
+  /// Paid, but the order could not be written, and the refund call failed.
+  REFUND_PENDING
+  /// Paid, the order could not be written, and the money went back.
+  REFUNDED
 }
 
 enum PaymentStatus {

@@ -11,10 +11,17 @@
  *   - **Cron.** Railway's scheduler has no session and no tRPC client. It
  *     presents a bearer secret, which is a different kind of caller entirely.
  *   - **Health.** A platform probe has no credentials at all.
+ *   - **Webhooks.** A payment gateway signs its own requests and knows nothing
+ *     of our tokens. The signature is checked over the raw bytes, which is
+ *     also why these cannot go through a JSON-parsing router.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { stringify } from 'csv-stringify/sync';
 import {
+  GatewayConfigError,
+  handlePayuReturn,
+  handleRazorpayWebhook,
+  reconcilePaymentSessions,
   collectMediaGarbage,
   getImportIssuesForCsv,
   loadExportProducts,
@@ -57,6 +64,19 @@ function cronAuthorised(req: IncomingMessage): 'ok' | 'unset' | 'denied' {
   return headerOf(req)('authorization') === `Bearer ${secret}` ? 'ok' : 'denied';
 }
 
+/** The raw request body, capped — a webhook is a few kilobytes, never more. */
+async function readBody(req: IncomingMessage, limit = 256 * 1024): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > limit) throw new Error('Body too large');
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /**
  * Handles a non-tRPC request, or returns false so the caller falls through to
  * the router.
@@ -77,11 +97,55 @@ export async function handleHttpRoute(
     return true;
   }
 
+  // --- payment webhooks -------------------------------------------------
+  /*
+   * Once the signature checks out, the answer is 200 whatever the outcome — a
+   * gateway that gets an error retries for days, and every retry would be a
+   * no-op on a session that is already settled.
+   */
+  if (path === '/webhooks/razorpay' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const genuine = await handleRazorpayWebhook(
+        body,
+        headerOf(req)('x-razorpay-signature') ?? '',
+      );
+      json(res, genuine ? 200 : 400, genuine ? { ok: true } : { error: 'Bad signature.' });
+    } catch (error) {
+      if (error instanceof GatewayConfigError) {
+        return (json(res, 503, { error: 'Razorpay is not configured.' }), true);
+      }
+      console.error('[webhooks] razorpay', error);
+      json(res, 500, { error: 'Could not process the webhook.' });
+    }
+    return true;
+  }
+
+  if (path === '/webhooks/payu' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const fields =
+        body.trimStart().startsWith('{')
+          ? (JSON.parse(body) as Record<string, string>)
+          : Object.fromEntries(new URLSearchParams(body));
+      await handlePayuReturn(fields);
+      json(res, 200, { ok: true });
+    } catch (error) {
+      if (error instanceof GatewayConfigError) {
+        return (json(res, 503, { error: 'PayU is not configured.' }), true);
+      }
+      console.error('[webhooks] payu', error);
+      json(res, 500, { error: 'Could not process the webhook.' });
+    }
+    return true;
+  }
+
   // --- cron --------------------------------------------------------------
   if (
     path === '/cron/media-gc' ||
     path === '/cron/publish-scheduled' ||
-    path === '/cron/wallet'
+    path === '/cron/wallet' ||
+    path === '/cron/payment-sessions'
   ) {
     const auth = cronAuthorised(req);
     if (auth === 'unset') return (json(res, 503, { error: 'CRON_SECRET is not set.' }), true);
@@ -89,12 +153,17 @@ export async function handleHttpRoute(
 
     // `/cron/wallet` pays out cashback whose hold has passed and expires old
     // credit. Hourly is plenty: nothing is promised to the minute.
+    // `/cron/payment-sessions` is the net under the payment webhooks: every
+    // five minutes, so a payment whose webhook never came still becomes an
+    // order well before the customer gives up waiting.
     const result =
       path === '/cron/media-gc'
         ? await collectMediaGarbage()
         : path === '/cron/wallet'
           ? await runWalletJobs()
-          : await publishScheduledProducts();
+          : path === '/cron/payment-sessions'
+            ? await reconcilePaymentSessions()
+            : await publishScheduledProducts();
     json(res, 200, { ok: true, ...result });
     return true;
   }

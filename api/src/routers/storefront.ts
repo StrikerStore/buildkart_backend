@@ -20,6 +20,12 @@
  */
 import { z } from 'zod';
 import {
+  confirmRazorpayPayment,
+  handlePayuReturn,
+  listSavedCards,
+  removeSavedCard,
+  reportPaymentFailed,
+  startOnlinePayment,
   getCategoryPage,
   getCollectionPage,
   getHomeFeed,
@@ -298,6 +304,44 @@ export const storefrontRouter = router({
   placeOrder: customerProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => placeCustomerOrder(ctx.actor, input)),
+
+  // --- paying online ------------------------------------------------------
+
+  /*
+   * Online orders are written only after the gateway confirms the money, so
+   * "Pay" opens a payment session instead of placing anything. Core decides
+   * which gateway takes the chosen option; the browser is only told where to go.
+   */
+  startPayment: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => startOnlinePayment(ctx.actor, input)),
+
+  /** Razorpay's modal succeeded. Core checks the signature and reads the payment back. */
+  confirmRazorpay: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => confirmRazorpayPayment(ctx.actor, input)),
+
+  /** The customer closed the gateway, or it declined. */
+  paymentFailed: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => reportPaymentFailed(ctx.actor, input)),
+
+  /*
+   * PayU's return POST, relayed by the storefront's route handler.
+   *
+   * `publicProcedure` because the POST arrives cross-site from PayU and carries
+   * no customer session. That is safe: the hash proves PayU sent it, and the
+   * order is written only on PayU's own server-to-server `verify_payment`.
+   */
+  payuReturn: publicProcedure
+    .input(z.unknown())
+    .mutation(({ input }) => handlePayuReturn(input)),
+
+  savedCards: customerProcedure.query(({ ctx }) => listSavedCards(ctx.actor)),
+
+  removeSavedCard: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => removeSavedCard(ctx.actor, input)),
 
   myOrders: customerProcedure.query(({ ctx }) => listMyOrders(ctx.actor)),
 

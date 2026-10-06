@@ -20,6 +20,7 @@ import {
   actionOk,
   canFulfil,
   cashbackBase,
+  compareMoney,
   createOrderSchema,
   type CreateOrderInput,
   type PlacedOrderDto,
@@ -30,6 +31,8 @@ import {
   quoteCashback,
   quoteWalletRedemption,
   type ActionResult,
+  type PaymentGateway,
+  type PaymentInstrument,
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
@@ -45,6 +48,45 @@ import { debitWallet, loadWalletRules, refreshWalletBalance } from './wallet.ts'
  * package.
  */
 export type { PlacedOrderDto as PlacedOrder };
+
+/**
+ * The order came out different from what the customer paid for — the price
+ * moved, or the wallet no longer covers what it was quoted to. Thrown rather
+ * than returned so that, raised inside the transaction, it rolls back the
+ * stock, the wallet and the order number with everything else.
+ */
+export class OrderMismatchError extends Error {}
+
+/** A payment a gateway has already confirmed, recorded with the order it paid for. */
+export type GatewayPaymentRecord = {
+  gateway: PaymentGateway;
+  instrument: PaymentInstrument | null;
+  amount: string;
+  reference: string;
+  gatewayOrderId: string;
+  instrumentDetail: Record<string, string> | null;
+  occurredAt: Date;
+};
+
+export type WriteOrderOptions = {
+  /**
+   * Storefront only: the customer ticked "use wallet balance". A flag, never
+   * an amount — how much the wallet pays is decided here, inside the
+   * transaction, against the balance as it stands once the wallet is locked.
+   * `createOrderSchema` has no field for it, so the admin path cannot say it.
+   */
+  useWallet?: boolean;
+  /** Online checkout: the money already taken, recorded in the same transaction. */
+  gatewayPayment?: GatewayPaymentRecord;
+  /**
+   * Online checkout: what the customer agreed to and paid against. Either
+   * figure differing throws `OrderMismatchError`, so nobody is ever charged
+   * one total for an order written at another.
+   */
+  expect?: { grandTotal: string; walletApplied: string };
+  /** Online checkout: the session this order settles, linked inside the transaction. */
+  paymentSessionId?: string;
+};
 
 /**
  * The admin's entry point: an order taken at the counter or over the phone.
@@ -81,13 +123,7 @@ export async function createOrder(
 export async function writeOrder(
   actor: Actor,
   data: CreateOrderInput,
-  /**
-   * Storefront only: the customer ticked "use wallet balance". A flag, never
-   * an amount — how much the wallet pays is decided here, inside the
-   * transaction, against the balance as it stands once the wallet is locked.
-   * `createOrderSchema` has no field for it, so the admin path cannot say it.
-   */
-  options: { useWallet?: boolean } = {},
+  options: WriteOrderOptions = {},
 ): Promise<ActionResult<PlacedOrderDto>> {
   const adminId = adminIdOf(actor);
 
@@ -205,6 +241,12 @@ export async function writeOrder(
   } catch (error) {
     if (error instanceof PricingError) return actionError(error.message);
     throw error;
+  }
+
+  if (options.expect && compareMoney(pricing.grandTotal, options.expect.grandTotal) !== 0) {
+    throw new OrderMismatchError(
+      `The total changed from ${options.expect.grandTotal} to ${pricing.grandTotal} while you were paying.`,
+    );
   }
 
   /*
@@ -461,6 +503,47 @@ export async function writeOrder(
       }
     }
 
+    if (options.expect && compareMoney(walletApplied, options.expect.walletApplied) !== 0) {
+      throw new OrderMismatchError(
+        'Your wallet balance changed while you were paying, so the order could not be placed.',
+      );
+    }
+
+    /*
+     * Online checkout: the gateway has already confirmed this money, so it is
+     * written with the order rather than after it. An order that exists without
+     * its payment — even for a moment — is one the shop might pack unpaid.
+     */
+    if (options.gatewayPayment) {
+      const payment = options.gatewayPayment;
+      await tx.paymentTransaction.create({
+        data: {
+          orderId: order.id,
+          type: 'PAYMENT',
+          status: 'SUCCESS',
+          gateway: payment.gateway,
+          instrument: payment.instrument,
+          amount: payment.amount,
+          reference: payment.reference,
+          gatewayOrderId: payment.gatewayOrderId,
+          ...(payment.instrumentDetail ? { instrumentDetail: payment.instrumentDetail } : {}),
+          note: 'Paid online at checkout',
+          // At least a millisecond after the wallet row: the order's headline
+          // gateway is read from the latest success, and that should be the
+          // card or UPI the customer used, not the wallet top-up beside it.
+          occurredAt: new Date(Math.max(payment.occurredAt.getTime(), now.getTime() + 1)),
+        },
+      });
+      await refreshOrderPaymentState(tx, order.id);
+    }
+
+    if (options.paymentSessionId) {
+      await tx.paymentSession.update({
+        where: { id: options.paymentSessionId },
+        data: { status: 'ORDER_CREATED', orderId: order.id, failureReason: null },
+      });
+    }
+
     /*
      * Cashback is decided now, against today's slabs, and frozen — a slab
      * changed next week must not change what this order was promised. It
@@ -536,7 +619,8 @@ export async function writeOrder(
       lines: pricing.lines.length,
       bulkPricingApplied: pricing.bulkPricingApplied,
       overrides: pricing.lines.filter((line) => line.wasOverridden).length,
-      paid: Boolean(data.payment),
+      paid: Boolean(data.payment || options.gatewayPayment),
+      gatewayPayment: options.gatewayPayment?.reference,
       walletApplied: created.walletApplied,
       cashback: created.cashbackAmount,
     },

@@ -15,6 +15,7 @@
  */
 import { prisma, type Prisma } from '@buildkart/database';
 import {
+  describePaidWith,
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
@@ -148,10 +149,22 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
         orderBy: { createdAt: 'asc' },
         select: { toStatus: true, createdAt: true },
       },
+      // The latest online payment, for "Paid with Visa •••• 4242".
+      transactions: {
+        where: {
+          type: 'PAYMENT',
+          status: 'SUCCESS',
+          gateway: { in: ['RAZORPAY', 'PAYU'] },
+        },
+        orderBy: { occurredAt: 'desc' },
+        take: 1,
+        select: { instrument: true, instrumentDetail: true },
+      },
     },
   });
 
   if (!order) return null;
+  const online = order.transactions[0] ?? null;
 
   return {
     id: order.id,
@@ -159,6 +172,9 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
     status: order.status,
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
+    paidWith: online
+      ? describePaidWith(online.instrument, online.instrumentDetail as Record<string, unknown> | null)
+      : null,
     subtotal: decimalToString(order.subtotal),
     discountTotal: decimalToString(order.discountTotal),
     discountCode: order.discountCode,

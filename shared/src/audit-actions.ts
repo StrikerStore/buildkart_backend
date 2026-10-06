@@ -164,6 +164,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   // Settings
   'payments.configure': 'Changed a payment provider',
   'payments.reorder': 'Reordered the payment methods',
+  'payments.refundUnplaced': 'Refunded a payment that could not become an order',
 
   'settings.store': 'Updated the store details',
   'settings.commerce': 'Updated the order and payment settings',

@@ -72,6 +72,9 @@ export const PAYMENT_INSTRUMENTS = [
   'EMI',
   'CASH',
   'OTHER',
+  // Appended for the same MySQL-ordinal reason as PAYU above: Simpl, LazyPay
+  // and the like, which are neither a card nor an EMI.
+  'PAYLATER',
 ] as const;
 export type PaymentInstrument = (typeof PAYMENT_INSTRUMENTS)[number];
 
@@ -83,6 +86,7 @@ export const PAYMENT_INSTRUMENT_LABELS: Record<PaymentInstrument, string> = {
   EMI: 'EMI',
   CASH: 'Cash',
   OTHER: 'Other',
+  PAYLATER: 'Pay Later',
 };
 
 export const PAYMENT_TRANSACTION_TYPES = ['PAYMENT', 'REFUND'] as const;
@@ -253,6 +257,39 @@ export function referenceLooksWrong(
   // A UPI reference is a 12-digit RRN; an NEFT UTR is 16 to 22 characters.
   if (gateway === 'UPI_DIRECT') return !/^\d{12}$/.test(value);
   return false;
+}
+
+/**
+ * How a customer paid, in words they recognise — "Visa •••• 4242", "UPI",
+ * "Net banking · HDFC". Built from the instrument and the non-sensitive detail
+ * the gateway reported; never from anything that could charge the card.
+ */
+export function describePaidWith(
+  instrument: PaymentInstrument | null,
+  detail: Record<string, unknown> | null | undefined,
+): string | null {
+  const text = (key: string) => (typeof detail?.[key] === 'string' ? (detail[key] as string) : '');
+  switch (instrument) {
+    case 'CARD': {
+      const last4 = text('last4');
+      const network = text('network') || 'Card';
+      return last4 ? `${network} •••• ${last4}` : network;
+    }
+    case 'UPI':
+      return 'UPI';
+    case 'NETBANKING':
+      return text('bank') ? `Net banking · ${text('bank')}` : 'Net banking';
+    case 'WALLET':
+      return text('wallet') ? `Wallet · ${text('wallet')}` : 'Wallet';
+    case 'PAYLATER':
+      return text('provider') ? `Pay Later · ${text('provider')}` : 'Pay Later';
+    case 'EMI':
+      return 'EMI';
+    case null:
+      return null;
+    default:
+      return PAYMENT_INSTRUMENT_LABELS[instrument];
+  }
 }
 
 /** What to call the reference on screen, so the label matches what is being typed. */

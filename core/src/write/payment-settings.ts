@@ -92,6 +92,14 @@ export async function savePaymentProvider(
   if (hasMode(provider)) next.mode = data.mode;
   else next.maxOrderValue = data.maxOrderValue;
 
+  // Only the gateways checkout routes to have options; a form that did not
+  // send the list leaves what is stored.
+  if (provider === 'RAZORPAY' || provider === 'PAYU') {
+    next.checkoutOptions = data.checkoutOptions
+      ? [...new Set(data.checkoutOptions)]
+      : stored.checkoutOptions;
+  }
+
   for (const field of fields) {
     if (!field.secret) {
       next[field.key] = data.publicFields[field.key] ?? String(stored[field.key] ?? '');
@@ -154,6 +162,7 @@ export async function savePaymentProvider(
       displayName: data.displayName,
       displayOrder: data.displayOrder,
       publicFields: data.publicFields,
+      checkoutOptions: data.checkoutOptions,
       secretsChanged: incomingSecrets.map(([key]) => key),
       secretsCleared: data.clearSecrets,
     },

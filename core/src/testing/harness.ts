@@ -60,6 +60,8 @@ export async function loadPrisma() {
 export async function resetDatabase() {
   const prisma = await loadPrisma();
   const tables = [
+    'PaymentSession',
+    'CustomerGatewayAccount',
     'WalletLotUse',
     'WalletEntry',
     'WalletLot',

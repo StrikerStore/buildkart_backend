@@ -18,6 +18,7 @@ export * from './category-rules.ts';
 export * from './orders.ts';
 export * from './time.ts';
 export * from './payments.ts';
+export * from './checkout-options.ts';
 export * from './tax.ts';
 export * from './checkout.ts';
 export * from './notifications.ts';

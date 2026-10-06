@@ -28,7 +28,7 @@ import type {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { decimalToString } from '../dto.ts';
-import { getCheckoutMethods } from './payment-settings.ts';
+import { getCheckoutMethods, getCheckoutOptions } from './payment-settings.ts';
 import { isSecretsKeyConfigured } from '../secrets.ts';
 export type { CheckoutConfigDto, CheckoutFieldDto, CheckoutLocationDto, StorefrontCheckoutDto };
 
@@ -152,9 +152,10 @@ export async function getCheckoutConfig(actor: Actor): Promise<CheckoutConfigDto
  * round trip rather than three.
  */
 export async function getStorefrontCheckout(): Promise<StorefrontCheckoutDto> {
-  const [config, methods, minimum] = await Promise.all([
+  const [config, methods, paymentOptions, minimum] = await Promise.all([
     readConfig(),
     getCheckoutMethods(),
+    getCheckoutOptions(),
     prisma.setting.findUnique({ where: { key: 'order.minimumValue' } }),
   ]);
 
@@ -172,6 +173,7 @@ export async function getStorefrontCheckout(): Promise<StorefrontCheckoutDto> {
     fields: config.fields.filter((field) => field.visible),
     location,
     methods,
+    paymentOptions,
     minimumOrderValue: decimalToString(
       parseSetting('order.minimumValue', minimum?.value).amount,
     ),

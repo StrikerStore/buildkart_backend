@@ -24,10 +24,13 @@ import { prisma } from '@buildkart/database';
 import {
   actionError,
   actionErrorFromZod,
+  actionOk,
   compareMoney,
   placeOrderSchema,
   type ActionResult,
   type CreateOrderInput,
+  type PaymentMethod,
+  type PlaceOrderInput,
   type PlacedOrderDto,
 } from '@buildkart/shared';
 import { ForbiddenError, type Actor } from '../actor.ts';
@@ -42,10 +45,56 @@ import { writeOrder } from './create-order.ts';
  * that silently rots when a fifth provider is added to one and not the other.
  */
 
+/**
+ * Cash on delivery: checked, priced and written in one go.
+ *
+ * Online methods do not come through here — they go through
+ * `startOnlinePayment`, which runs the same checks via `prepareCustomerOrder`
+ * but writes nothing until the gateway confirms the money.
+ */
 export async function placeCustomerOrder(
   actor: Actor,
   input: unknown,
 ): Promise<ActionResult<PlacedOrderDto>> {
+  const parsed = placeOrderSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+  const { paymentMethod, ...data } = parsed.data;
+
+  /*
+   * An online method placed this way would be an order nobody has paid for,
+   * which is exactly the bug this split exists to end.
+   */
+  if (paymentMethod !== 'COD') {
+    return actionError('Choose how you would like to pay online.');
+  }
+
+  const prepared = await prepareCustomerOrder(actor, data, paymentMethod);
+  if (!prepared.ok) return prepared;
+
+  /*
+   * One call, one transaction. The pin travels inside `payload.address`, so
+   * there is no second write to fail after the order has already committed.
+   */
+  return writeOrder(actor, prepared.data.payload, { useWallet: data.useWallet });
+}
+
+/** What an order will be, worked out and checked, but not yet written. */
+export type PreparedCustomerOrder = {
+  payload: CreateOrderInput;
+  grandTotal: string;
+  customer: { id: string; phone: string; name: string | null; email: string | null };
+};
+
+/**
+ * Every check a storefront order must pass, and the payload it will be written
+ * with — shared by cash on delivery and online payment, so a rule cannot hold
+ * on one and be forgotten on the other.
+ */
+export async function prepareCustomerOrder(
+  actor: Actor,
+  data: Omit<PlaceOrderInput, 'paymentMethod'>,
+  paymentMethod: PaymentMethod,
+): Promise<ActionResult<PreparedCustomerOrder>> {
   /*
    * A signed-in customer, always. Guest checkout is a setting the admin can
    * turn on, but the identity it would need is a phone number — and proving a
@@ -57,13 +106,9 @@ export async function placeCustomerOrder(
     throw new ForbiddenError('Sign in to place an order.');
   }
 
-  const parsed = placeOrderSchema.safeParse(input);
-  if (!parsed.success) return actionErrorFromZod(parsed.error);
-  const data = parsed.data;
-
   const customer = await prisma.customer.findUnique({
     where: { id: actor.customerId },
-    select: { phone: true, isBlocked: true },
+    select: { id: true, phone: true, name: true, email: true, isBlocked: true },
   });
   if (!customer) throw new ForbiddenError('Sign in to place an order.');
   if (customer.isBlocked) {
@@ -81,7 +126,7 @@ export async function placeCustomerOrder(
 
   // --- is that payment method actually on? --------------------------------
   const methods = await getCheckoutMethods();
-  if (!methods.some((method) => method.provider === data.paymentMethod)) {
+  if (!methods.some((method) => method.provider === paymentMethod)) {
     return actionError('That payment method is not available. Choose another.');
   }
 
@@ -130,7 +175,7 @@ export async function placeCustomerOrder(
     return actionError(`Orders start at ${priced.minimumOrderValue}.`);
   }
 
-  const method = methods.find((entry) => entry.provider === data.paymentMethod);
+  const method = methods.find((entry) => entry.provider === paymentMethod);
   if (
     method &&
     compareMoney(method.maxOrderValue, '0.00') > 0 &&
@@ -182,7 +227,7 @@ export async function placeCustomerOrder(
     deliveryLegs: priced.delivery?.mode === 'DISTANCE' ? priced.delivery.legs : undefined,
     discountTotal: priced.discount?.applied ? priced.discount.amount : undefined,
     discountCode: priced.discount?.applied ? priced.discount.code : undefined,
-    paymentMethod: data.paymentMethod,
+    paymentMethod,
     // Re-read and re-priced from settings inside `writeOrder`; a flag only.
     unloading: data.unloading,
     // No `payment`: nothing has been collected yet. Online payments record
@@ -199,9 +244,14 @@ export async function placeCustomerOrder(
     internalNote: undefined,
   };
 
-  /*
-   * One call, one transaction. The pin travels inside `payload.address`, so
-   * there is no second write to fail after the order has already committed.
-   */
-  return writeOrder(actor, payload, { useWallet: data.useWallet });
+  return actionOk({
+    payload,
+    grandTotal: priced.grandTotal,
+    customer: {
+      id: customer.id,
+      phone: customer.phone,
+      name: data.name || customer.name,
+      email: customer.email,
+    },
+  });
 }

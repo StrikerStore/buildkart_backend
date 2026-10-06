@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import { PAYMENT_METHODS } from '../orders.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
+import { CHECKOUT_OPTIONS, ONLINE_GATEWAYS } from '../checkout-options.ts';
 
 /**
  * Twenty-four, not the admin's twenty-five.
@@ -264,6 +265,48 @@ export const placeOrderSchema = z.object({
   unloading: z.boolean().default(false),
 });
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
+
+/**
+ * Starting an online payment: the same order, minus the gateway.
+ *
+ * The customer says *how* they want to pay (`option`); which gateway takes it
+ * is the owner's routing, decided on the server. A saved card is the one
+ * exception — a card token lives at one gateway and cannot be spent at
+ * another, so picking one names its gateway.
+ */
+export const startOnlinePaymentSchema = placeOrderSchema.omit({ paymentMethod: true }).extend({
+  option: z.enum(CHECKOUT_OPTIONS),
+  savedCard: z
+    .object({
+      gateway: z.enum(ONLINE_GATEWAYS),
+      tokenId: z.string().trim().min(1).max(64),
+    })
+    .optional(),
+});
+export type StartOnlinePaymentInput = z.infer<typeof startOnlinePaymentSchema>;
+
+/** What Razorpay's checkout hands the page on success. Verified, never trusted. */
+export const razorpayConfirmSchema = z.object({
+  sessionId: z.string().trim().min(1).max(64),
+  razorpayOrderId: z.string().trim().min(1).max(64),
+  razorpayPaymentId: z.string().trim().min(1).max(64),
+  razorpaySignature: z.string().trim().min(1).max(256),
+});
+export type RazorpayConfirmInput = z.infer<typeof razorpayConfirmSchema>;
+
+/** The customer closed the gateway or it said no. Bookkeeping only. */
+export const reportPaymentFailedSchema = z.object({
+  sessionId: z.string().trim().min(1).max(64),
+  reason: z.string().trim().max(255).optional(),
+});
+
+/** PayU's surl/furl POST, passed through untouched as string pairs. */
+export const payuReturnSchema = z.record(z.string().max(64), z.string().max(4096));
+
+export const removeSavedCardSchema = z.object({
+  gateway: z.enum(ONLINE_GATEWAYS),
+  tokenId: z.string().trim().min(1).max(64),
+});
 
 /**
  * The customer's own profile.

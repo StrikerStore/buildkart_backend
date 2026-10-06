@@ -12,6 +12,11 @@
  */
 import { prisma } from '@buildkart/database';
 import {
+  CHECKOUT_OPTIONS,
+  CHECKOUT_OPTION_HINTS,
+  CHECKOUT_OPTION_LABELS,
+  availableOptions,
+  routeOption,
   PAYMENT_PROVIDERS,
   PAYMENT_PROVIDER_FIELDS,
   PAYMENT_PROVIDER_HINTS,
@@ -21,18 +26,37 @@ import {
   hasMode,
   maskSecret,
   parseSetting,
+  type CheckoutOption,
   type EncryptedSecret,
+  type GatewayRoute,
+  type OnlineGateway,
   type PaymentProvider,
 } from '@buildkart/shared';
 import type {
   CheckoutMethodDto,
+  CheckoutOptionDto,
+  PaymentIssueDto,
   PaymentProviderDto,
   PaymentSettingsDto,
   SecretFieldDto,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { isSecretsKeyConfigured } from '../secrets.ts';
-export type { CheckoutMethodDto, PaymentProviderDto, PaymentSettingsDto, SecretFieldDto };
+export type {
+  CheckoutMethodDto,
+  CheckoutOptionDto,
+  PaymentIssueDto,
+  PaymentProviderDto,
+  PaymentSettingsDto,
+  SecretFieldDto,
+};
+
+/**
+ * Not offered at checkout, whatever the switch says. Snapmint has settings but
+ * no integration yet, and a method that writes an order without taking the
+ * money is worse than one that is missing.
+ */
+const NOT_AT_CHECKOUT: ReadonlySet<PaymentProvider> = new Set(['SNAPMINT']);
 
 /** Every provider's stored configuration, read in one query. */
 async function readProviderSettings() {
@@ -82,7 +106,59 @@ function toProviderDto(provider: PaymentProvider, stored: ProviderSettings): Pay
     publicFields,
     secrets,
     maxOrderValue: String(row.maxOrderValue ?? '0.00'),
+    checkoutOptions:
+      provider === 'RAZORPAY' || provider === 'PAYU'
+        ? ((row.checkoutOptions as CheckoutOption[] | undefined) ?? [...CHECKOUT_OPTIONS])
+        : [],
   };
+}
+
+/** Razorpay and PayU as the router sees them. */
+function toRoutes(stored: ProviderSettings): GatewayRoute[] {
+  return (['RAZORPAY', 'PAYU'] as const).map((gateway) => ({
+    gateway,
+    enabled: stored[gateway].enabled,
+    displayOrder: stored[gateway].displayOrder,
+    checkoutOptions: stored[gateway].checkoutOptions as CheckoutOption[],
+  }));
+}
+
+/** Where to point each gateway's webhooks. Needs the API's public address. */
+function webhookUrls(): Record<OnlineGateway, string> | null {
+  const base = process.env.API_PUBLIC_URL?.trim().replace(/\/+$/, '');
+  if (!base) return null;
+  return { RAZORPAY: `${base}/webhooks/razorpay`, PAYU: `${base}/webhooks/payu` };
+}
+
+/** Money taken that did not become an order — newest first, last 90 days. */
+async function readPaymentIssues(): Promise<PaymentIssueDto[]> {
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const rows = await prisma.paymentSession.findMany({
+    where: { status: { in: ['REFUNDED', 'REFUND_PENDING'] }, createdAt: { gte: since } },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    select: {
+      id: true,
+      gateway: true,
+      amount: true,
+      status: true,
+      failureReason: true,
+      gatewayPaymentId: true,
+      createdAt: true,
+      customer: { select: { phone: true, name: true } },
+    },
+  });
+  return rows.map((row) => ({
+    sessionId: row.id,
+    gateway: row.gateway as OnlineGateway,
+    amount: row.amount.toString(),
+    customerPhone: row.customer.phone,
+    customerName: row.customer.name,
+    status: row.status as PaymentIssueDto['status'],
+    reason: row.failureReason,
+    gatewayPaymentId: row.gatewayPaymentId,
+    createdAt: row.createdAt.toISOString(),
+  }));
 }
 
 /**
@@ -92,13 +168,17 @@ function toProviderDto(provider: PaymentProvider, stored: ProviderSettings): Pay
 export async function getPaymentSettings(actor: Actor): Promise<PaymentSettingsDto> {
   assertPermission(actor, 'payments:write');
 
-  const stored = await readProviderSettings();
+  const [stored, issues] = await Promise.all([readProviderSettings(), readPaymentIssues()]);
+  const routes = toRoutes(stored);
 
   return {
     providers: PAYMENT_PROVIDERS.map((provider) => toProviderDto(provider, stored)).sort(
       (a, b) => a.displayOrder - b.displayOrder || a.label.localeCompare(b.label),
     ),
     secretsKeyConfigured: isSecretsKeyConfigured(),
+    routing: CHECKOUT_OPTIONS.map((option) => ({ option, gateways: routeOption(option, routes) })),
+    webhookUrls: webhookUrls(),
+    issues,
   };
 }
 
@@ -112,7 +192,9 @@ export async function getPaymentSettings(actor: Actor): Promise<PaymentSettingsD
 export async function getCheckoutMethods(): Promise<CheckoutMethodDto[]> {
   const stored = await readProviderSettings();
 
-  return PAYMENT_PROVIDERS.filter((provider) => Boolean(stored[provider].enabled))
+  return PAYMENT_PROVIDERS.filter(
+    (provider) => Boolean(stored[provider].enabled) && !NOT_AT_CHECKOUT.has(provider),
+  )
     .map((provider) => {
       const row = stored[provider] as Record<string, unknown>;
       return {
@@ -123,4 +205,20 @@ export async function getCheckoutMethods(): Promise<CheckoutMethodDto[]> {
       };
     })
     .sort((a, b) => a.displayOrder - b.displayOrder || a.label.localeCompare(b.label));
+}
+
+/**
+ * The online ways to pay the storefront offers: every option at least one
+ * enabled gateway will take. No gateway names — which one takes an option is
+ * decided when the customer pays.
+ */
+export async function getCheckoutOptions(): Promise<CheckoutOptionDto[]> {
+  const stored = await readProviderSettings();
+  return availableOptions(toRoutes(stored)).map((option) => ({
+    option,
+    label: CHECKOUT_OPTION_LABELS[option].en,
+    labelHi: CHECKOUT_OPTION_LABELS[option].hi,
+    hint: CHECKOUT_OPTION_HINTS[option].en,
+    hintHi: CHECKOUT_OPTION_HINTS[option].hi,
+  }));
 }

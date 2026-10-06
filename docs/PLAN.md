@@ -190,7 +190,14 @@ Customer                          System                         Owner (Admin)
 Browse → Add to cart
 Enter pincode            →  validate serviceability
 Checkout: OTP login      →  create/find customer by phone
-Choose Razorpay or COD   →  Razorpay: capture payment
+Choose UPI / card / net  →  routed to Razorpay or PayU by the
+banking / wallet / Pay      owner's priority + per-gateway toggles
+Later / EMI, or COD         (Settings → Payments); next gateway
+                            takes over if one fails
+                            Online: order written only once the
+                            gateway confirms the money (browser,
+                            PayU return, webhook or 5-min cron);
+                            stock gone meanwhile → auto-refund
                             COD: place directly
 Order placed             →  stock decremented            →  New order appears + alert
                                                         →  Advance status as it moves
