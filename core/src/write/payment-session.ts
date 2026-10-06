@@ -317,6 +317,18 @@ export async function startOnlinePayment(
     }
   }
 
+  /*
+   * Gateways will not open a payment under ₹1. Only reachable when the wallet
+   * covers all but a few paise, and the honest fix is the customer's: pay it
+   * all online, or choose cash for the remainder.
+   */
+  if (compareMoney(amount, '1.00') < 0) {
+    return actionError(
+      `Only ${formatINR(amount)} is left to pay, which is below the ₹1 minimum for online payments. ` +
+        'Untick the wallet to pay the whole amount online.',
+    );
+  }
+
   let lastError: unknown = null;
   for (const gateway of candidates) {
     try {
@@ -362,9 +374,9 @@ async function placedOrderFor(orderId: string): Promise<PlacedOrderDto | null> {
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
-    grandTotal: order.grandTotal.toString(),
-    walletApplied: order.walletApplied.toString(),
-    cashbackAmount: order.cashbackAmount.toString(),
+    grandTotal: decimalToString(order.grandTotal),
+    walletApplied: decimalToString(order.walletApplied),
+    cashbackAmount: decimalToString(order.cashbackAmount),
   };
 }
 
@@ -581,7 +593,19 @@ export async function confirmRazorpayPayment(
     return actionError('We could not verify that payment. If money left your account, please call us.');
   }
 
-  const payment = await fetchRazorpayPayment(creds, data.razorpayPaymentId);
+  let payment: VerifiedPayment;
+  try {
+    payment = await fetchRazorpayPayment(creds, data.razorpayPaymentId);
+  } catch (error) {
+    if (!(error instanceof GatewayError)) throw error;
+    // Razorpay unreachable, or no such payment. If the money did move, the
+    // webhook or the reconcile job places the order; a second payment must
+    // not be invited either way.
+    console.error('[payments] could not read back Razorpay payment', data.razorpayPaymentId, error.message);
+    return actionError(
+      'We are still confirming your payment. Check My orders in a few minutes — please do not pay again.',
+    );
+  }
   return actionOk(await finalizePaymentSession(session.id, payment));
 }
 

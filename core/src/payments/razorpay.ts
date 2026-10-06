@@ -8,7 +8,13 @@
  * form, and "UPI" onto the installed-apps list on a phone or a QR on a laptop.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { fromPaise, toPaise, type CheckoutOption, type PaymentInstrument } from '@buildkart/shared';
+import {
+  CHECKOUT_OPTION_LABELS,
+  fromPaise,
+  toPaise,
+  type CheckoutOption,
+  type PaymentInstrument,
+} from '@buildkart/shared';
 import type { RazorpayCredentials } from './credentials.ts';
 import { gatewayFetch, GatewayError, type VerifiedPayment } from './http.ts';
 
@@ -266,7 +272,13 @@ export function razorpayDisplayFor(
   const instruments = savedCard ? [{ method: 'card' }] : INSTRUMENTS[option];
   return {
     display: {
-      blocks: { chosen: { name: 'Pay', instruments } },
+      // Named for what the customer picked, so the modal echoes their choice.
+      blocks: {
+        chosen: {
+          name: savedCard ? 'Saved card' : `Pay by ${CHECKOUT_OPTION_LABELS[option].en}`,
+          instruments,
+        },
+      },
       sequence: ['block.chosen'],
       preferences: { show_default_blocks: false },
     },
