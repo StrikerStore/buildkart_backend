@@ -126,16 +126,21 @@ function payuEmail(customer: PreparedCustomerOrder['customer']): string {
   return `${customer.phone.replace(/\D/g, '')}@${host.replace(/^www\./, '')}`;
 }
 
-/** The Razorpay customer id, made once and remembered. Saved cards hang off it. */
+/**
+ * The customer's Razorpay id **in the account the keys belong to**, looked up
+ * on every payment rather than trusted from the database.
+ *
+ * A `cust_...` id only exists inside the Razorpay account and mode that made
+ * it. Switch test keys for live ones, or for another account's, and a stored id
+ * becomes one Razorpay's checkout rejects outright ("Customer-id validation
+ * failed") — so the payment fails at the very last step. Asking each time costs
+ * one idempotent call (`fail_existing: 0` returns the existing customer for the
+ * phone), and the row is refreshed so saved-card listings follow the keys too.
+ */
 async function razorpayCustomerId(
   creds: Awaited<ReturnType<typeof razorpayCredentials>>,
   customer: PreparedCustomerOrder['customer'],
 ): Promise<string | null> {
-  const existing = await prisma.customerGatewayAccount.findUnique({
-    where: { customerId_gateway: { customerId: customer.id, gateway: 'RAZORPAY' } },
-  });
-  if (existing) return existing.externalId;
-
   try {
     const externalId = await ensureRazorpayCustomer(creds, {
       name: plainName(customer.name),
@@ -149,8 +154,9 @@ async function razorpayCustomerId(
     });
     return externalId;
   } catch (error) {
-    // Saved cards are a convenience; failing to set them up must not stop a payment.
-    console.error('[payments] could not create the Razorpay customer', error);
+    // Saved cards are a convenience; without an id the checkout simply opens
+    // without them, which is far better than not opening at all.
+    console.error('[payments] could not get the Razorpay customer', error);
     return null;
   }
 }
