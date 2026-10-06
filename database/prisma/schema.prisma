@@ -919,6 +919,12 @@ model Address {
   latitude  Decimal? @db.Decimal(10, 7)
   longitude Decimal? @db.Decimal(10, 7)
 
+  /// Who takes the delivery here, when it is not the account holder — a site
+  /// supervisor, a family member. Null falls back to the customer's own name
+  /// and phone when the order is written.
+  receiverName  String? @db.VarChar(191)
+  receiverPhone String? @db.VarChar(20)
+
   isDefault Boolean @default(false)
 
   createdAt DateTime @default(now())

@@ -347,8 +347,9 @@ export async function writeOrder(
         buyerGstin: data.buyerGstin ?? null,
         discountCode: data.discountCode ?? null,
         addressSnapshot: {
-          name: data.customer.name ?? customer.name ?? '',
-          phone: data.customer.phone,
+          // The person at the door: the address's receiver when one was named.
+          name: data.address.receiverName || data.customer.name || customer.name || '',
+          phone: data.address.receiverPhone || data.customer.phone,
           line1: data.address.line1,
           line2: data.address.line2 ?? null,
           landmark: data.address.landmark ?? null,

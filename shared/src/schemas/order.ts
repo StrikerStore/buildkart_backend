@@ -305,6 +305,13 @@ export const createOrderSchema = z.object({
      * address book of bare street lines is one nobody picks from.
      */
     label: z.string().trim().max(64).optional(),
+    /**
+     * Who takes the delivery, when it is not the customer — frozen as the
+     * snapshot's name and phone so the rider calls the right person. Absent,
+     * the customer's own name and phone are used.
+     */
+    receiverName: z.string().trim().max(191).optional(),
+    receiverPhone: z.string().trim().max(20).optional(),
   }),
   /**
    * The buyer's GSTIN, frozen onto the order and printed on its invoice.

@@ -292,6 +292,55 @@ export function describePaidWith(
   }
 }
 
+/**
+ * Partial cash on delivery: an advance online, the rest at the door.
+ *
+ * Razorpay's Standard Checkout has no COD of its own, so the shop runs it: the
+ * advance is an ordinary online payment, and the order is written as COD with
+ * the balance outstanding — which the ledger, the admin and the rider's slip
+ * already understand as "still to collect".
+ */
+export type PartialCodRules = {
+  enabled: boolean;
+  /** Share of the amount to pay that is taken up front, 1–90. */
+  percent: number;
+  /** The advance is never less than this. */
+  minAdvance: string;
+  /** Offered only on orders at or above this. "0.00" means every order. */
+  minOrderValue: string;
+};
+
+export const DEFAULT_PARTIAL_COD: PartialCodRules = {
+  enabled: false,
+  percent: 10,
+  minAdvance: '100.00',
+  minOrderValue: '0.00',
+};
+
+export type PartialCodQuote =
+  | { eligible: true; advance: string; balance: string }
+  | { eligible: false; reason: 'DISABLED' | 'BELOW_MINIMUM' | 'TOO_SMALL' };
+
+/**
+ * The advance on an amount to pay: the larger of the percentage (rounded up to
+ * the rupee, so nobody is asked for ₹412.37) and the minimum advance.
+ *
+ * Not offered when the advance would be the whole amount — that is simply
+ * paying online, and calling it "partial" would only confuse.
+ */
+export function quotePartialCod(toPay: string, rules: PartialCodRules): PartialCodQuote {
+  if (!rules.enabled || rules.percent <= 0) return { eligible: false, reason: 'DISABLED' };
+  const total = toPaise(toPay);
+  if (total < toPaise(rules.minOrderValue)) return { eligible: false, reason: 'BELOW_MINIMUM' };
+
+  const share = Math.ceil((total * rules.percent) / 100 / 100) * 100;
+  // Gateways refuse anything under ₹1.
+  const advance = Math.max(share, toPaise(rules.minAdvance), 100);
+  if (advance >= total) return { eligible: false, reason: 'TOO_SMALL' };
+
+  return { eligible: true, advance: fromPaise(advance), balance: fromPaise(total - advance) };
+}
+
 /** What to call the reference on screen, so the label matches what is being typed. */
 export function referenceLabelFor(gateway: PaymentGateway): string {
   switch (gateway) {

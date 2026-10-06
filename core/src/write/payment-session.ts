@@ -29,6 +29,7 @@ import {
   formatINR,
   parseSetting,
   payuReturnSchema,
+  quotePartialCod,
   quoteWalletRedemption,
   razorpayConfirmSchema,
   reportPaymentFailedSchema,
@@ -72,6 +73,7 @@ import {
   verifyRazorpayCheckoutSignature,
   verifyRazorpayWebhookSignature,
 } from '../payments/razorpay.ts';
+import { getPartialCodRules } from '../read/payment-settings.ts';
 import { OrderMismatchError, writeOrder } from './create-order.ts';
 import { prepareCustomerOrder, type PreparedCustomerOrder } from './place-order.ts';
 
@@ -157,12 +159,14 @@ async function razorpayCustomerId(
 async function openAtGateway(
   gateway: OnlineGateway,
   input: {
-    option: CheckoutOption;
+    option: CheckoutOption | null;
     prepared: PreparedCustomerOrder;
     amount: string;
     walletQuoted: string;
     useWallet: boolean;
     savedCard: boolean;
+    /** Partial COD: the order is written as COD, with this payment as its advance. */
+    advance: boolean;
   },
 ): Promise<PaymentStartDto> {
   // Credentials first: a gateway that cannot be used should not leave a session behind.
@@ -175,16 +179,17 @@ async function openAtGateway(
   }
 
   const payload: SessionPayload = {
-    order: { ...input.prepared.payload, paymentMethod: gateway },
+    order: { ...input.prepared.payload, paymentMethod: input.advance ? 'COD' : gateway },
     useWallet: input.useWallet,
   };
 
   const session = await prisma.paymentSession.create({
     data: {
       customerId: input.prepared.customer.id,
-      option: input.option,
+      // 'ANY' when the customer chooses inside the gateway's own window.
+      option: input.option ?? 'ANY',
       gateway,
-      instrument: toInstrument(input.option),
+      instrument: input.option ? toInstrument(input.option) : null,
       amount: input.amount,
       grandTotal: input.prepared.grandTotal,
       walletQuoted: input.walletQuoted,
@@ -221,7 +226,10 @@ async function openAtGateway(
           contact: input.prepared.customer.phone,
           email: input.prepared.customer.email ?? '',
         },
-        display: razorpayDisplayFor(input.option, { savedCard: input.savedCard }),
+        display:
+          input.option || input.savedCard
+            ? razorpayDisplayFor(input.option ?? 'CREDIT_CARD', { savedCard: input.savedCard })
+            : null,
         method: input.savedCard ? 'card' : null,
       };
     }
@@ -270,7 +278,14 @@ export async function startOnlinePayment(
 
   const parsed = startOnlinePaymentSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
-  const { option, savedCard, ...data } = parsed.data;
+  const { option, savedCard, mode, ...data } = parsed.data;
+  const advance = mode === 'ADVANCE';
+
+  // Partial COD has its own switch; checked first so a refusal says why.
+  const partialRules = advance ? await getPartialCodRules() : null;
+  if (advance && !partialRules) {
+    return actionError('Paying part on delivery is not available right now. Choose another way to pay.');
+  }
 
   const routes = await gatewayRoutes();
   /*
@@ -281,26 +296,54 @@ export async function startOnlinePayment(
     ? routes.some((route) => route.gateway === savedCard.gateway && route.enabled)
       ? [savedCard.gateway]
       : []
-    : routeOption(option, routes);
+    : option
+      ? routeOption(option, routes)
+      : // Every method, so simply the owner's priority order.
+        routes
+          .filter((route) => route.enabled)
+          .sort((a, b) => a.displayOrder - b.displayOrder || a.gateway.localeCompare(b.gateway))
+          .map((route) => route.gateway);
 
   if (candidates.length === 0) {
     return actionError('That way to pay is not available right now. Please choose another.');
   }
 
-  const prepared = await prepareCustomerOrder(actor, data, candidates[0]!);
+  const prepared = await prepareCustomerOrder(
+    actor,
+    data,
+    advance ? 'COD' : candidates[0]!,
+    { advanceOnly: advance },
+  );
   if (!prepared.ok) return prepared;
 
   const walletQuoted = data.useWallet
     ? await quoteWallet(prepared.data.customer.id, prepared.data.grandTotal)
     : '0.00';
-  const amount = subtractMoney(prepared.data.grandTotal, walletQuoted);
+  const toPay = subtractMoney(prepared.data.grandTotal, walletQuoted);
+
+  /*
+   * Partial COD: the gateway takes only the advance, worked out here from the
+   * shop's rules — never from the browser, which only said "advance".
+   */
+  let amount = toPay;
+  if (advance) {
+    const quote = quotePartialCod(toPay, partialRules!);
+    if (!quote.eligible) {
+      return actionError(
+        quote.reason === 'BELOW_MINIMUM'
+          ? `Paying part on delivery is for orders above ${formatINR(partialRules!.minOrderValue)}.`
+          : 'This order is small enough to pay in full. Choose to pay online or cash on delivery.',
+      );
+    }
+    amount = quote.advance;
+  }
 
   /*
    * The wallet covered all of it: there is nothing for a gateway to take. Held
    * to the quote like any online order, so a balance spent elsewhere a moment
    * ago cannot leave an "online" order written with money still owing.
    */
-  if (compareMoney(amount, '0.00') === 0) {
+  if (!advance && compareMoney(amount, '0.00') === 0) {
     try {
       const placed = await writeOrder(
         actor,
@@ -333,12 +376,13 @@ export async function startOnlinePayment(
   for (const gateway of candidates) {
     try {
       const started = await openAtGateway(gateway, {
-        option,
+        option: option ?? null,
         prepared: prepared.data,
         amount,
         walletQuoted,
         useWallet: data.useWallet,
         savedCard: Boolean(savedCard),
+        advance,
       });
       return actionOk(started);
     } catch (error) {

@@ -16,6 +16,8 @@
 import { prisma, type Prisma } from '@buildkart/database';
 import {
   describePaidWith,
+  fromPaise,
+  toPaise,
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
@@ -114,6 +116,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       taxTotal: true,
       grandTotal: true,
       amountPaid: true,
+      amountRefunded: true,
       walletApplied: true,
       unloadingCharge: true,
       cashbackAmount: true,
@@ -175,6 +178,16 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
     paidWith: online
       ? describePaidWith(online.instrument, online.instrumentDetail as Record<string, unknown> | null)
       : null,
+    // The same arithmetic as the ledger: total, less what was paid, plus
+    // anything given back.
+    amountDue: fromPaise(
+      Math.max(
+        0,
+        toPaise(decimalToString(order.grandTotal)) -
+          toPaise(decimalToString(order.amountPaid)) +
+          toPaise(decimalToString(order.amountRefunded)),
+      ),
+    ),
     subtotal: decimalToString(order.subtotal),
     discountTotal: decimalToString(order.discountTotal),
     discountCode: order.discountCode,

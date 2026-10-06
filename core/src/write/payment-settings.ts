@@ -92,6 +92,11 @@ export async function savePaymentProvider(
   if (hasMode(provider)) next.mode = data.mode;
   else next.maxOrderValue = data.maxOrderValue;
 
+  // A form that did not send the partial-COD block leaves what is stored.
+  if (provider === 'COD') {
+    next.partial = data.partialCod ?? stored.partial;
+  }
+
   // Only the gateways checkout routes to have options; a form that did not
   // send the list leaves what is stored.
   if (provider === 'RAZORPAY' || provider === 'PAYU') {
@@ -163,6 +168,7 @@ export async function savePaymentProvider(
       displayOrder: data.displayOrder,
       publicFields: data.publicFields,
       checkoutOptions: data.checkoutOptions,
+      partialCod: data.partialCod,
       secretsChanged: incomingSecrets.map(([key]) => key),
       secretsCleared: data.clearSecrets,
     },

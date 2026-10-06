@@ -94,6 +94,15 @@ export async function prepareCustomerOrder(
   actor: Actor,
   data: Omit<PlaceOrderInput, 'paymentMethod'>,
   paymentMethod: PaymentMethod,
+  {
+    advanceOnly = false,
+  }: {
+    /**
+     * Partial COD: an advance is paid online and the rest at the door. The COD
+     * ceiling does not apply — large orders are exactly what an advance is for.
+     */
+    advanceOnly?: boolean;
+  } = {},
 ): Promise<ActionResult<PreparedCustomerOrder>> {
   /*
    * A signed-in customer, always. Guest checkout is a setting the admin can
@@ -115,18 +124,60 @@ export async function prepareCustomerOrder(
     return actionError('This account cannot place orders. Please call us.');
   }
 
+  // --- where is it going? ---------------------------------------------------
+  /*
+   * A saved address is read from the customer's own book — filtered by owner,
+   * so an id from somebody else's account is simply not found. Its pin and its
+   * receiver come with it; nothing about it is taken from the payload.
+   */
+  let address: NonNullable<PlaceOrderInput['address']> & {
+    label?: string;
+    receiverName?: string;
+    receiverPhone?: string;
+  };
+  let saveAddress = data.saveAddress;
+  if (data.addressId) {
+    const row = await prisma.address.findFirst({
+      where: { id: data.addressId, customerId: customer.id },
+    });
+    if (!row) return actionError('Choose a delivery address.');
+    if (row.latitude === null || row.longitude === null) {
+      return actionError('This address has no map pin yet. Edit it and drop the pin, so the rider can find you.');
+    }
+    address = {
+      line1: row.line1,
+      line2: row.line2 ?? undefined,
+      landmark: row.landmark ?? undefined,
+      city: row.city,
+      state: row.state,
+      pincode: row.pincode,
+      latitude: Number(row.latitude),
+      longitude: Number(row.longitude),
+      receiverName: row.receiverName ?? undefined,
+      receiverPhone: row.receiverPhone ?? undefined,
+    };
+    // Already in the book.
+    saveAddress = false;
+  } else if (data.address) {
+    address = { ...data.address, label: data.addressLabel };
+  } else {
+    return actionError('Choose a delivery address.');
+  }
+
   // --- may we deliver there? ----------------------------------------------
   const area = await prisma.serviceablePincode.findUnique({
-    where: { pincode: data.address.pincode },
+    where: { pincode: address.pincode },
     select: { isActive: true },
   });
   if (!area?.isActive) {
-    return actionError(`We do not deliver to ${data.address.pincode} yet.`);
+    return actionError(`We do not deliver to ${address.pincode} yet.`);
   }
 
   // --- is that payment method actually on? --------------------------------
+  // (Partial COD is its own switch, checked by the caller, so full COD being
+  // off does not refuse an advance.)
   const methods = await getCheckoutMethods();
-  if (!methods.some((method) => method.provider === paymentMethod)) {
+  if (!advanceOnly && !methods.some((method) => method.provider === paymentMethod)) {
     return actionError('That payment method is not available. Choose another.');
   }
 
@@ -140,7 +191,7 @@ export async function prepareCustomerOrder(
    */
   const priced = await priceCart({
     lines: data.lines,
-    pincode: data.address.pincode,
+    pincode: address.pincode,
     /*
      * The pin from the *address*, not from whatever the cart was carrying.
      *
@@ -150,8 +201,8 @@ export async function prepareCustomerOrder(
      * decides money, so it comes from the address the goods are being sent to —
      * which `placeOrderSchema` requires for exactly this reason.
      */
-    latitude: data.address.latitude,
-    longitude: data.address.longitude,
+    latitude: address.latitude,
+    longitude: address.longitude,
     ...(data.discountCode ? { discountCode: data.discountCode } : {}),
     unloading: data.unloading,
   });
@@ -177,6 +228,7 @@ export async function prepareCustomerOrder(
 
   const method = methods.find((entry) => entry.provider === paymentMethod);
   if (
+    !advanceOnly &&
     method &&
     compareMoney(method.maxOrderValue, '0.00') > 0 &&
     compareMoney(priced.grandTotal, method.maxOrderValue) > 0
@@ -193,25 +245,39 @@ export async function prepareCustomerOrder(
    * rather than the only guard.
    */
   const payload: CreateOrderInput = {
-    customer: { phone: customer.phone, ...(data.name ? { name: data.name } : {}) },
+    /*
+     * The account's own name is only ever filled in, never replaced by a
+     * receiver's — a site supervisor taking the delivery does not become the
+     * customer.
+     */
+    customer: {
+      phone: customer.phone,
+      ...(data.name
+        ? { name: data.name }
+        : !customer.name && address.receiverName
+          ? { name: address.receiverName }
+          : {}),
+    },
     address: {
-      line1: data.address.line1,
-      line2: data.address.line2,
-      landmark: data.address.landmark,
-      city: data.address.city,
-      state: data.address.state,
-      pincode: data.address.pincode,
+      line1: address.line1,
+      line2: address.line2,
+      landmark: address.landmark,
+      city: address.city,
+      state: address.state,
+      pincode: address.pincode,
       // Passed down rather than patched in afterwards: `writeOrder` freezes it
       // into the order snapshot inside the same transaction, so the coordinate
       // an order shipped to cannot be lost to a failed second write.
-      latitude: data.address.latitude,
-      longitude: data.address.longitude,
-      label: data.addressLabel,
+      latitude: address.latitude,
+      longitude: address.longitude,
+      label: address.label,
+      receiverName: address.receiverName,
+      receiverPhone: address.receiverPhone,
     },
     // Already normalised and checksum-checked by `placeOrderSchema`; frozen on
     // the order and remembered on the customer by `writeOrder`.
     buyerGstin: data.gstin,
-    saveAddress: data.saveAddress,
+    saveAddress,
     lines: data.lines.map((line) => ({
       variantId: line.variantId,
       quantity: line.quantity,
@@ -250,7 +316,7 @@ export async function prepareCustomerOrder(
     customer: {
       id: customer.id,
       phone: customer.phone,
-      name: data.name || customer.name,
+      name: address.receiverName || data.name || customer.name,
       email: customer.email,
     },
   });

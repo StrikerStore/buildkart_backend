@@ -51,6 +51,8 @@ export async function listMyAddresses(actor: Actor): Promise<MyAddressDto[]> {
       pincode: true,
       latitude: true,
       longitude: true,
+      receiverName: true,
+      receiverPhone: true,
       isDefault: true,
     },
   });
@@ -77,6 +79,8 @@ export async function listMyAddresses(actor: Actor): Promise<MyAddressDto[]> {
     // seven-place coordinate.
     latitude: coordinateToString(row.latitude),
     longitude: coordinateToString(row.longitude),
+    receiverName: row.receiverName,
+    receiverPhone: row.receiverPhone,
     isDefault: row.isDefault,
     serviced: live.has(row.pincode),
   }));

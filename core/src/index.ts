@@ -80,6 +80,7 @@ export * from './write/place-order.ts';
 export * from './write/payment-session.ts';
 export { GatewayConfigError } from './payments/credentials.ts';
 export * from './payments/saved-cards.ts';
+export * from './payments/health.ts';
 export * from './write/growth.ts';
 export * from './write/warehouses.ts';
 export * from './write/menus.ts';

@@ -10,7 +10,14 @@
  * gets back is names and ordering, nothing more.
  */
 import { z } from 'zod';
-import { getCheckoutMethods, getPaymentSettings, reorderPaymentProviders, savePaymentProvider } from '@buildkart/core';
+import {
+  getCheckoutMethods,
+  getPaymentSettings,
+  reorderPaymentProviders,
+  savePaymentProvider,
+  testPaymentGateway,
+} from '@buildkart/core';
+import { PAYMENT_PROVIDERS } from '@buildkart/shared';
 import { adminProcedure, publicProcedure, router } from '../trpc.ts';
 
 /** Inputs stay `unknown` here: core owns the schema and validates it itself. */
@@ -27,4 +34,9 @@ export const paymentsRouter = router({
   reorderProviders: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => reorderPaymentProviders(ctx.actor, input)),
+
+  /** One harmless authenticated call, so the owner sees *why* a gateway fails. */
+  testProvider: adminProcedure
+    .input(z.object({ provider: z.enum(PAYMENT_PROVIDERS) }))
+    .mutation(({ ctx, input }) => testPaymentGateway(ctx.actor, input.provider)),
 });

@@ -193,3 +193,21 @@ test('a PayU verify_payment entry becomes the ledger’s shape', () => {
   assert.equal(failed.status, 'FAILED');
   assert.equal(failed.failureReason, 'Bank declined');
 });
+
+test('with no option, PayU opens on every method it offers', () => {
+  const form = buildPayuForm(creds, {
+    txnid: 'TXN2',
+    amount: '10',
+    productinfo: 'Order',
+    firstname: 'Asha',
+    email: 'a@b.in',
+    phone: '9999999999',
+    customerId: 'cust_1',
+    sessionId: 'sess_2',
+    option: null,
+    returnUrl: 'https://shop.example/api/payments/payu/return',
+  });
+  assert.equal(form.fields.pg, undefined);
+  assert.equal(form.fields.enforce_paymethod, undefined);
+  assert.equal(form.fields.user_credentials, 'KEY:cust_1');
+});

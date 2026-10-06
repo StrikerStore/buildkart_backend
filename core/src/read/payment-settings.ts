@@ -30,6 +30,7 @@ import {
   type EncryptedSecret,
   type GatewayRoute,
   type OnlineGateway,
+  type PartialCodRules,
   type PaymentProvider,
 } from '@buildkart/shared';
 import type {
@@ -110,7 +111,19 @@ function toProviderDto(provider: PaymentProvider, stored: ProviderSettings): Pay
       provider === 'RAZORPAY' || provider === 'PAYU'
         ? ((row.checkoutOptions as CheckoutOption[] | undefined) ?? [...CHECKOUT_OPTIONS])
         : [],
+    partialCod: provider === 'COD' ? stored.COD.partial : null,
   };
+}
+
+/**
+ * Partial COD as the storefront may offer it: switched on, and some online
+ * gateway enabled to take the advance. Null otherwise.
+ */
+export async function getPartialCodRules(): Promise<PartialCodRules | null> {
+  const stored = await readProviderSettings();
+  const rules = stored.COD.partial;
+  const online = stored.RAZORPAY.enabled || stored.PAYU.enabled;
+  return rules.enabled && online ? rules : null;
 }
 
 /** Razorpay and PayU as the router sees them. */
@@ -128,6 +141,32 @@ function webhookUrls(): Record<OnlineGateway, string> | null {
   const base = process.env.API_PUBLIC_URL?.trim().replace(/\/+$/, '');
   if (!base) return null;
   return { RAZORPAY: `${base}/webhooks/razorpay`, PAYU: `${base}/webhooks/payu` };
+}
+
+/**
+ * Payments a gateway refused to open in the last day. `openAtGateway` marks
+ * those sessions EXPIRED with the gateway's own words as the reason; nothing was
+ * charged, but the owner should know checkout is failing, and why.
+ */
+async function readRecentGatewayErrors(): Promise<PaymentSettingsDto['recentErrors']> {
+  const rows = await prisma.paymentSession.findMany({
+    where: {
+      status: 'EXPIRED',
+      failureReason: { not: null },
+      // Never got as far as a gateway order: refused at the door. An abandoned
+      // payment also ends EXPIRED, but it has a gateway order id.
+      gatewayOrderId: null,
+      createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+    select: { gateway: true, failureReason: true, createdAt: true },
+  });
+  return rows.map((row) => ({
+    gateway: row.gateway as OnlineGateway,
+    reason: row.failureReason ?? '',
+    at: row.createdAt.toISOString(),
+  }));
 }
 
 /** Money taken that did not become an order — newest first, last 90 days. */
@@ -168,7 +207,11 @@ async function readPaymentIssues(): Promise<PaymentIssueDto[]> {
 export async function getPaymentSettings(actor: Actor): Promise<PaymentSettingsDto> {
   assertPermission(actor, 'payments:write');
 
-  const [stored, issues] = await Promise.all([readProviderSettings(), readPaymentIssues()]);
+  const [stored, issues, recentErrors] = await Promise.all([
+    readProviderSettings(),
+    readPaymentIssues(),
+    readRecentGatewayErrors(),
+  ]);
   const routes = toRoutes(stored);
 
   return {
@@ -179,6 +222,7 @@ export async function getPaymentSettings(actor: Actor): Promise<PaymentSettingsD
     routing: CHECKOUT_OPTIONS.map((option) => ({ option, gateways: routeOption(option, routes) })),
     webhookUrls: webhookUrls(),
     issues,
+    recentErrors,
   };
 }
 

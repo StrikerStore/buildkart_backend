@@ -190,7 +190,19 @@ export const placeOrderSchema = z.object({
    */
   addressLabel: z.string().trim().max(64).optional(),
 
-  address: z.object({
+  /**
+   * A saved address, by id — how the cart places orders. The server reads the
+   * address (and its pin and receiver) from the customer's own book, so the
+   * payload cannot point an order at somebody else's address.
+   */
+  addressId: z.string().trim().min(1).max(64).optional(),
+
+  /**
+   * A typed address, for callers that do not use the address book. One of
+   * `addressId` or `address` is required; `prepareCustomerOrder` checks.
+   */
+  address: z
+    .object({
     line1: z.string().trim().min(1, 'A delivery address is needed').max(255),
     line2: z.string().trim().max(255).optional(),
     landmark: z.string().trim().max(255).optional(),
@@ -219,7 +231,8 @@ export const placeOrderSchema = z.object({
       .number({ message: 'Set your exact delivery location on the map' })
       .min(68)
       .max(98),
-  }),
+  })
+    .optional(),
 
   /**
    * The buyer's GSTIN, for a tax invoice in their firm's name.
@@ -275,7 +288,17 @@ export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
  * another, so picking one names its gateway.
  */
 export const startOnlinePaymentSchema = placeOrderSchema.omit({ paymentMethod: true }).extend({
-  option: z.enum(CHECKOUT_OPTIONS),
+  /**
+   * Restricts the gateway's window to one way of paying. Absent — the normal
+   * case — the gateway shows every method it offers and the customer picks
+   * there; the owner's priority alone decides which gateway that is.
+   */
+  option: z.enum(CHECKOUT_OPTIONS).optional(),
+  /**
+   * FULL pays the whole amount online. ADVANCE is partial COD: the server
+   * works out the advance from the shop's rules, the rest is paid at the door.
+   */
+  mode: z.enum(['FULL', 'ADVANCE']).default('FULL'),
   savedCard: z
     .object({
       gateway: z.enum(ONLINE_GATEWAYS),
@@ -352,6 +375,14 @@ export const myAddressSchema = z.object({
   // Bounded to India's box, same as the checkout pin.
   latitude: z.coerce.number().min(6).max(38).optional(),
   longitude: z.coerce.number().min(68).max(98).optional(),
+  /** Who takes the delivery. Blank means the account holder. */
+  receiverName: z.string().trim().max(191).optional(),
+  receiverPhone: z
+    .string()
+    .trim()
+    .transform((v) => v.replace(/\D/g, '').replace(/^(91|0)(?=\d{10}$)/, ''))
+    .refine((v) => v === '' || /^[6-9]\d{9}$/.test(v), 'Enter a 10-digit mobile number')
+    .optional(),
   isDefault: z.boolean().default(false),
 });
 export type MyAddressInput = z.infer<typeof myAddressSchema>;

@@ -10,6 +10,7 @@ import { MONEY_PATTERN, toPaise } from './money.ts';
 import { EMPTY_SECRET, encryptedSecretSchema } from './secrets.ts';
 import { DEFAULT_WALLET_RULES, walletRulesSchema } from './wallet.ts';
 import { CHECKOUT_OPTIONS } from './checkout-options.ts';
+import { DEFAULT_PARTIAL_COD } from './payments.ts';
 
 const money = z.string().regex(MONEY_PATTERN, 'Must be an amount like "10000.00"');
 
@@ -150,12 +151,25 @@ export const SETTING_SCHEMAS = {
       displayOrder: z.number().int().min(0).max(99).default(0),
       /** COD refused at or above this. "0.00" means no ceiling. */
       maxOrderValue: z.string().default('0.00'),
+      /**
+       * An advance online, the rest at the door. Independent of `enabled`: a
+       * shop can take partial COD while refusing full COD.
+       */
+      partial: z
+        .object({
+          enabled: z.boolean().default(false),
+          percent: z.number().int().min(1).max(90).default(10),
+          minAdvance: money.default('100.00'),
+          minOrderValue: money.default('0.00'),
+        })
+        .default(DEFAULT_PARTIAL_COD),
     })
     .default({
       enabled: true,
       displayName: 'Cash on delivery',
       displayOrder: 0,
       maxOrderValue: '0.00',
+      partial: DEFAULT_PARTIAL_COD,
     }),
 
   'store.profile': z

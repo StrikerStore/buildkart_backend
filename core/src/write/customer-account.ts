@@ -93,6 +93,8 @@ export async function saveMyAddress(
     pincode: data.pincode,
     latitude: data.latitude ?? null,
     longitude: data.longitude ?? null,
+    receiverName: data.receiverName || null,
+    receiverPhone: data.receiverPhone || null,
   };
 
   const id = await prisma.$transaction(async (tx) => {

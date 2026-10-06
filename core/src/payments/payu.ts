@@ -151,7 +151,8 @@ export function buildPayuForm(
     phone: string;
     customerId: string;
     sessionId: string;
-    option: CheckoutOption;
+    /** Null opens PayU's page on every method it offers. */
+    option: CheckoutOption | null;
     returnUrl: string;
   },
 ): { action: string; fields: Record<string, string> } {
@@ -165,7 +166,7 @@ export function buildPayuForm(
     email: input.email,
     udf1: input.sessionId,
   };
-  const pg = PG[input.option];
+  const pg = input.option ? PG[input.option] : null;
 
   return {
     action: HOSTED[creds.mode],
@@ -180,8 +181,8 @@ export function buildPayuForm(
       udf1: input.sessionId,
       surl: input.returnUrl,
       furl: input.returnUrl,
-      pg: pg.pg,
-      ...(pg.enforce ? { enforce_paymethod: pg.enforce } : {}),
+      ...(pg ? { pg: pg.pg } : {}),
+      ...(pg?.enforce ? { enforce_paymethod: pg.enforce } : {}),
       user_credentials: `${creds.merchantKey}:${input.customerId}`,
       hash: payuRequestHash(hashFields, creds.salt),
     },

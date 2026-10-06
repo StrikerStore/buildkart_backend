@@ -63,6 +63,7 @@ import type {
 } from './index.ts';
 import type { CashbackStatus, WalletEntryType } from './wallet.ts';
 import type { CheckoutOption, OnlineGateway } from './checkout-options.ts';
+import type { PartialCodRules } from './payments.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
 import type { ImportIssue, ParsedProduct } from './csv/index.ts';
 
@@ -1101,6 +1102,8 @@ export type PaymentProviderDto = {
   maxOrderValue: string;
   /** Razorpay and PayU only; empty for the others. */
   checkoutOptions: CheckoutOption[];
+  /** COD only; null for the others. */
+  partialCod: PartialCodRules | null;
 };
 
 // from core/src/read/payment-settings.ts
@@ -1114,7 +1117,13 @@ export type PaymentSettingsDto = {
   webhookUrls: Record<OnlineGateway, string> | null;
   /** Paid sessions that could not become an order — money to follow up on. */
   issues: PaymentIssueDto[];
+  /** Payments a gateway refused to open in the last day, newest first. */
+  recentErrors: Array<{ gateway: OnlineGateway; reason: string; at: string }>;
 };
+
+// from core/src/payments/health.ts
+/** The answer to "Test connection": whether it worked, and why not in plain words. */
+export type GatewayHealthDto = { ok: boolean; message: string };
 
 // from core/src/read/payment-settings.ts
 /** A payment that was taken but did not become an order, so it was refunded. */
@@ -1169,8 +1178,8 @@ export type PaymentStartDto =
       /** Razorpay `cust_…`, so its checkout can offer and save cards. */
       customerId: string | null;
       prefill: { name: string; contact: string; email: string };
-      /** Razorpay `config.display`, restricting the modal to the chosen option. */
-      display: Record<string, unknown>;
+      /** Razorpay `config`, restricting the modal to a chosen option; null shows every method. */
+      display: Record<string, unknown> | null;
       /** For Razorpay's `method` hint when a saved card was picked. */
       method: string | null;
     }
@@ -1382,6 +1391,12 @@ export type StorefrontCheckoutDto = Omit<
    * order. Which gateway takes each is decided when the customer pays.
    */
   paymentOptions: CheckoutOptionDto[];
+  /**
+   * Partial COD rules when it can be offered — switched on and an online
+   * gateway enabled to take the advance — otherwise null. The cart previews
+   * the split with `quotePartialCod`; the server works it out again.
+   */
+  partialCod: PartialCodRules | null;
   /** Orders below this are refused when `flow.minimumOrderEnforced` is on. */
   minimumOrderValue: string;
 };
@@ -2151,6 +2166,8 @@ export type MyOrderDetailDto = {
   paymentStatus: PaymentStatus;
   /** "UPI", "Visa •••• 4242" — how an online payment was made. Null for cash or unpaid. */
   paidWith: string | null;
+  /** Still to pay — on delivery, for a COD order or a partial-COD balance. */
+  amountDue: string;
   subtotal: string;
   discountTotal: string;
   discountCode: string | null;
@@ -2316,6 +2333,9 @@ export type MyAddressDto = {
   pincode: string;
   latitude: string | null;
   longitude: string | null;
+  /** Who takes the delivery; null means the account holder. */
+  receiverName: string | null;
+  receiverPhone: string | null;
   isDefault: boolean;
   /** Whether the shop currently delivers there, checked at read time. */
   serviced: boolean;

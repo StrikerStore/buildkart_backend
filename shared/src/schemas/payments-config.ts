@@ -147,6 +147,15 @@ export const paymentProviderConfigSchema = z
      * Absent means "leave as stored", so an older form cannot wipe it.
      */
     checkoutOptions: z.array(z.enum(CHECKOUT_OPTIONS)).max(CHECKOUT_OPTIONS.length).optional(),
+    /** COD only: an advance online, the rest at the door. Absent leaves what is stored. */
+    partialCod: z
+      .object({
+        enabled: z.boolean(),
+        percent: z.coerce.number().int().min(1, 'At least 1%').max(90, 'At most 90%'),
+        minAdvance: money,
+        minOrderValue: money,
+      })
+      .optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.enabled) return;
