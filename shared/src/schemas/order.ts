@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 import { MONEY_PATTERN } from '../money.ts';
 import { optionalText } from './common.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
@@ -261,13 +262,17 @@ const optionalMoney = z
  *
  * Ten digits starting 6-9. Kept strict because the phone *is* the customer's
  * identity here — a typo does not create a bad field, it creates a second
- * customer, and the order history quietly splits in two.
+ * customer, and the order history quietly splits in two. Forgiving about
+ * formatting, though: see `normalizeIndianMobile` for what is accepted, and
+ * why a leading 91 is not always a country code.
  */
 export const phoneSchema = z
   .string()
-  .trim()
-  .transform((v) => v.replace(/[\s-]/g, '').replace(/^(\+?91)/, ''))
-  .refine((v) => /^[6-9]\d{9}$/.test(v), 'Enter a 10-digit mobile number');
+  .transform(normalizeIndianMobile)
+  .superRefine((value, ctx) => {
+    const error = indianMobileError(value);
+    if (error) ctx.addIssue({ code: 'custom', message: error });
+  });
 
 export const orderLineSchema = z.object({
   variantId: z.string().min(1).max(64),

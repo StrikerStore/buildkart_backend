@@ -12,6 +12,7 @@
  * where everything is a string and half of it is somebody editing the URL.
  */
 import { z } from 'zod';
+import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 import { PAYMENT_METHODS } from '../orders.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
 import { CHECKOUT_OPTIONS, ONLINE_GATEWAYS } from '../checkout-options.ts';
@@ -380,8 +381,11 @@ export const myAddressSchema = z.object({
   receiverPhone: z
     .string()
     .trim()
-    .transform((v) => v.replace(/\D/g, '').replace(/^(91|0)(?=\d{10}$)/, ''))
-    .refine((v) => v === '' || /^[6-9]\d{9}$/.test(v), 'Enter a 10-digit mobile number')
+    .transform((v) => (v.trim() === '' ? '' : normalizeIndianMobile(v)))
+    .superRefine((value, ctx) => {
+      const error = value === '' ? null : indianMobileError(value);
+      if (error) ctx.addIssue({ code: 'custom', message: error });
+    })
     .optional(),
   isDefault: z.boolean().default(false),
 });

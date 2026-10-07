@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 
 /**
  * Customer reviews, posted into the admin by the owner.
@@ -35,11 +36,11 @@ export const customerReviewSchema = z.object({
     .string()
     .trim()
     .default('')
-    .transform((v) => v.replace(/[\s-]/g, '').replace(/^\+?91(?=\d{10}$)/, ''))
-    .refine(
-      (v) => v === '' || /^[6-9]\d{9}$/.test(v),
-      'Enter a 10-digit mobile number, or leave it blank',
-    ),
+    .transform((v) => (v.trim() === '' ? '' : normalizeIndianMobile(v)))
+    .superRefine((value, ctx) => {
+      const error = value === '' ? null : indianMobileError(value);
+      if (error) ctx.addIssue({ code: 'custom', message: `${error} Or leave it blank.` });
+    }),
 
   rating: z.coerce
     .number()
