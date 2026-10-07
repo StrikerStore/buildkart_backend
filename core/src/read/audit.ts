@@ -10,7 +10,12 @@
  * inside the same millisecond by a bulk action.
  */
 import { prisma, type Prisma } from '@buildkart/database';
-import { AUDIT_ACTION_LABELS, actionGroup, type AuditListQuery } from '@buildkart/shared';
+import {
+  AUDIT_ACTION_LABELS,
+  actionGroup,
+  parseStoreDate,
+  type AuditListQuery,
+} from '@buildkart/shared';
 import type {
   AuditAdminOptionDto,
   AuditLogEntryDto,
@@ -22,10 +27,12 @@ import { dateToIso } from '../dto.ts';
 export type { AuditAdminOptionDto, AuditLogEntryDto, AuditLogResultDto };
 
 function buildAuditWhere(query: AuditListQuery): Prisma.AdminAuditLogWhereInput {
-  const from = query.from ? new Date(query.from) : null;
+  // Calendar days in store time: "7 Oct" is midnight to midnight in India, not
+  // 5:30am to 5:30am, which is what a UTC reading of the date gave.
+  const from = query.from ? parseStoreDate(query.from) : null;
   // `to` arrives as a date with no time, and the reader means "up to and
   // including that day" — without this a filter ending today finds nothing.
-  const to = query.to ? new Date(new Date(query.to).getTime() + 24 * 60 * 60 * 1000) : null;
+  const to = query.to ? new Date(parseStoreDate(query.to).getTime() + 24 * 60 * 60 * 1000) : null;
 
   return {
     ...(query.entityType ? { entityType: query.entityType } : {}),

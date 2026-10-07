@@ -29,7 +29,7 @@ import {
   runWalletJobs,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
-import { buildProductRows } from '@buildkart/shared';
+import { buildProductRows, storeDateStamp } from '@buildkart/shared';
 import { checkDatabaseHealth } from '@buildkart/database';
 import { createContext } from './context.ts';
 import { verifyAdminSession } from './auth/verifier.ts';
@@ -179,7 +179,8 @@ export async function handleHttpRoute(
       tagId: url.searchParams.get('tagId'),
     });
 
-    const stamp = new Date().toISOString().slice(0, 10);
+    // The store's date, so an export at 1am in India is not named yesterday.
+    const stamp = storeDateStamp();
     res.writeHead(200, {
       'content-type': 'text/csv; charset=utf-8',
       'content-disposition': `attachment; filename="buildkart-products-${stamp}.csv"`,

@@ -18,6 +18,7 @@ import {
   parseSetting,
   PRODUCT_PAGE_SIZE,
   type ProductListQuery,
+  toStoreInputValue,
 } from '@buildkart/shared';
 import type { ProductFormInitialDto } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
@@ -324,16 +325,12 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
 }
 
 /**
- * Renders a Date as the `YYYY-MM-DDTHH:mm` a datetime-local input expects.
- *
- * Deliberately local to whichever process runs this, matching the behaviour it
- * had inside the admin page. When the API becomes its own service its timezone
- * will be the one that counts, so this wants an explicit zone before Phase 5.
+ * Renders a Date as the `YYYY-MM-DDTHH:mm` a datetime-local input expects, in
+ * **store time**. It used to use the process's own zone, which on the API's
+ * UTC server showed (and saved) a 10am schedule as 10am UTC — 3:30pm in India.
  */
 export function toLocalInputValue(date: Date | null): string {
-  if (!date) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return toStoreInputValue(date);
 }
 
 

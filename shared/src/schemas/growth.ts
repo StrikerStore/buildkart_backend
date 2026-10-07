@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseStoreDateTime } from '../time.ts';
 import { MONEY_PATTERN } from '../money.ts';
 import { optionalText } from './common.ts';
 import { DISCOUNT_TRIGGERS, DISCOUNT_TYPES } from '../discounts.ts';
@@ -120,7 +121,10 @@ export const discountSchema = z
     path: ['value'],
   })
   .refine(
-    (v) => !v.startsAt || !v.endsAt || Date.parse(v.endsAt) > Date.parse(v.startsAt),
+    (v) =>
+      !v.startsAt ||
+      !v.endsAt ||
+      parseStoreDateTime(v.endsAt).getTime() > parseStoreDateTime(v.startsAt).getTime(),
     { message: 'The end must come after the start', path: ['endsAt'] },
   )
   .refine(

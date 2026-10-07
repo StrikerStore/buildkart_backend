@@ -18,6 +18,7 @@ import {
   seoDefaultsSchema,
   toggleActiveSchema,
   type ActionResult,
+  parseStoreDateTime,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
@@ -57,8 +58,9 @@ export async function saveBanner(actor: Actor, input: unknown): Promise<ActionRe
     linkUrl: data.linkUrl ?? null,
     placement: data.placement,
     isActive: data.isActive,
-    startsAt: data.startsAt ? new Date(data.startsAt) : null,
-    endsAt: data.endsAt ? new Date(data.endsAt) : null,
+    // Typed in store time — see `parseStoreDateTime`.
+    startsAt: data.startsAt ? parseStoreDateTime(data.startsAt) : null,
+    endsAt: data.endsAt ? parseStoreDateTime(data.endsAt) : null,
   };
 
   const saved = data.id

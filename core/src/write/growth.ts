@@ -16,6 +16,7 @@ import {
   pincodeSchema,
   toggleActiveSchema,
   type ActionResult,
+  parseStoreDateTime,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
@@ -171,8 +172,9 @@ export async function saveDiscount(
     maxDiscountAmount: data.type === 'PERCENT' ? (data.maxDiscountAmount ?? null) : null,
     usageLimit: data.usageLimit ?? null,
     perCustomerLimit: data.perCustomerLimit ?? null,
-    startsAt: data.startsAt ? new Date(data.startsAt) : new Date(),
-    endsAt: data.endsAt ? new Date(data.endsAt) : null,
+    // Typed in store time — see `parseStoreDateTime`.
+    startsAt: data.startsAt ? parseStoreDateTime(data.startsAt) : new Date(),
+    endsAt: data.endsAt ? parseStoreDateTime(data.endsAt) : null,
     isActive: data.isActive,
     appliesToAll: data.appliesToAll,
   };

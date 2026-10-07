@@ -29,6 +29,7 @@ import {
   type ActionResult,
   type ProductInput,
   type VariantRowInput,
+  parseStoreDateTime,
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
@@ -177,7 +178,8 @@ function productScalars(
     returnPolicyEn: richText(data.returnPolicyEn) || null,
     returnPolicyHi: richText(data.returnPolicyHi) || null,
     status: data.status,
-    scheduledPublishAt: data.scheduledPublishAt ? new Date(data.scheduledPublishAt) : null,
+    // Typed in store time — see `parseStoreDateTime`.
+    scheduledPublishAt: data.scheduledPublishAt ? parseStoreDateTime(data.scheduledPublishAt) : null,
     categoryId: data.categoryId,
     brandId,
     productType: data.productType ?? null,

@@ -113,3 +113,58 @@ export function formatStoreDateTimeShort(value: Date | string, now: Date = new D
   if (date.getTime() >= todayStart - MS_PER_DAY) return `Yesterday, ${TIME_ONLY.format(date)}`;
   return DATE_TIME.format(date);
 }
+
+// ---------------------------------------------------------------------------
+// Typed-in dates and times
+// ---------------------------------------------------------------------------
+
+/*
+ * A `datetime-local` input yields "2026-10-07T10:00" — no zone at all. Parsed
+ * with `new Date()` it means *whatever zone the parsing process runs in*: the
+ * owner's browser if done there, UTC if done on the server. That is how a
+ * discount set for 10am went live at 3:30pm. These helpers make the zone
+ * explicit — the store's — wherever the parsing happens.
+ */
+
+const IST_SUFFIX = '+05:30';
+const NAIVE_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$/;
+const NAIVE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The instant a typed date-time names, read as store time.
+ *
+ * "2026-10-07T10:00" becomes 10:00 IST. A value that already carries a zone
+ * ("…Z", "…+05:30") is taken as it is, so an ISO string round-trips unchanged.
+ */
+export function parseStoreDateTime(value: string): Date {
+  const trimmed = value.trim();
+  if (NAIVE_DATE_TIME.test(trimmed)) {
+    const withSeconds = trimmed.length === 16 ? `${trimmed}:00` : trimmed;
+    return new Date(`${withSeconds}${IST_SUFFIX}`);
+  }
+  return new Date(trimmed);
+}
+
+/** The start of a typed calendar day ("2026-10-07"), as store midnight. */
+export function parseStoreDate(value: string): Date {
+  const trimmed = value.trim();
+  if (NAIVE_DATE.test(trimmed)) return new Date(`${trimmed}T00:00:00${IST_SUFFIX}`);
+  return new Date(trimmed);
+}
+
+/**
+ * An instant as the "YYYY-MM-DDTHH:mm" a `datetime-local` input shows, in
+ * store time — the inverse of `parseStoreDateTime`, whichever zone the
+ * browser or server happens to be in.
+ */
+export function toStoreInputValue(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const at = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(at.getTime())) return '';
+  return new Date(at.getTime() + IST_OFFSET_MINUTES * MS_PER_MINUTE).toISOString().slice(0, 16);
+}
+
+/** Today's store date as "YYYY-MM-DD" — for filenames and the like. */
+export function storeDateStamp(at: Date = new Date()): string {
+  return new Date(at.getTime() + IST_OFFSET_MINUTES * MS_PER_MINUTE).toISOString().slice(0, 10);
+}

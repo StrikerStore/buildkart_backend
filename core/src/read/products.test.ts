@@ -100,8 +100,9 @@ test('a null publish date is an empty input, not the epoch', () => {
   assert.equal(toLocalInputValue(null), '');
 });
 
-test('a date renders as the zero-padded local value the input expects', () => {
-  assert.equal(toLocalInputValue(new Date(2026, 0, 5, 9, 7)), '2026-01-05T09:07');
+test('a date renders as the zero-padded store-time value the input expects', () => {
+  // 03:37 UTC is 09:07 in India, whatever zone this test runs in.
+  assert.equal(toLocalInputValue(new Date('2026-01-05T03:37:00.000Z')), '2026-01-05T09:07');
 });
 
 // --- category rules -------------------------------------------------------
