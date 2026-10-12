@@ -80,7 +80,7 @@ Taken from the existing logo (`logo.png`):
 | Images | **Cloudflare R2** (owner already has Cloudflare) | Admin uploads product images to R2; served via Cloudflare CDN, resized/optimized for slow networks |
 | Maps (address pin) | **Google Maps** when chosen in Admin → Checkout → Location (Maps JavaScript + Places autocomplete + Geocoding; Maps Embed in the admin), else **Leaflet + OpenStreetMap** (free, no API key) | Pin-drop + "use current location" at checkout. The provider is a setting, not a build choice: the storefront falls back to Leaflet/OSM tiles if the Google browser key is refused, and the server falls back to OSM geocoding with no server key |
 | i18n | `next-intl` | Clean En/Hi routing and dictionaries |
-| Analytics (admin) | Built from our own order data + optional Google Analytics on the storefront | Shopify-style dashboard needs our own numbers anyway |
+| Analytics (admin) | Built from our own order data + optional Google Analytics on the storefront. **Superseded by `ANALYTICS.md`:** Meta Pixel (live), Conversions API, attribution, sessions/funnel and Meta spend/ROAS | Shopify-style dashboard needs our own numbers anyway |
 | Hosting | **Railway** — both apps + PostgreSQL in one project | Owner's choice; DB and apps live together (low latency), simple env management, custom domain later |
 | Monorepo tooling | **npm workspaces + Turborepo** | Clean separation of apps with shared code |
 
