@@ -408,12 +408,33 @@ export const TRUST_MARKER_HINTS: Record<TrustMarker, string> = {
 };
 
 /**
+ * Where a category grid's tiles sit when there are fewer than fill a row.
+ *
+ * Left is the default because it is what every grid saved before this setting
+ * already looked like. A full row looks the same either way; the choice only
+ * shows on a short grid or on the last, partly filled row.
+ */
+export const CATEGORY_GRID_ALIGNMENTS = ['left', 'center'] as const;
+export type CategoryGridAlignment = (typeof CATEGORY_GRID_ALIGNMENTS)[number];
+
+export const CATEGORY_GRID_ALIGNMENT_LABELS: Record<CategoryGridAlignment, string> = {
+  left: 'Left',
+  center: 'Centre',
+};
+
+/**
  * The config shape follows the type, which is exactly why the type has to be
  * declared rather than sniffed from the value — the same lesson the metafield
  * registry learned.
  */
 export const homepageSectionConfigSchema = z.object({
   categoryIds: z.array(z.string().max(64)).max(50).default([]),
+  /*
+   * CATEGORY_GRID only. `catch` rather than `default` so a missing or unknown
+   * value reads as left instead of failing the whole config — which would
+   * otherwise throw away the row's categories along with it.
+   */
+  align: z.enum(CATEGORY_GRID_ALIGNMENTS).catch('left'),
   productIds: z.array(z.string().max(64)).max(50).default([]),
   /*
    * The tag, by slug. Slugs are what the storefront's URLs already speak and

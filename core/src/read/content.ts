@@ -93,6 +93,7 @@ export function toHomepageSectionDto(row: HomepageSectionRow): HomepageSectionDt
     titleEn: row.titleEn,
     titleHi: row.titleHi,
     categoryIds: config.categoryIds,
+    align: config.align,
     productIds: config.productIds,
     tagSlug: config.tagSlug ?? null,
     limit: config.limit,

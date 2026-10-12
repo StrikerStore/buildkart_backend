@@ -46,6 +46,23 @@ test('a malformed config degrades to defaults instead of throwing', () => {
   }
 });
 
+test('a category grid saved before alignment existed reads as left', () => {
+  const dto = toHomepageSectionDto(row());
+  assert.ok(dto);
+  assert.equal(dto.align, 'left');
+});
+
+test('a centred category grid keeps its alignment, and a bad one costs only the alignment', () => {
+  const centred = toHomepageSectionDto(
+    row({ configJson: { categoryIds: ['c1'], align: 'center' } }),
+  );
+  assert.equal(centred?.align, 'center');
+
+  const bad = toHomepageSectionDto(row({ configJson: { categoryIds: ['c1'], align: 'diagonal' } }));
+  assert.equal(bad?.align, 'left');
+  assert.deepEqual(bad?.categoryIds, ['c1'], 'the categories survive a bad alignment');
+});
+
 test('an absent tagSlug is normalised to null, never undefined', () => {
   // undefined does not survive serialisation to a client component; null does.
   const dto = toHomepageSectionDto(row({ configJson: { categoryIds: [], productIds: [] } }));

@@ -45,6 +45,7 @@ import type {
   TagScope,
   TagTone,
   TrustMarker,
+  CategoryGridAlignment,
   AddressSnapshot,
   BannerPlacement,
   CheckoutFieldKey,
@@ -422,6 +423,8 @@ export type HomepageSectionDto = {
   titleEn: string | null;
   titleHi: string | null;
   categoryIds: string[];
+  /** CATEGORY_GRID only: where the tiles sit on a row they do not fill. */
+  align: CategoryGridAlignment;
   productIds: string[];
   /** TAG_CAROUSEL: the tag's slug. Resolved from a legacy id when the row predates slugs. */
   tagSlug: string | null;
@@ -1686,6 +1689,11 @@ export type StorefrontSectionDto =
       titleEn: string | null;
       titleHi: string | null;
       categories: StorefrontCategoryDto[];
+      /**
+       * Optional on the wire so a storefront deployed ahead of the API — or an
+       * API ahead of a storefront — reads a missing value as the old left.
+       */
+      align?: CategoryGridAlignment;
     }
   | {
       id: string;

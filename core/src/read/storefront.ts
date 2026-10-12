@@ -1084,6 +1084,7 @@ async function resolveSection(
    */
   const config = (row.configJson ?? {}) as {
     categoryIds?: unknown;
+    align?: unknown;
     productIds?: unknown;
     tagSlug?: unknown;
     tagId?: unknown;
@@ -1114,7 +1115,13 @@ async function resolveSection(
         return found ? [toCategoryDto(found, gridCounts)] : [];
       });
 
-      return categories.length > 0 ? { ...head, type: 'CATEGORY_GRID', categories } : null;
+      // Anything but an explicit centre is the left alignment every grid had
+      // before the setting existed.
+      const align = config.align === 'center' ? 'center' : 'left';
+
+      return categories.length > 0
+        ? { ...head, type: 'CATEGORY_GRID', categories, align }
+        : null;
     }
 
     case 'PRODUCT_CAROUSEL': {

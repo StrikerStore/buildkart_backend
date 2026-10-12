@@ -186,7 +186,10 @@ export async function saveHomepageSection(
   const data = parsed.data;
 
   const config: Record<string, unknown> = { limit: data.config.limit };
-  if (data.type === 'CATEGORY_GRID') config.categoryIds = data.config.categoryIds;
+  if (data.type === 'CATEGORY_GRID') {
+    config.categoryIds = data.config.categoryIds;
+    config.align = data.config.align;
+  }
   if (data.type === 'PRODUCT_CAROUSEL') config.productIds = data.config.productIds;
   if (data.type === 'TAG_CAROUSEL') {
     /*
