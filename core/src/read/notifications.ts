@@ -20,7 +20,9 @@ import {
   type NotificationChannel,
   type NotificationEvent,
 } from '@buildkart/shared';
+import { notificationLogQuerySchema } from '@buildkart/shared';
 import type {
+  NotificationMessageDto,
   NotificationProvidersDto,
   NotificationTemplateDto,
   NotificationsPageDto,
@@ -28,7 +30,7 @@ import type {
 import { assertPermission, type Actor } from '../actor.ts';
 import { dateToIso } from '../dto.ts';
 import { isSecretsKeyConfigured } from '../secrets.ts';
-export type { NotificationProvidersDto, NotificationTemplateDto, NotificationsPageDto };
+export type { NotificationMessageDto, NotificationProvidersDto, NotificationTemplateDto, NotificationsPageDto };
 
 const KNOWN_EVENTS = new Set<string>(NOTIFICATION_EVENTS);
 
@@ -65,6 +67,8 @@ function toTemplateDto(row: {
   body: string;
   providerTemplateId: string | null;
   isActive: boolean;
+  providerStatus: string | null;
+  providerRejectedReason: string | null;
   updatedAt: Date;
 }): NotificationTemplateDto {
   const sms = smsLength(row.body);
@@ -77,6 +81,8 @@ function toTemplateDto(row: {
     body: row.body,
     providerTemplateId: row.providerTemplateId ?? '',
     isActive: row.isActive,
+    providerStatus: row.providerStatus ?? '',
+    providerRejectedReason: row.providerRejectedReason ?? '',
     // Computed here rather than in the browser so the list and the editor
     // cannot disagree about what a message costs.
     smsSegments: sms.segments,
@@ -105,6 +111,12 @@ export async function getNotificationTemplate(
   return row ? toTemplateDto(row) : null;
 }
 
+/** Where AiSensy should post delivery reports. Empty until API_PUBLIC_URL is set. */
+function aisensyWebhookUrl(): string {
+  const base = process.env.API_PUBLIC_URL?.trim().replace(/\/+$/, '');
+  return base ? `${base}/webhooks/aisensy` : '';
+}
+
 /** Credentials, masked. Nothing here can carry a plaintext key. */
 async function readProviders(): Promise<NotificationProvidersDto> {
   const rows = await prisma.setting.findMany({
@@ -130,7 +142,10 @@ async function readProviders(): Promise<NotificationProvidersDto> {
       enabled: whatsapp.enabled,
       provider: whatsapp.provider,
       phoneNumberId: whatsapp.phoneNumberId,
+      projectId: whatsapp.projectId,
       apiToken: maskSecret(whatsapp.apiTokenEnc),
+      webhookSecret: maskSecret(whatsapp.webhookSecretEnc),
+      webhookUrl: aisensyWebhookUrl(),
     },
     email: {
       enabled: email.enabled,
@@ -182,5 +197,54 @@ export async function getNotificationsPage(actor: Actor): Promise<NotificationsP
     activeWithoutProvider: templates.filter(
       (template) => template.isActive && !activeChannels.includes(template.channel),
     ).length,
+  };
+}
+
+/**
+ * The outbound log, newest first — what was sent, to whom, and what became of
+ * it. Filterable by status, order or customer, so an order page can show its
+ * own messages and the log screen can show only the failures.
+ */
+export async function listNotificationMessages(
+  actor: Actor,
+  input: unknown,
+): Promise<{ messages: NotificationMessageDto[]; nextCursor: string | null }> {
+  assertPermission(actor, 'orders:read');
+
+  const query = notificationLogQuerySchema.parse(input ?? {});
+  const rows = await prisma.notificationMessage.findMany({
+    where: {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.orderId ? { orderId: query.orderId } : {}),
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: query.limit + 1,
+    ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+  });
+
+  const page = rows.slice(0, query.limit);
+  return {
+    messages: page.map((row) => ({
+      id: row.id,
+      event: row.event as NotificationEvent,
+      channel: row.channel,
+      locale: row.locale,
+      customerId: row.customerId,
+      orderId: row.orderId,
+      phone: row.phone,
+      templateName: row.templateName,
+      params: Array.isArray(row.params) ? row.params.map((value) => String(value)) : [],
+      status: row.status,
+      skipReason: row.skipReason,
+      lastError: row.lastError,
+      attempts: row.attempts,
+      createdAt: dateToIso(row.createdAt),
+      sentAt: row.sentAt ? dateToIso(row.sentAt) : null,
+      deliveredAt: row.deliveredAt ? dateToIso(row.deliveredAt) : null,
+      readAt: row.readAt ? dateToIso(row.readAt) : null,
+      failedAt: row.failedAt ? dateToIso(row.failedAt) : null,
+    })),
+    nextCursor: rows.length > query.limit ? (page[page.length - 1]?.id ?? null) : null,
   };
 }

@@ -22,6 +22,7 @@ import {
   cashbackReleaseFrom,
   deletePaymentTransactionSchema,
   derivePaymentStatus,
+  formatINR,
   fromPaise,
   orderNoteSchema,
   ORDER_STATUS_LABELS,
@@ -34,10 +35,12 @@ import {
   totalPayments,
   type ActionResult,
   type LedgerEntry,
+  type NotificationEvent,
   type OrderStatus,
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { notifyOrder } from '../notify/dispatch.ts';
 import { decimalToString } from '../dto.ts';
 import {
   debitWallet,
@@ -295,8 +298,23 @@ export async function advanceOrderStatus(
     },
   });
 
+  // Once per order per moment: stepping back and forward again does not resend.
+  const statusEvent = STATUS_NOTIFICATIONS[toStatus];
+  if (statusEvent) notifyOrder(statusEvent, orderId);
+
   return actionOk({ status: toStatus });
 }
+
+/**
+ * The statuses a customer hears about. PACKED is the shop's business, not
+ * theirs; PLACED is announced when the order is written; CANCELLED has its own
+ * path, with a reason.
+ */
+const STATUS_NOTIFICATIONS: Partial<Record<OrderStatus, NotificationEvent>> = {
+  CONFIRMED: 'order.confirmed',
+  OUT_FOR_DELIVERY: 'delivery.outForDelivery',
+  DELIVERED: 'order.delivered',
+};
 
 /**
  * Cancels an order, with a reason, optionally putting the stock back.
@@ -418,6 +436,8 @@ export async function cancelOrder(
       })),
     },
   });
+
+  notifyOrder('order.cancelled', orderId, { cancelReason: reason ?? '' });
 
   return actionOk({ restocked: outcome.restocked });
 }
@@ -563,6 +583,25 @@ export async function recordPaymentTransaction(
       ),
     ),
   ).outstanding;
+
+  // Money that actually moved. A recorded failure or pending entry is
+  // bookkeeping, not news for the customer.
+  if (data.status === 'SUCCESS') {
+    if (data.type === 'REFUND') {
+      notifyOrder('payment.refunded', data.orderId, { refundAmount: formatINR(data.amount) }, transaction.id);
+    } else {
+      notifyOrder(
+        'payment.received',
+        data.orderId,
+        {
+          amountPaid: formatINR(data.amount),
+          amountDue: formatINR(outstanding),
+          paymentReference: data.reference ?? '',
+        },
+        transaction.id,
+      );
+    }
+  }
 
   return actionOk({ paymentStatus: after.paymentStatus, outstanding });
 }

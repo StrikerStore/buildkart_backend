@@ -23,6 +23,7 @@ import {
   type OtpRequestDto,
 } from '@buildkart/shared';
 import { z } from 'zod';
+import { notifyCustomer, sendWhatsappOtp } from '../notify/dispatch.ts';
 import { grantSignupBonus, loadWalletRules } from './wallet.ts';
 
 /** Six digits: what fits in an SMS and what a person can hold in their head. */
@@ -57,6 +58,8 @@ const verifySchema = z.object({
     .string()
     .trim()
     .regex(new RegExp(`^\\d{${CODE_LENGTH}}$`), `Enter the ${CODE_LENGTH}-digit code`),
+  /** The "updates on WhatsApp" box on the sign-in form. Absent means not shown. */
+  whatsappOptIn: z.boolean().optional(),
 });
 
 /**
@@ -96,22 +99,28 @@ function hashesMatch(a: string, b: string): boolean {
 export type { CustomerIdentityDto, OtpRequestDto };
 
 /**
- * How a code reaches the customer.
+ * How a code reaches the customer: WhatsApp, through AiSensy, once WhatsApp
+ * and its sign-in template are set up.
  *
- * One function behind an interface so MSG91 or Fast2SMS drops in without any
- * caller changing. Until then it logs, and reports that it did not deliver —
- * which is what makes `devCode` appear.
+ * Three outcomes, and the difference matters:
+ *
+ * - `sent`: delivered to WhatsApp.
+ * - `off`: no sender is set up. Logged, and reported as not delivered — which
+ *   is what makes `devCode` appear, so the shop can still be used before a
+ *   provider is connected.
+ * - `failed`: a sender *is* set up and this send did not go out. Never falls
+ *   back to `devCode`: handing the code to whoever asked for it is only
+ *   tolerable when no real channel exists, and would otherwise let anyone sign
+ *   in as any number by making the send fail.
  */
-async function sendOtp(phone: string, code: string): Promise<{ delivered: boolean }> {
-  /*
-   * A real provider would be selected here from the notification settings —
-   * `notifications.sms` already holds the provider and credentials, and the
-   * `customer.otp` template already exists. Wiring it needs DLT registration,
-   * which is an owner action (PLAN.md §10), so this stays a stub until then
-   * rather than a half-integration that fails at runtime.
-   */
-  console.info(`[otp] ${phone} -> ${code} (no SMS provider configured; not sent)`);
-  return { delivered: false };
+async function sendOtp(phone: string, code: string): Promise<'sent' | 'off' | 'failed'> {
+  const outcome = await sendWhatsappOtp(phone, code, TTL_MINUTES);
+  if (outcome === 'sent') return 'sent';
+  if (outcome === 'off') {
+    console.info(`[otp] ${phone} -> ${code} (no WhatsApp sign-in template configured; not sent)`);
+    return 'off';
+  }
+  return 'failed';
 }
 
 /**
@@ -177,12 +186,15 @@ export async function requestOtp(
     }),
   ]);
 
-  const { delivered } = await sendOtp(phone, code);
+  const sent = await sendOtp(phone, code);
+  if (sent === 'failed') {
+    return actionError('We could not send the code on WhatsApp just now. Please try again in a minute.');
+  }
 
   return actionOk({
     phone,
     expiresAt: expiresAt.toISOString(),
-    devCode: delivered ? null : code,
+    devCode: sent === 'off' ? code : null,
   });
 }
 
@@ -203,7 +215,7 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
   const parsed = verifySchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
 
-  const { phone, code } = parsed.data;
+  const { phone, code, whatsappOptIn } = parsed.data;
   const now = new Date();
 
   const otp = await prisma.customerOtp.findFirst({
@@ -243,9 +255,11 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
       where: { phone },
       // Nothing but the number. A name and an address are collected at
       // checkout, where the customer has a reason to give them.
-      create: { phone },
-      update: {},
-      select: { id: true, phone: true, name: true, isBlocked: true },
+      create: { phone, whatsappOptIn: whatsappOptIn ?? true },
+      // An unticked box opts out; a ticked one does not silently undo a STOP
+      // the customer sent earlier — START, or the shop, turns that back on.
+      update: whatsappOptIn === false ? { whatsappOptIn: false, whatsappOptOutAt: now } : {},
+      select: { id: true, phone: true, name: true, isBlocked: true, createdAt: true },
     }),
   ]);
 
@@ -270,6 +284,11 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
     });
   } catch (error) {
     console.error('[wallet] signup bonus failed', error);
+  }
+
+  // Created by this sign-in, not by a phone order the shop took earlier.
+  if (customer.createdAt.getTime() >= now.getTime() - 1000) {
+    notifyCustomer('customer.welcome', customer.id, {}, `customer.welcome:${customer.id}`);
   }
 
   return actionOk({ id: customer.id, phone: customer.phone, name: customer.name });

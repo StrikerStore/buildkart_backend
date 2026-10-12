@@ -157,6 +157,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'notification.template': 'Edited a customer message',
   'notification.template.delete': 'Deleted a customer message',
   'notification.provider': 'Changed a messaging provider',
+  'notification.template.submit': 'Submitted a WhatsApp message for approval',
+  'notification.test': 'Sent a test WhatsApp message',
+  'customer.whatsappOptIn': "Changed a customer's WhatsApp updates",
 
   'seo.update': 'Updated the search engine defaults',
   'announcements.update': 'Changed the announcement bar',

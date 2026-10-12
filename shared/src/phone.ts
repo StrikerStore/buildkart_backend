@@ -64,3 +64,15 @@ export function isValidIndianMobile(raw: string): boolean {
 export function mobileInputValue(raw: string): string {
   return normalizeIndianMobile(raw).slice(0, 10);
 }
+
+/**
+ * The number as WhatsApp addresses it: country code and digits, no plus.
+ *
+ * Customers are stored as the bare ten digits, so the Indian code is added
+ * here and nowhere else. Anything that is not a clean ten-digit mobile comes
+ * back null — sending to a guess would reach a stranger.
+ */
+export function toWhatsappNumber(raw: string): string | null {
+  const number = normalizeIndianMobile(raw);
+  return isValidIndianMobile(number) ? `91${number}` : null;
+}

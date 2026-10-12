@@ -236,6 +236,9 @@ export async function seedGrowth(): Promise<{
     // Closes the banner block: the hero, the promo cards and the promise read
     // as one unit before the merchandising starts.
     { type: 'TRUST_STRIP', titleEn: null, configJson: { markers: ['fast', 'cod', 'genuine', 'rates'] } },
+    // Last, below the shop's own bands: a returning shopper's history should
+    // not push this week's merchandising below the fold.
+    { type: 'RECENTLY_VIEWED', titleEn: null, configJson: { limit: 12 } },
   ];
 
   for (const [index, section] of sections.entries()) {

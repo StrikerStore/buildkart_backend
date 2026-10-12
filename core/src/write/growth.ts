@@ -20,6 +20,7 @@ import {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { notifyPhone } from '../notify/dispatch.ts';
 
 // ---------------------------------------------------------------------------
 // Delivery areas
@@ -113,10 +114,29 @@ export async function markRequestsNotified(
   const parsed = markRequestsNotifiedSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
 
-  const result = await prisma.pincodeRequest.updateMany({
+  const pending = await prisma.pincodeRequest.findMany({
     where: { pincode: parsed.data.pincode, isNotified: false },
+    select: { id: true, phone: true },
+  });
+
+  const result = await prisma.pincodeRequest.updateMany({
+    where: { id: { in: pending.map((request) => request.id) }, isNotified: false },
     data: { isNotified: true },
   });
+
+  // "Marked as told" is now true: each of them gets the message, once.
+  const area = await prisma.serviceablePincode.findUnique({
+    where: { pincode: parsed.data.pincode },
+    select: { areaNameEn: true },
+  });
+  for (const request of pending) {
+    notifyPhone(
+      'delivery.areaNowServiced',
+      request.phone,
+      { pincode: parsed.data.pincode, areaName: area?.areaNameEn ?? '' },
+      `delivery.areaNowServiced:${request.id}`,
+    );
+  }
 
   await recordAudit(actor, {
     action: 'delivery.requests.notified',

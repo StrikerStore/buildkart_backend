@@ -401,11 +401,23 @@ export const SETTING_SCHEMAS = {
   'notifications.whatsapp': z
     .object({
       enabled: z.boolean().default(false),
-      provider: z.enum(['META', 'GUPSHUP', 'INTERAKT']).default('META'),
+      provider: z.enum(['AISENSY', 'META', 'GUPSHUP', 'INTERAKT']).default('AISENSY'),
       phoneNumberId: z.string().default(''),
+      /** AiSensy project id — the `{project_id}` in every Project API path. */
+      projectId: z.string().default(''),
+      /** AiSensy: the Custom App password. Others: their API token. */
       apiTokenEnc: encryptedSecretSchema,
+      /** AiSensy: the Custom App shared secret that signs webhooks. */
+      webhookSecretEnc: encryptedSecretSchema,
     })
-    .default({ enabled: false, provider: 'META', phoneNumberId: '', apiTokenEnc: EMPTY_SECRET }),
+    .default({
+      enabled: false,
+      provider: 'AISENSY',
+      phoneNumberId: '',
+      projectId: '',
+      apiTokenEnc: EMPTY_SECRET,
+      webhookSecretEnc: EMPTY_SECRET,
+    }),
 
   'notifications.email': z
     .object({

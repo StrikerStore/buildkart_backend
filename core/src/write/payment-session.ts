@@ -47,6 +47,7 @@ import {
 } from '@buildkart/shared';
 import { customerActor, ForbiddenError, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { notifyPaymentSession } from '../notify/dispatch.ts';
 import { decimalToString } from '../dto.ts';
 import {
   gatewayRoutes,
@@ -493,6 +494,12 @@ async function refundSession(
     data: { status: refundId ? 'REFUNDED' : 'REFUND_PENDING', failureReason: reason.slice(0, 255) },
   });
 
+  // Only once the gateway has actually taken the refund; a pending one is retried
+  // by the reconcile job, which does not come back through here.
+  if (refundId) {
+    notifyPaymentSession('payment.refunded', session.id, { refundAmount: formatINR(payment.amount) });
+  }
+
   await recordAudit(customerActor(session.customerId), {
     action: 'payments.refundUnplaced',
     entityType: 'Setting',
@@ -598,12 +605,25 @@ export async function finalizePaymentSession(
   return outcomeOf(sessionId);
 }
 
-/** The attempt failed or was abandoned. The session stays retryable until it expires. */
-export async function markSessionFailed(sessionId: string, reason: string | null): Promise<void> {
-  await prisma.paymentSession.updateMany({
+/**
+ * The attempt failed or was abandoned. The session stays retryable until it expires.
+ *
+ * The customer is told on WhatsApp when the *gateway* reports the failure —
+ * they may have left the page by then. Not when they report it themselves by
+ * closing the payment window: they are looking at the error already.
+ */
+export async function markSessionFailed(
+  sessionId: string,
+  reason: string | null,
+  options: { tellCustomer?: boolean } = {},
+): Promise<void> {
+  const result = await prisma.paymentSession.updateMany({
     where: { id: sessionId, status: 'CREATED' },
     data: { status: 'FAILED', failureReason: reason ? reason.slice(0, 255) : null },
   });
+  if (result.count > 0 && (options.tellCustomer ?? true)) {
+    notifyPaymentSession('payment.failed', sessionId, { failureReason: reason ?? '' });
+  }
 }
 
 /** A session, provided it belongs to the customer asking about it. */
@@ -664,7 +684,9 @@ export async function reportPaymentFailed(actor: Actor, input: unknown): Promise
   const parsed = reportPaymentFailedSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
   const session = await ownSession(actor, parsed.data.sessionId);
-  await markSessionFailed(session.id, parsed.data.reason ?? 'Cancelled before paying.');
+  await markSessionFailed(session.id, parsed.data.reason ?? 'Cancelled before paying.', {
+    tellCustomer: false,
+  });
   return actionOk();
 }
 

@@ -886,6 +886,13 @@ model Customer {
   /// account created after the wallet launched that has not logged in yet.
   signupBonusAt DateTime?
 
+  /// Whether order, payment and delivery updates may go to this number on
+  /// WhatsApp. On by default — the box is shown ticked at checkout and sign-in —
+  /// and turned off by the customer unticking it or replying STOP. The sign-in
+  /// code ignores it: a customer who asked for a code is owed the code.
+  whatsappOptIn    Boolean   @default(true)
+  whatsappOptOutAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1839,12 +1846,69 @@ model NotificationTemplate {
   /// customer receives.
   isActive Boolean @default(false)
 
+  /// WhatsApp only, set when the template was submitted from here: the
+  /// provider's own id for it, and Meta's verdict. Null for a template
+  /// registered by hand in the provider's dashboard — that one is trusted as
+  /// approved, because the owner pasted its name.
+  providerTemplateRef    String? @db.VarChar(64)
+  providerStatus         String? @db.VarChar(16)
+  providerRejectedReason String? @db.VarChar(255)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([event, channel, locale])
   @@index([event])
   @@index([isActive])
+}
+
+/// One message the shop tried to send, and what became of it.
+///
+/// Written before the provider is called, so a crash mid-send leaves a QUEUED
+/// row the retry job can see rather than nothing. `dedupeKey` is what makes
+/// sending idempotent: an order confirmed by the webhook and the browser at
+/// the same moment produces one message, not two.
+///
+/// No foreign keys on purpose. This is a log — it should outlive the order or
+/// customer it mentions, and a send must never fail on a constraint.
+model NotificationMessage {
+  id      String              @id @default(cuid())
+  event   String              @db.VarChar(64)
+  channel NotificationChannel
+  locale  String              @default("en") @db.VarChar(5)
+
+  customerId       String? @db.VarChar(191)
+  orderId          String? @db.VarChar(191)
+  paymentSessionId String? @db.VarChar(191)
+
+  /// As sent: country code and number, digits only.
+  phone        String @db.VarChar(20)
+  templateName String @db.VarChar(128)
+  /// The positional values, in order. A sign-in code is stored masked.
+  params       Json
+
+  status     NotificationMessageStatus @default(QUEUED)
+  skipReason String?                   @db.VarChar(64)
+
+  /// WhatsApp's `wamid.…` — what delivery reports are matched on.
+  providerMessageId String? @unique @db.VarChar(191)
+
+  attempts  Int     @default(0)
+  lastError String? @db.VarChar(500)
+
+  dedupeKey String @unique @db.VarChar(191)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([orderId])
+  @@index([customerId])
+  @@index([createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -2246,6 +2310,18 @@ enum NotificationChannel {
   SMS
   WHATSAPP
   EMAIL
+}
+
+/// QUEUED → SENT → DELIVERED → READ, or FAILED. SKIPPED is a message that was
+/// deliberately not sent (opted out, no number) — logged so "why didn't they
+/// get it" has an answer.
+enum NotificationMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
 }
 
 /// Three states, not a queue of statuses. OPEN means the shop owes an answer or

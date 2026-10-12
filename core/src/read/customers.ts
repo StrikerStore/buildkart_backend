@@ -171,6 +171,8 @@ export async function getCustomerDetail(
     locale: customer.locale,
     notes: customer.notes,
     isBlocked: customer.isBlocked,
+    whatsappOptIn: customer.whatsappOptIn,
+    whatsappOptOutAt: customer.whatsappOptOutAt ? dateToIso(customer.whatsappOptOutAt) : null,
     totalOrders: customer.totalOrders,
     totalSpend: decimalToString(customer.totalSpend),
     walletBalance: decimalToString(customer.walletBalance),

@@ -26,6 +26,7 @@ import {
   saveOrderNote,
   searchVariants,
   setCustomerBlocked,
+  setCustomerWhatsappOptIn,
   updateCustomer,
 } from '@buildkart/core';
 import { customerListQuerySchema, orderListQuerySchema } from '@buildkart/shared';
@@ -101,4 +102,7 @@ export const ordersRouter = router({
   setCustomerBlocked: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => setCustomerBlocked(ctx.actor, input)),
+  setCustomerWhatsappOptIn: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => setCustomerWhatsappOptIn(ctx.actor, input)),
 });

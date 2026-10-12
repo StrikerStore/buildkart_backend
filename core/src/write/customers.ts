@@ -10,6 +10,7 @@ import {
   actionError,
   actionErrorFromZod,
   actionOk,
+  customerWhatsappOptInSchema,
   setCustomerBlockedSchema,
   updateCustomerSchema,
   type ActionResult,
@@ -84,6 +85,44 @@ export async function setCustomerBlocked(
     entityType: 'Customer',
     entityId: customerId,
     diff: { phone: existing.phone },
+  });
+
+  return actionOk();
+}
+
+/**
+ * Turns a customer's WhatsApp updates on or off — for the customer who asked
+ * on the phone rather than replying STOP. The sign-in code is unaffected.
+ */
+export async function setCustomerWhatsappOptIn(
+  actor: Actor,
+  input: unknown,
+): Promise<ActionResult<void>> {
+  assertPermission(actor, 'customers:read');
+
+  const parsed = customerWhatsappOptInSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+  const { customerId, optIn } = parsed.data;
+
+  const existing = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { phone: true, whatsappOptIn: true },
+  });
+  if (!existing) return actionError('That customer no longer exists.');
+  if (existing.whatsappOptIn === optIn) return actionOk();
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: optIn
+      ? { whatsappOptIn: true, whatsappOptOutAt: null }
+      : { whatsappOptIn: false, whatsappOptOutAt: new Date() },
+  });
+
+  await recordAudit(actor, {
+    action: 'customer.whatsappOptIn',
+    entityType: 'Customer',
+    entityId: customerId,
+    diff: { phone: existing.phone, optIn },
   });
 
   return actionOk();

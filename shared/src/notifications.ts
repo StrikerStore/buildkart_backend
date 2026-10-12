@@ -1,11 +1,10 @@
 /**
  * What the shop would tell a customer, and when.
  *
- * **Nothing here sends anything.** No provider is connected, no queue exists,
- * and no domain write calls into this module. What this milestone builds is the
- * catalogue of moments worth a message, the templates for them, and somewhere
- * to put the credentials — so that wiring up an SMS vendor later is a dispatcher
- * and a call site, not a content project.
+ * **Nothing here sends anything.** This module is the vocabulary: the
+ * catalogue of moments worth a message, the tokens each can fill, and the
+ * providers. Sending lives in `@buildkart/core` (`notify/`), which calls
+ * WhatsApp through AiSensy; SMS and email are still only configuration.
  *
  * **The events are code; the templates are data.** An admin that could invent
  * an event would write a message nothing ever fires, and the tokens it offered
@@ -139,10 +138,16 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
     { token: 'amountDue', sample: '₹7,480.00', note: 'Zero once it is settled in full.' },
     { token: 'paymentReference', sample: 'pay_QxT1a9bC2dEf' },
   ],
+  /*
+   * No order tokens: an online order is only written once the money lands, so
+   * when a payment fails there is no order number to quote. The cart's total
+   * and a link back to it are what the customer needs to try again.
+   */
   'payment.failed': [
     ...COMMON_TOKENS,
-    ...ORDER_TOKENS,
+    { token: 'orderTotal', sample: '₹12,480.00' },
     { token: 'failureReason', sample: 'Card declined' },
+    { token: 'retryUrl', sample: 'https://buildkart.co/cart' },
   ],
   'payment.refunded': [
     ...COMMON_TOKENS,
@@ -203,6 +208,36 @@ export function unknownTokens(body: string, event: NotificationEvent): string[] 
  */
 export function renderTemplate(body: string, values: Record<string, string>): string {
   return body.replace(TOKEN_PATTERN, (_, token: string) => values[token] ?? '');
+}
+
+/**
+ * A body as WhatsApp wants it: `{{1}}`, `{{2}}` … in place of named tokens.
+ *
+ * Meta templates are positional, ours are named. Numbering by first appearance
+ * means the template text registered with WhatsApp and the parameters sent
+ * with each message are derived from the same body, so they cannot drift — and
+ * nobody has to maintain a separate "parameter 2 is the order total" mapping.
+ * A token used twice keeps its number both times.
+ */
+export function toPositional(body: string): { text: string; tokens: string[] } {
+  const tokens = tokensUsed(body);
+  const text = body.replace(TOKEN_PATTERN, (_, token: string) => `{{${tokens.indexOf(token) + 1}}}`);
+  return { text, tokens };
+}
+
+/**
+ * One WhatsApp template parameter, made acceptable to Meta.
+ *
+ * Meta rejects a parameter that is empty, contains a newline or tab, or has
+ * more than four consecutive spaces — the whole message fails, not just the
+ * field. A dash is the least alarming stand-in for a value we do not have.
+ */
+export function whatsappParam(value: string | null | undefined): string {
+  const flat = (value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/ {4,}/g, '   ')
+    .trim();
+  return flat === '' ? '-' : flat.slice(0, 1024);
 }
 
 /** The preview: the body filled in with each token's sample. */
@@ -270,13 +305,22 @@ export function smsLength(body: string): SmsLength {
 // ---------------------------------------------------------------------------
 
 export const SMS_PROVIDERS = ['MSG91', 'TWILIO', 'TEXTLOCAL'] as const;
-export const WHATSAPP_PROVIDERS = ['META', 'GUPSHUP', 'INTERAKT'] as const;
+export const WHATSAPP_PROVIDERS = ['AISENSY', 'META', 'GUPSHUP', 'INTERAKT'] as const;
+export type WhatsappProvider = (typeof WHATSAPP_PROVIDERS)[number];
+
+/**
+ * Providers this build can actually send through. The others can be saved —
+ * the form predates any of them working — but nothing is sent while one of
+ * them is selected.
+ */
+export const SENDING_WHATSAPP_PROVIDERS: readonly WhatsappProvider[] = ['AISENSY'];
 export const EMAIL_PROVIDERS = ['SMTP', 'RESEND'] as const;
 
 export const PROVIDER_LABELS: Record<string, string> = {
   MSG91: 'MSG91',
   TWILIO: 'Twilio',
   TEXTLOCAL: 'Textlocal',
+  AISENSY: 'AiSensy',
   META: 'Meta (WhatsApp Business)',
   GUPSHUP: 'Gupshup',
   INTERAKT: 'Interakt',

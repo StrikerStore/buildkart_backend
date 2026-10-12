@@ -1382,6 +1382,14 @@ async function resolveSection(
       };
     }
 
+    /*
+     * Never null here: whether the rail shows depends on the shopper's own
+     * history, which only the storefront can see. It hides itself there below
+     * two products.
+     */
+    case 'RECENTLY_VIEWED':
+      return { ...head, type: 'RECENTLY_VIEWED' };
+
     default:
       // An unknown type is a section saved by a newer admin than this build.
       // Dropping it silently is right: the shop stays up and the band appears

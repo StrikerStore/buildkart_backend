@@ -341,6 +341,7 @@ export const HOMEPAGE_SECTION_TYPES = [
   'RATE_TICKER',
   'TRUST_STRIP',
   'CUSTOMER_REVIEWS',
+  'RECENTLY_VIEWED',
 ] as const;
 export type HomepageSectionType = (typeof HOMEPAGE_SECTION_TYPES)[number];
 
@@ -354,6 +355,7 @@ export const HOMEPAGE_SECTION_LABELS: Record<HomepageSectionType, string> = {
   RATE_TICKER: "Today's rates ticker",
   TRUST_STRIP: 'Why buy here',
   CUSTOMER_REVIEWS: 'Customer reviews',
+  RECENTLY_VIEWED: 'Recently viewed',
 };
 
 export const HOMEPAGE_SECTION_HINTS: Record<HomepageSectionType, string> = {
@@ -371,6 +373,8 @@ export const HOMEPAGE_SECTION_HINTS: Record<HomepageSectionType, string> = {
     'The row of promises — delivery time, payment, genuine brands. Each one reads from Settings, so none of them can go stale.',
   CUSTOMER_REVIEWS:
     'The reviews you post under Website › Customer reviews, in the order you arrange them there. Hidden reviews never show.',
+  RECENTLY_VIEWED:
+    "Each shopper's own browsing history, newest first. Hidden for first-time visitors and anyone who has looked at fewer than two products.",
 };
 
 /**

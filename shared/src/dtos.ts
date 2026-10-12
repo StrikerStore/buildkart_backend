@@ -522,6 +522,9 @@ export type CustomerDetailDto = {
   locale: string;
   notes: string | null;
   isBlocked: boolean;
+  /** Order, payment and delivery updates on WhatsApp. Off after a STOP reply. */
+  whatsappOptIn: boolean;
+  whatsappOptOutAt: string | null;
   totalOrders: number;
   totalSpend: string;
   /** Lifetime spend over the order counter. See the note in `getCustomerDetail`. */
@@ -1441,11 +1444,50 @@ export type NotificationTemplateDto = {
   body: string;
   providerTemplateId: string;
   isActive: boolean;
+  /**
+   * WhatsApp approval, for a template submitted from the admin: PENDING,
+   * APPROVED or REJECTED. Empty for one registered by hand in the provider.
+   */
+  providerStatus: string;
+  providerRejectedReason: string;
   /** Computed server-side so the list and the editor cannot disagree. */
   smsSegments: number;
   /** True when the body forces UCS-2 — in practice, any Hindi at all. */
   smsUnicode: boolean;
   updatedAt: string;
+};
+
+// from core/src/write/whatsapp.ts
+export type WhatsappTemplateStatusDto = {
+  providerTemplateId: string;
+  providerStatus: string;
+  providerRejectedReason: string;
+};
+
+// from core/src/write/whatsapp.ts
+export type WhatsappTestDto = { status: string; error: string | null };
+
+// from core/src/read/notifications.ts
+export type NotificationMessageDto = {
+  id: string;
+  event: NotificationEvent;
+  channel: NotificationChannel;
+  locale: string;
+  customerId: string | null;
+  orderId: string | null;
+  /** Country code and number, digits only. */
+  phone: string;
+  templateName: string;
+  params: string[];
+  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'SKIPPED';
+  skipReason: string | null;
+  lastError: string | null;
+  attempts: number;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedAt: string | null;
 };
 
 // from core/src/read/notifications.ts
@@ -1461,7 +1503,11 @@ export type NotificationProvidersDto = {
     enabled: boolean;
     provider: string;
     phoneNumberId: string;
+    projectId: string;
     apiToken: SecretFieldDto;
+    webhookSecret: SecretFieldDto;
+    /** Where AiSensy should post delivery reports — shown so it can be pasted. */
+    webhookUrl: string;
   };
   email: {
     enabled: boolean;
@@ -1687,6 +1733,18 @@ export type StorefrontSectionDto =
       /** Over every showing review, not just the ones in this band. One decimal. */
       averageRating: number;
       reviewCount: number;
+    }
+  | {
+      id: string;
+      /*
+       * A placeholder that only marks where the rail goes. The products are the
+       * shopper's own, read from their cookie by the storefront, so the API has
+       * nothing to put here — and must not, since this feed is shared by every
+       * visitor.
+       */
+      type: 'RECENTLY_VIEWED';
+      titleEn: string | null;
+      titleHi: string | null;
     };
 
 export type StorefrontHomeDto = {

@@ -19,6 +19,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { stringify } from 'csv-stringify/sync';
 import {
   GatewayConfigError,
+  handleAisensyWebhook,
   handlePayuReturn,
   handleRazorpayWebhook,
   reconcilePaymentSessions,
@@ -26,6 +27,8 @@ import {
   getImportIssuesForCsv,
   loadExportProducts,
   publishScheduledProducts,
+  refreshPendingWhatsappTemplates,
+  retryQueuedNotifications,
   runWalletJobs,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
@@ -140,12 +143,38 @@ export async function handleHttpRoute(
     return true;
   }
 
+  // --- messaging webhooks -----------------------------------------------
+  /*
+   * AiSensy's delivery reports and inbound replies (STOP). Same rule as the
+   * payment webhooks: a bad signature is a 400, anything after a good one is a
+   * 200, because AiSensy retries on errors and a retry would fail identically.
+   */
+  if (path === '/webhooks/aisensy' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const header = headerOf(req);
+      const result = await handleAisensyWebhook(body, {
+        signature: header('x-aisensy-signature') ?? '',
+        projectId: header('x-aisensy-project-id') ?? '',
+      });
+      if (result === 'not-configured') {
+        return (json(res, 503, { error: 'AiSensy webhooks are not configured.' }), true);
+      }
+      json(res, result === 'ok' ? 200 : 400, result === 'ok' ? { ok: true } : { error: 'Bad signature.' });
+    } catch (error) {
+      console.error('[webhooks] aisensy', error);
+      json(res, 500, { error: 'Could not process the webhook.' });
+    }
+    return true;
+  }
+
   // --- cron --------------------------------------------------------------
   if (
     path === '/cron/media-gc' ||
     path === '/cron/publish-scheduled' ||
     path === '/cron/wallet' ||
-    path === '/cron/payment-sessions'
+    path === '/cron/payment-sessions' ||
+    path === '/cron/notifications'
   ) {
     const auth = cronAuthorised(req);
     if (auth === 'unset') return (json(res, 503, { error: 'CRON_SECRET is not set.' }), true);
@@ -156,6 +185,9 @@ export async function handleHttpRoute(
     // `/cron/payment-sessions` is the net under the payment webhooks: every
     // five minutes, so a payment whose webhook never came still becomes an
     // order well before the customer gives up waiting.
+    // `/cron/notifications` re-sends WhatsApp messages that hit a transient
+    // failure and reads Meta's verdict on submitted templates. Every five
+    // minutes: a delivery update that is an hour late is barely news.
     const result =
       path === '/cron/media-gc'
         ? await collectMediaGarbage()
@@ -163,7 +195,12 @@ export async function handleHttpRoute(
           ? await runWalletJobs()
           : path === '/cron/payment-sessions'
             ? await reconcilePaymentSessions()
-            : await publishScheduledProducts();
+            : path === '/cron/notifications'
+              ? {
+                  messages: await retryQueuedNotifications(),
+                  templates: await refreshPendingWhatsappTemplates(),
+                }
+              : await publishScheduledProducts();
     json(res, 200, { ok: true, ...result });
     return true;
   }

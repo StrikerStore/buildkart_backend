@@ -36,6 +36,7 @@ import {
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { notifyOrder } from '../notify/dispatch.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
@@ -626,6 +627,10 @@ export async function writeOrder(
       cashback: created.cashbackAmount,
     },
   });
+
+  // Every path that makes an order comes through here — COD, the counter, and
+  // an online payment once it has landed — so this is the one place to say so.
+  notifyOrder('order.placed', created.order.id);
 
   return actionOk({
     orderId: created.order.id,

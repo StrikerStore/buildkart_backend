@@ -3,8 +3,8 @@
  *
  * Its own router rather than more procedures on `content`, because none of it
  * is content the storefront reads — there is no public procedure here at all.
- * Nothing sends anything yet; this is the configuration a dispatcher will read
- * when one is written.
+ * WhatsApp sends through AiSensy (`core/src/notify`); the procedures below
+ * configure it, submit templates for approval, test them and read the log.
  */
 import { z } from 'zod';
 import {
@@ -12,11 +12,15 @@ import {
   getNotificationProviders,
   getNotificationTemplate,
   getNotificationsPage,
+  listNotificationMessages,
   listNotificationTemplates,
+  refreshWhatsappTemplate,
   saveEmailProvider,
   saveNotificationTemplate,
   saveSmsProvider,
   saveWhatsappProvider,
+  sendWhatsappTest,
+  submitWhatsappTemplate,
 } from '@buildkart/core';
 import { NOTIFICATION_CHANNELS } from '@buildkart/shared';
 import { adminProcedure, router } from '../trpc.ts';
@@ -54,4 +58,19 @@ export const notificationsRouter = router({
   saveEmailProvider: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveEmailProvider(ctx.actor, input)),
+
+  submitWhatsappTemplate: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => submitWhatsappTemplate(ctx.actor, input)),
+  refreshWhatsappTemplate: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => refreshWhatsappTemplate(ctx.actor, input)),
+  sendWhatsappTest: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => sendWhatsappTest(ctx.actor, input)),
+
+  /** The outbound log, newest first, optionally for one order or customer. */
+  messages: adminProcedure
+    .input(payload)
+    .query(({ ctx, input }) => listNotificationMessages(ctx.actor, input)),
 });

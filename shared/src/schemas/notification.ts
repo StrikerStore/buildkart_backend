@@ -88,13 +88,31 @@ export const smsProviderSchema = z.object({
   clearApiKey: z.boolean().default(false),
 });
 
-export const whatsappProviderSchema = z.object({
-  enabled: z.boolean().default(false),
-  provider: z.enum(WHATSAPP_PROVIDERS).default('META'),
-  phoneNumberId: z.string().trim().max(64).default(''),
-  apiToken: secretField,
-  clearApiToken: z.boolean().default(false),
-});
+/**
+ * WhatsApp credentials.
+ *
+ * For AiSensy: `projectId` is the project the Custom App belongs to, `apiToken`
+ * is that app's password (sent as `X-AiSensy-Project-API-Pwd`) and
+ * `webhookSecret` is its shared secret, which signs delivery reports. The other
+ * providers use `phoneNumberId` and `apiToken` and ignore the rest.
+ */
+export const whatsappProviderSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    provider: z.enum(WHATSAPP_PROVIDERS).default('AISENSY'),
+    phoneNumberId: z.string().trim().max(64).default(''),
+    projectId: z.string().trim().max(64).default(''),
+    apiToken: secretField,
+    clearApiToken: z.boolean().default(false),
+    webhookSecret: secretField,
+    clearWebhookSecret: z.boolean().default(false),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.enabled) return;
+    if (value.provider === 'AISENSY' && value.projectId === '') {
+      ctx.addIssue({ code: 'custom', path: ['projectId'], message: 'AiSensy needs the project id' });
+    }
+  });
 
 export const emailProviderSchema = z
   .object({
@@ -140,9 +158,11 @@ export const storedSmsSchema = z.object({
 
 export const storedWhatsappSchema = z.object({
   enabled: z.boolean().default(false),
-  provider: z.enum(WHATSAPP_PROVIDERS).default('META'),
+  provider: z.enum(WHATSAPP_PROVIDERS).default('AISENSY'),
   phoneNumberId: z.string().default(''),
+  projectId: z.string().default(''),
   apiTokenEnc: encryptedSecretSchema,
+  webhookSecretEnc: encryptedSecretSchema,
 });
 
 export const storedEmailSchema = z.object({
@@ -155,3 +175,40 @@ export const storedEmailSchema = z.object({
   username: z.string().default(''),
   passwordEnc: encryptedSecretSchema,
 });
+
+/** Submit one WhatsApp template (or re-read its verdict) — the slot it lives in. */
+export const whatsappTemplateKeySchema = z.object({
+  event: z.enum(NOTIFICATION_EVENTS),
+  locale: z.enum(TEMPLATE_LOCALES).default('en'),
+});
+
+/** Send a template to a number, filled with its sample values. */
+export const whatsappTestSchema = z.object({
+  phone: z.string().trim().min(10, 'Enter a 10-digit mobile number').max(20),
+  event: z.enum(NOTIFICATION_EVENTS),
+  locale: z.enum(TEMPLATE_LOCALES).default('en'),
+});
+
+export const customerWhatsappOptInSchema = z.object({
+  customerId: z.string().min(1),
+  optIn: z.boolean(),
+});
+
+export const NOTIFICATION_MESSAGE_STATUSES = [
+  'QUEUED',
+  'SENT',
+  'DELIVERED',
+  'READ',
+  'FAILED',
+  'SKIPPED',
+] as const;
+
+export const notificationLogQuerySchema = z.object({
+  status: z.enum(NOTIFICATION_MESSAGE_STATUSES).optional(),
+  orderId: z.string().min(1).optional(),
+  customerId: z.string().min(1).optional(),
+  /** The `id` of the last row on the previous page. */
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+export type NotificationLogQuery = z.infer<typeof notificationLogQuerySchema>;

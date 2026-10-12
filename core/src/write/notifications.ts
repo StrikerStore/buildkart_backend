@@ -40,6 +40,20 @@ export async function saveNotificationTemplate(
   if (!parsed.success) return actionErrorFromZod(parsed.error);
   const data = parsed.data;
 
+  /*
+   * A WhatsApp template submitted from here is approved for its exact text. If
+   * the body changes, what is sent no longer matches what Meta approved — the
+   * parameter count can differ and the send fails. Marked EDITED so it stops
+   * sending until it is submitted again; a hand-registered template (no ref)
+   * is the owner's responsibility and is left alone.
+   */
+  const previous = await prisma.notificationTemplate.findUnique({
+    where: { event_channel_locale: { event: data.event, channel: data.channel, locale: data.locale } },
+    select: { body: true, providerTemplateRef: true },
+  });
+  const approvalInvalidated =
+    data.channel === 'WHATSAPP' && Boolean(previous?.providerTemplateRef) && previous?.body !== data.body;
+
   await prisma.notificationTemplate.upsert({
     where: {
       event_channel_locale: {
@@ -62,6 +76,7 @@ export async function saveNotificationTemplate(
       body: data.body,
       providerTemplateId: data.providerTemplateId || null,
       isActive: data.isActive,
+      ...(approvalInvalidated ? { providerStatus: 'EDITED', providerRejectedReason: null } : {}),
     },
   });
 
@@ -217,13 +232,28 @@ export async function saveWhatsappProvider(
     stored.apiTokenEnc,
     'notifications.whatsapp',
   );
-  if (!apiTokenEnc) return actionError(MISSING_KEY);
+  const webhookSecretEnc = nextSecret(
+    data.webhookSecret,
+    data.clearWebhookSecret,
+    stored.webhookSecretEnc,
+    'notifications.whatsapp',
+  );
+  if (!apiTokenEnc || !webhookSecretEnc) return actionError(MISSING_KEY);
+
+  // Switching on with no password would look configured and send nothing.
+  if (data.enabled && data.provider === 'AISENSY' && !apiTokenEnc.enc) {
+    return actionError('Enter the AiSensy Custom App password before switching WhatsApp on.', {
+      apiToken: 'Needed to send',
+    });
+  }
 
   const value = {
     enabled: data.enabled,
     provider: data.provider,
     phoneNumberId: data.phoneNumberId,
+    projectId: data.projectId,
     apiTokenEnc,
+    webhookSecretEnc,
   };
 
   await prisma.setting.upsert({
@@ -240,8 +270,11 @@ export async function saveWhatsappProvider(
       channel: 'WHATSAPP',
       enabled: data.enabled,
       provider: data.provider,
+      projectId: data.projectId,
       keyChanged: Boolean(data.apiToken.trim()),
       keyCleared: data.clearApiToken,
+      webhookSecretChanged: Boolean(data.webhookSecret.trim()),
+      webhookSecretCleared: data.clearWebhookSecret,
     },
   });
 
