@@ -107,6 +107,15 @@ const ORDER_TOKENS: TokenSpec[] = [
   { token: 'orderNumber', sample: 'BK-1042' },
   { token: 'orderTotal', sample: '₹12,480.00' },
   { token: 'itemCount', sample: '3' },
+  {
+    token: 'itemList',
+    sample: 'UltraTech Cement 50 kg × 10, TMT Bar 12 mm × 5, River Sand × 2',
+    note: 'Every item with its quantity, comma separated.',
+  },
+  {
+    token: 'deliveryAddress',
+    sample: 'Flat 4, Shanti Apartments, Near Ram Mandir, Nehru Nagar, Indore 452001',
+  },
   { token: 'orderUrl', sample: 'https://buildkart.co/orders/BK-1042' },
 ];
 
@@ -125,7 +134,15 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
     ...ORDER_TOKENS,
     { token: 'deliveryPromise', sample: 'within 4 hours' },
   ],
-  'order.delivered': [...COMMON_TOKENS, ...ORDER_TOKENS],
+  'order.delivered': [
+    ...COMMON_TOKENS,
+    ...ORDER_TOKENS,
+    {
+      token: 'deliveredOn',
+      sample: '13 Oct 2026, 4:30 pm',
+      note: 'The time entered on "Mark as delivered".',
+    },
+  ],
   'order.cancelled': [
     ...COMMON_TOKENS,
     ...ORDER_TOKENS,
@@ -157,6 +174,11 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
   'delivery.outForDelivery': [
     ...COMMON_TOKENS,
     ...ORDER_TOKENS,
+    {
+      token: 'expectedDelivery',
+      sample: '13 Oct 2026, 4:30 pm',
+      note: 'The time entered on "Send out for delivery".',
+    },
     { token: 'riderName', sample: 'Suresh' },
     { token: 'riderPhone', sample: '+91 98765 43210' },
   ],
@@ -172,6 +194,51 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
   ],
   'customer.welcome': [...COMMON_TOKENS],
 };
+
+/** Above this, a WhatsApp parameter starts to crowd out the rest of the message. */
+const ITEM_LIST_BUDGET = 600;
+
+/**
+ * "Cement 50 kg × 10, TMT Bar 12 mm × 5" — what was ordered, on one line.
+ *
+ * One line because a WhatsApp parameter may not contain a newline. A very
+ * long order is cut at a whole item and ends "and 6 more", rather than being
+ * sliced mid-word by the parameter limit.
+ */
+export function formatItemList(
+  items: { name: string; options?: string[]; quantity: number }[],
+): string {
+  const parts = items.map((item) => {
+    const options = (item.options ?? []).filter(Boolean).join(', ');
+    const name = options ? `${item.name} (${options})` : item.name;
+    return `${name.trim()} × ${item.quantity}`;
+  });
+
+  let text = '';
+  for (let i = 0; i < parts.length; i += 1) {
+    const next = text ? `${text}, ${parts[i]}` : parts[i]!;
+    const rest = parts.length - i;
+    if (next.length > ITEM_LIST_BUDGET && text) return `${text} and ${rest} more`;
+    text = next;
+  }
+  return text;
+}
+
+/** An order's frozen address as one line: lines, landmark, city and pincode. */
+export function formatDeliveryAddress(address: {
+  line1?: string | null;
+  line2?: string | null;
+  landmark?: string | null;
+  city?: string | null;
+  pincode?: string | null;
+}): string {
+  const landmark = address.landmark?.trim();
+  const cityLine = [address.city?.trim(), address.pincode?.trim()].filter(Boolean).join(' ');
+  return [address.line1, address.line2, landmark ? `Near ${landmark.replace(/^near\s+/i, '')}` : '', cityLine]
+    .map((part) => part?.trim() ?? '')
+    .filter(Boolean)
+    .join(', ');
+}
 
 /** `{{token}}`, with optional spaces inside the braces. */
 const TOKEN_PATTERN = /\{\{\s*([a-zA-Z][a-zA-Z0-9]*)\s*\}\}/g;

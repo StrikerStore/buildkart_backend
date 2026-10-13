@@ -400,6 +400,7 @@ type OrderDetailRow = {
   cancelReason: string | null;
   placedAt: Date;
   deliveredAt: Date | null;
+  expectedDeliveryAt: Date | null;
   customer: {
     id: string;
     name: string | null;
@@ -502,6 +503,7 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
     cancelReason: row.cancelReason,
     placedAt: dateToIso(row.placedAt),
     deliveredAt: dateToIso(row.deliveredAt),
+    expectedDeliveryAt: dateToIso(row.expectedDeliveryAt),
     customer: row.customer,
     items: row.items.map((item) => ({
       id: item.id,

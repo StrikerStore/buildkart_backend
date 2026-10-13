@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { createHTTPHandler } from '@trpc/server/adapters/standalone';
-import { isSecretsKeyConfigured } from '@buildkart/core';
+import { autoConfirmOrders, isSecretsKeyConfigured } from '@buildkart/core';
 import { createContext } from './context.ts';
 import { verifyAdminSession } from './auth/verifier.ts';
 import { verifyCustomerSession } from './auth/customer-verifier.ts';
@@ -74,6 +74,26 @@ const server = createServer((req, res) => {
       }
     });
 });
+
+/*
+ * Storefront orders confirm themselves a minute after they are placed. A
+ * Railway cron cannot run that often, so this process sweeps on its own timer.
+ * The due time is stored on the order, so a restart loses nothing: the next
+ * sweep finds whatever came due while the process was down. Overlapping
+ * sweeps are skipped, and two instances sweeping together are safe — the
+ * status change is a compare-and-swap.
+ */
+const AUTO_CONFIRM_SWEEP_MS = 15_000;
+let sweeping = false;
+setInterval(() => {
+  if (sweeping) return;
+  sweeping = true;
+  autoConfirmOrders()
+    .catch((error: unknown) => console.error('[orders] auto-confirm sweep failed', error))
+    .finally(() => {
+      sweeping = false;
+    });
+}, AUTO_CONFIRM_SWEEP_MS).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[api] listening on 0.0.0.0:${PORT}`);

@@ -7,7 +7,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toPositional, whatsappParam } from './notifications.ts';
+import {
+  formatDeliveryAddress,
+  formatItemList,
+  toPositional,
+  whatsappParam,
+} from './notifications.ts';
+import { advanceOrderStatusSchema } from './schemas/order.ts';
 import { toWhatsappNumber } from './phone.ts';
 
 test('named tokens become positional, numbered by first appearance', () => {
@@ -52,4 +58,51 @@ test('a number that is not a valid mobile is not sent to', () => {
   assert.equal(toWhatsappNumber(''), null);
   assert.equal(toWhatsappNumber('12345'), null);
   assert.equal(toWhatsappNumber('2212345678'), null); // a landline
+});
+
+test('items read as one comma-separated line, options in brackets', () => {
+  assert.equal(
+    formatItemList([
+      { name: 'UltraTech Cement', options: ['50 kg'], quantity: 10 },
+      { name: 'River Sand', quantity: 2 },
+    ]),
+    'UltraTech Cement (50 kg) × 10, River Sand × 2',
+  );
+  assert.equal(formatItemList([]), '');
+});
+
+test('a long order is cut at a whole item, saying how many are left', () => {
+  const items = Array.from({ length: 40 }, (_, i) => ({ name: `Product number ${i + 1}`, quantity: 1 }));
+  const text = formatItemList(items);
+  assert.ok(text.length < 700);
+  assert.match(text, / and \d+ more$/);
+  assert.ok(!text.includes('\n'));
+});
+
+test('the address reads as one line, skipping what is missing', () => {
+  assert.equal(
+    formatDeliveryAddress({
+      line1: 'Flat 4, Shanti Apartments',
+      line2: '',
+      landmark: 'near Ram Mandir',
+      city: 'Indore',
+      pincode: '452001',
+    }),
+    'Flat 4, Shanti Apartments, Near Ram Mandir, Indore 452001',
+  );
+  assert.equal(formatDeliveryAddress({ line1: 'Shop 2', city: 'Indore' }), 'Shop 2, Indore');
+});
+
+test('sending out for delivery needs an expected time; other moves do not', () => {
+  const base = { orderId: 'o1', expectedStatus: 'PACKED', toStatus: 'OUT_FOR_DELIVERY' } as const;
+  assert.equal(advanceOrderStatusSchema.safeParse(base).success, false);
+  assert.equal(
+    advanceOrderStatusSchema.safeParse({ ...base, expectedDeliveryAt: '2026-10-13T16:30' }).success,
+    true,
+  );
+  assert.equal(
+    advanceOrderStatusSchema.safeParse({ orderId: 'o1', expectedStatus: 'PLACED', toStatus: 'CONFIRMED' })
+      .success,
+    true,
+  );
 });

@@ -306,6 +306,8 @@ export type OrderDetailDto = {
   cancelReason: string | null;
   placedAt: string;
   deliveredAt: string | null;
+  /** Entered on "Send out for delivery"; quoted to the customer. */
+  expectedDeliveryAt: string | null;
   customer: {
     id: string;
     name: string | null;

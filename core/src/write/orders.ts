@@ -25,6 +25,7 @@ import {
   formatINR,
   fromPaise,
   orderNoteSchema,
+  parseStoreDateTime,
   ORDER_STATUS_LABELS,
   parseVariantSnapshot,
   PAYMENT_GATEWAY_LABELS,
@@ -34,11 +35,12 @@ import {
   toPaise,
   totalPayments,
   type ActionResult,
+  type AdvanceOrderStatusInput,
   type LedgerEntry,
   type NotificationEvent,
   type OrderStatus,
 } from '@buildkart/shared';
-import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
+import { adminIdOf, assertPermission, PUBLIC_ACTOR, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
 import { notifyOrder } from '../notify/dispatch.ts';
 import { decimalToString } from '../dto.ts';
@@ -157,11 +159,45 @@ export async function advanceOrderStatus(
   input: unknown,
 ): Promise<ActionResult<{ status: OrderStatus }>> {
   assertPermission(actor, 'orders:write');
-  const adminId = adminIdOf(actor);
 
   const parsed = advanceOrderStatusSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
-  const { orderId, toStatus, expectedStatus, note } = parsed.data;
+  return moveOrderStatus(actor, parsed.data);
+}
+
+/** A typed-in time, or a field error naming what is wrong with it. */
+function readTime(
+  value: string | undefined,
+  field: string,
+): { at: Date | null } | { error: ActionResult<never> } {
+  if (!value) return { at: null };
+  const at = parseStoreDateTime(value);
+  if (Number.isNaN(at.getTime())) {
+    return { error: actionError('That time is not readable.', { [field]: 'Enter a date and time' }) };
+  }
+  return { at };
+}
+
+/**
+ * The status change itself, for an admin's click and for the auto-confirm
+ * sweep alike. Callers have already checked who may do it.
+ */
+async function moveOrderStatus(
+  actor: Actor,
+  input: AdvanceOrderStatusInput,
+): Promise<ActionResult<{ status: OrderStatus }>> {
+  const adminId = adminIdOf(actor);
+  const { orderId, toStatus, expectedStatus, note } = input;
+
+  const expected = readTime(input.expectedDeliveryAt, 'expectedDeliveryAt');
+  if ('error' in expected) return expected.error;
+  const delivered = readTime(input.deliveredAt, 'deliveredAt');
+  if ('error' in delivered) return delivered.error;
+
+  // A delivery cannot be recorded as having happened in the future.
+  if (delivered.at && delivered.at.getTime() > Date.now() + 5 * 60_000) {
+    return actionError('A delivery cannot be in the future.', { deliveredAt: 'Pick a time up to now' });
+  }
 
   if (toStatus === 'CANCELLED') {
     return actionError('Use the cancel action so the reason is recorded.');
@@ -182,10 +218,17 @@ export async function advanceOrderStatus(
       paymentStatus: true,
       customerId: true,
       grandTotal: true,
+      placedAt: true,
       transactions: { select: { type: true, status: true, amount: true } },
     },
   });
   if (!order) return actionError('That order no longer exists.');
+
+  if (delivered.at && delivered.at < order.placedAt) {
+    return actionError('It cannot have been delivered before it was placed.', {
+      deliveredAt: 'Pick a time after the order was placed',
+    });
+  }
 
   // Settle cash on delivery at the doorstep: DELIVERED *is* the payment event
   // for COD. Prepaid, failed and refunded orders are left exactly as they are.
@@ -216,7 +259,10 @@ export async function advanceOrderStatus(
       where: { id: orderId, status: expectedStatus },
       data: {
         status: toStatus,
-        ...(toStatus === 'DELIVERED' ? { deliveredAt: now } : {}),
+        // Any move settles the question auto-confirm was waiting on.
+        autoConfirmAt: null,
+        ...(toStatus === 'DELIVERED' ? { deliveredAt: delivered.at ?? now } : {}),
+        ...(toStatus === 'OUT_FOR_DELIVERY' ? { expectedDeliveryAt: expected.at } : {}),
       },
     });
 
@@ -294,6 +340,8 @@ export async function advanceOrderStatus(
       from: expectedStatus,
       to: toStatus,
       note,
+      ...(expected.at ? { expectedDeliveryAt: expected.at.toISOString() } : {}),
+      ...(delivered.at ? { deliveredAt: delivered.at.toISOString() } : {}),
       ...(collectsCash ? { collectedCash: owed, reason: 'COD settled on delivery' } : {}),
     },
   });
@@ -315,6 +363,42 @@ const STATUS_NOTIFICATIONS: Partial<Record<OrderStatus, NotificationEvent>> = {
   OUT_FOR_DELIVERY: 'delivery.outForDelivery',
   DELIVERED: 'order.delivered',
 };
+
+/** How long a storefront order waits for the shop before confirming itself. */
+export const AUTO_CONFIRM_AFTER_MS = 60_000;
+
+/**
+ * Confirms storefront orders nobody has touched since their minute ran out.
+ *
+ * Goes through the same status change as the admin's button — compare-and-swap
+ * on PLACED, a timeline entry, the audit row and the "confirmed" WhatsApp — so
+ * an order the owner cancelled or confirmed in that minute is simply skipped,
+ * and two servers sweeping at once confirm it once.
+ */
+export async function autoConfirmOrders(): Promise<{ confirmed: number }> {
+  const due = await prisma.order.findMany({
+    where: { status: 'PLACED', autoConfirmAt: { lte: new Date() } },
+    select: { id: true },
+    orderBy: { autoConfirmAt: 'asc' },
+    take: 50,
+  });
+
+  let confirmed = 0;
+  for (const order of due) {
+    try {
+      const result = await moveOrderStatus(PUBLIC_ACTOR, {
+        orderId: order.id,
+        toStatus: 'CONFIRMED',
+        expectedStatus: 'PLACED',
+        note: 'Confirmed automatically',
+      });
+      if (result.ok) confirmed += 1;
+    } catch (error) {
+      console.error('[orders] auto-confirm failed for', order.id, error);
+    }
+  }
+  return { confirmed };
+}
 
 /**
  * Cancels an order, with a reason, optionally putting the stock back.

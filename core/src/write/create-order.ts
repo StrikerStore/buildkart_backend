@@ -40,6 +40,7 @@ import { notifyOrder } from '../notify/dispatch.ts';
 import { afterOrderWritten } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
+import { AUTO_CONFIRM_AFTER_MS } from './orders.ts';
 import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
 import { debitWallet, loadWalletRules, refreshWalletBalance } from './wallet.ts';
 
@@ -317,6 +318,12 @@ export async function writeOrder(
         orderNumber,
         customerId: customer.id,
         status: data.status,
+        // A customer's order confirms itself after a minute unless the shop
+        // gets to it first. Orders taken in the admin are the shop's own call.
+        autoConfirmAt:
+          actor.kind === 'customer' && data.status === 'PLACED'
+            ? new Date(now.getTime() + AUTO_CONFIRM_AFTER_MS)
+            : null,
         paymentMethod: data.paymentMethod,
         // Derived from the ledger below; PENDING until money is recorded.
         paymentStatus: 'PENDING',

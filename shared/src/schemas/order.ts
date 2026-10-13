@@ -133,17 +133,34 @@ export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
  * The action refuses the change if the order has since moved, which is what
  * stops a stale tab from marking an already-cancelled order delivered.
  */
-export const advanceOrderStatusSchema = z.object({
-  orderId: z.string().min(1).max(64),
-  toStatus: z.enum(ORDER_STATUSES),
-  expectedStatus: z.enum(ORDER_STATUSES),
-  note: z
-    .string()
-    .trim()
-    .max(255)
-    .transform((v) => (v === '' ? undefined : v))
-    .optional(),
-});
+export const advanceOrderStatusSchema = z
+  .object({
+    orderId: z.string().min(1).max(64),
+    toStatus: z.enum(ORDER_STATUSES),
+    expectedStatus: z.enum(ORDER_STATUSES),
+    note: z
+      .string()
+      .trim()
+      .max(255)
+      .transform((v) => (v === '' ? undefined : v))
+      .optional(),
+    /**
+     * Out for delivery: when the customer should expect it, as a
+     * `datetime-local` value in store time. Quoted in their WhatsApp message.
+     */
+    expectedDeliveryAt: z.string().trim().max(40).optional(),
+    /** Delivered: when it was handed over. Absent means now. */
+    deliveredAt: z.string().trim().max(40).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.toStatus === 'OUT_FOR_DELIVERY' && !value.expectedDeliveryAt) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expectedDeliveryAt'],
+        message: 'Say when the customer should expect it',
+      });
+    }
+  });
 export type AdvanceOrderStatusInput = z.infer<typeof advanceOrderStatusSchema>;
 
 /** Cancellation reasons offered as one click, with free text for anything else. */

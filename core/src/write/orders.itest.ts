@@ -306,6 +306,7 @@ test('marking a COD order delivered collects only the outstanding balance', asyn
       orderId,
       expectedStatus: from,
       toStatus: to,
+      ...(to === 'OUT_FOR_DELIVERY' ? { expectedDeliveryAt: '2030-01-01T16:00' } : {}),
     });
     assert.ok(step.ok, `${from} -> ${to}: ${JSON.stringify(step)}`);
   }

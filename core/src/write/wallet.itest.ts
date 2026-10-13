@@ -74,6 +74,7 @@ async function deliver(orderId: string) {
       orderId,
       expectedStatus: steps[i],
       toStatus: steps[i + 1],
+      ...(steps[i + 1] === 'OUT_FOR_DELIVERY' ? { expectedDeliveryAt: '2030-01-01T16:00' } : {}),
     });
     assert.ok(result.ok, JSON.stringify(result));
   }

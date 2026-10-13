@@ -23,8 +23,13 @@
  */
 import { prisma, Prisma } from '@buildkart/database';
 import {
+  formatDeliveryAddress,
   formatINR,
+  formatItemList,
+  formatStoreDateTime,
+  parseAddressSnapshot,
   parseSetting,
+  parseVariantSnapshot,
   toPositional,
   toWhatsappNumber,
   whatsappParam,
@@ -320,11 +325,24 @@ export function notifyOrder(
           id: true,
           orderNumber: true,
           grandTotal: true,
+          addressSnapshot: true,
+          expectedDeliveryAt: true,
+          deliveredAt: true,
           customer: { select: RECIPIENT_SELECT },
-          _count: { select: { items: true } },
+          items: { select: { variantSnapshot: true, quantity: true }, orderBy: { id: 'asc' } },
         },
       });
       if (!order) return null;
+
+      const items = order.items.map((item) => {
+        const snapshot = parseVariantSnapshot(item.variantSnapshot);
+        const hindi = order.customer.locale === 'hi' && snapshot.nameHi;
+        return {
+          name: (hindi ? snapshot.nameHi : snapshot.nameEn) ?? snapshot.nameEn,
+          options: snapshot.optionValues,
+          quantity: item.quantity,
+        };
+      });
 
       return {
         event,
@@ -334,7 +352,11 @@ export function notifyOrder(
           ...(await commonTokens(order.customer)),
           orderNumber: order.orderNumber,
           orderTotal: formatINR(order.grandTotal.toFixed(2)),
-          itemCount: String(order._count.items),
+          itemCount: String(items.length),
+          itemList: formatItemList(items),
+          deliveryAddress: formatDeliveryAddress(parseAddressSnapshot(order.addressSnapshot)),
+          expectedDelivery: order.expectedDeliveryAt ? formatStoreDateTime(order.expectedDeliveryAt) : '',
+          deliveredOn: order.deliveredAt ? formatStoreDateTime(order.deliveredAt) : '',
           orderUrl: messageLink(`/account/orders/${order.id}`, event),
           ...extra,
         },

@@ -679,8 +679,41 @@ export async function getCollectionPage(
 
   if (!tag) return null;
 
-  const list = await listVisible({ tags: { some: { tagId: tag.id } } }, query);
-  return { ...list, collection: toCollectionDto(tag) };
+  const [list, header] = await Promise.all([
+    listVisible({ tags: { some: { tagId: tag.id } } }, query),
+    sectionHeaderFor(tag),
+  ]);
+
+  const collection = toCollectionDto(tag);
+  if (header?.titleEn) {
+    collection.nameEn = header.titleEn;
+    collection.nameHi = header.titleHi ?? null;
+  }
+
+  return { ...list, collection };
+}
+
+/*
+ * The header the owner gave the homepage carousel that leads here. A tag's
+ * own name is often a filing label ("week_deal"); the section title is what
+ * the shopper just tapped on, so the page they land on should say the same.
+ * Matched the way `TAG_CAROUSEL` resolves its tag: by slug, else legacy id.
+ */
+async function sectionHeaderFor(tag: { id: string; slug: string }) {
+  const sections = await prisma.homepageSection.findMany({
+    where: { type: 'TAG_CAROUSEL', isActive: true, titleEn: { not: null } },
+    orderBy: { position: 'asc' },
+    select: { titleEn: true, titleHi: true, configJson: true },
+  });
+
+  return (
+    sections.find((section) => {
+      const config = (section.configJson ?? {}) as Record<string, unknown>;
+      return typeof config.tagSlug === 'string'
+        ? config.tagSlug === tag.slug
+        : config.tagId === tag.id;
+    }) ?? null
+  );
 }
 
 // ---------------------------------------------------------------------------

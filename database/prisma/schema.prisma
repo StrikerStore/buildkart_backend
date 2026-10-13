@@ -1063,7 +1063,17 @@ model Order {
   cashbackReleaseAt DateTime?
 
   placedAt    DateTime  @default(now())
+  /// When the shop marked it delivered — the time entered on "Mark as
+  /// delivered", which defaults to the click but can be set to when the goods
+  /// actually changed hands.
   deliveredAt DateTime?
+  /// When the customer is told to expect it, entered on "Send out for
+  /// delivery" and quoted in the out-for-delivery message.
+  expectedDeliveryAt DateTime?
+  /// Storefront orders only: when this order confirms itself if nobody has
+  /// touched it. Cleared by any status change, so an order stepped back to
+  /// Placed by hand is not confirmed again behind the owner's back.
+  autoConfirmAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -1081,6 +1091,7 @@ model Order {
   attribution    OrderAttribution?
 
   @@index([status, placedAt])
+  @@index([status, autoConfirmAt])
   @@index([customerId, placedAt])
   @@index([paymentStatus, paymentMethod])
   @@index([paymentReference])
