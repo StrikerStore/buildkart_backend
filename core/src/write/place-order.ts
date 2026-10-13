@@ -308,6 +308,9 @@ export async function prepareCustomerOrder(
     status: 'PLACED',
     customerNote: data.customerNote,
     internalNote: undefined,
+    // Marketing only. Frozen into a payment session with the rest, so an order
+    // the webhook writes an hour later still knows which ad it came from.
+    attribution: data.attribution,
   };
 
   return actionOk({

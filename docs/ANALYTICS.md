@@ -2,7 +2,7 @@
 
 > **Goal:** give the owner what Shopify Analytics gives a merchant (sessions, a conversion funnel, sales by channel, AOV, new vs returning customers, product performance), **joined to Meta ad spend**. Then "is Meta paying for itself?" is answered from our own orders, not from Meta's self-reported numbers.
 >
-> **Status:** Phase 1 is built. Phases 2–7 are planned. Each phase can ship alone and adds value without the ones after it.
+> **Status:** Phases 1–5 are built, with a first Analytics page from Phase 6. Phases 6 (the rest) and 7 are planned. Each phase can ship alone and adds value without the ones after it.
 
 ---
 
@@ -45,7 +45,17 @@ Nothing stores UTM parameters, `fbclid`, the referrer or the landing page. **An 
 
 ---
 
-## Phase 2: Meta Conversions API (server-side events)
+## Phase 2: Meta Conversions API (server-side events) ✅ built
+
+> **As built.** The plan below held, with these differences:
+> - **Log table:** `MarketingEvent` (not `MarketingEventLog`), with plain ids and no foreign keys, like `NotificationMessage`. `status` is a VARCHAR.
+> - **Code:** `core/src/marketing/meta-capi.ts`, credentials in `core/src/marketing/config.ts`, admin procedures in `read/marketing.ts` and `write/marketing.ts`, router `marketing.*`.
+> - **Cron:** `/cron/marketing`, every 10 minutes. It retries failed events (up to 6 attempts, inside Meta's 7-day window), reports any customer order from the last 48 hours that has no event, and clears `OrderAttribution.ipAddress` after 10 days.
+> - **Missing user agent:** `action_source` is `website` when the order carries the shopper's user agent, else `system_generated`.
+> - **Not stored:** `adAccountId` and `insightsToken` are left for Phase 5.
+> - **Admin:** Settings → Marketing (`admin/app/(dashboard)/settings/marketing`), with the form, a "Send test event" button, an attribution summary and the last 25 events.
+> - **Browser advanced matching is done:** the root layout passes `sha256(customer.id)` to `fbq('init', id, { external_id })`.
+> - **Graph API:** defaults to `v23.0`; override with `META_GRAPH_VERSION`.
 
 **Why:** this recovers the purchases the browser loses. It gives Meta higher-quality matching (hashed phone, address, `fbp`/`fbc`), and that directly improves campaign optimisation and lowers CPA. It's the single highest-ROI item after the pixel.
 
@@ -99,7 +109,18 @@ Decrypted in exactly one module, `core/src/marketing/config.ts`, mirroring `core
 
 ---
 
-## Phase 3: Attribution captured with every order
+## Phase 3: Attribution captured with every order ✅ built
+
+> **As built.**
+> - **Capture:** `website/components/analytics/attribution-capture.tsx` and `website/lib/attribution.ts`. The cookie `bk_attr` holds `{ first, last }`.
+>   - It runs once per document load.
+>   - Only the referrer's origin is kept.
+>   - Payment-gateway referrers (PayU, Razorpay, banks' 3-D Secure pages) are ignored.
+>   - A visit with no source leaves the cookie unchanged.
+> - **Carry:** `website/lib/attribution-server.ts` reads the cookie, `_fbp`, `_fbc`, the user agent and the IP inside the checkout server actions. `attribution` is on `placeOrderSchema` and `createOrderSchema`. It is `.catch(undefined)`, so a bad cookie never fails an order.
+> - **Store:** `writeOrder` writes `OrderAttribution` **after** the commit, never inside the order transaction, so a marketing failure cannot fail a sale. Every order gets a row, and counter orders are filed as `ADMIN`.
+> - **Channel:** a VARCHAR, set by `deriveChannel()` in `shared/src/attribution.ts` (unit-tested). The order is credited to the last touch that had a source.
+> - **Contract:** bumped to **0.18.0**. The admin needs it; the website does not, because its order inputs are `unknown`.
 
 **Why:** this phase enables everything else. Without it, there's no "sales by channel", no first-party ROAS, and no `fbp`/`fbc` for CAPI. **Ship it with Phase 2.**
 
@@ -188,7 +209,16 @@ Use **ids, not names**. Names get edited; ids are what Phase 5 joins on. Optiona
 
 ---
 
-## Phase 4: Sessions and the conversion funnel
+## Phase 4: Sessions and the conversion funnel ✅ built
+
+> **As built.**
+> - **Ids are minted in the browser** (`website/lib/visit.ts`): `bk_vid` lasts one year; `bk_sid` lasts 30 minutes and is renewed by every event. The beacon writes both cookies itself, before sending, because a product page fires two events in the same tick and server-minted ids would split that into two sessions.
+> - **Events:** every `track()` call also posts a funnel step to `/api/t` (`website/app/api/t/route.ts`) → `storefront.recordVisit` → `recordStorefrontVisit` (`core/src/write/sessions.ts`). Page views come from `<PageViews>`, which is always mounted, pixel or not.
+> - **Bots** are dropped by user agent (`shared/src/sessions.ts`, unit-tested). **No IP is stored** for sessions.
+> - **Model:** `StorefrontSession` → `AnalyticsDaily` (day × channel × device). There are no per-day orders or revenue columns, because those are read live from `Order` and `OrderAttribution`.
+> - **Funnel steps are cumulative:** each counts sessions that got at least that far, so no step can exceed the one before it.
+> - **Conversion:** `OrderAttribution.sessionId` (the `bk_sid` at checkout) links an order to its session, and `recordOrderAttribution` marks that session converted.
+> - **Cron:** `/cron/analytics`, hourly, rebuilds the last 3 days and deletes raw sessions after 90 days.
 
 **Why:** Shopify's headline metric is **online store conversion rate** = sessions that converted ÷ sessions, with the funnel *sessions → added to cart → reached checkout → converted*. We can't compute it without first-party sessions. GA would give a number, but not one joined to our orders.
 
@@ -243,7 +273,15 @@ model AnalyticsDaily {
 
 ---
 
-## Phase 5: Meta marketing insights (spend, ROAS, CAC)
+## Phase 5: Meta marketing insights (spend, ROAS, CAC) ✅ built
+
+> **As built.**
+> - **Config:** `marketing.meta` gains `adAccountId` and `insightsTokenEnc`. If no Insights token is set, the CAPI token is tried. Sync status is kept in `marketing.metaInsightsSync`.
+> - **Pull:** `core/src/marketing/meta-insights.ts` pulls ad-level daily rows for the last 7 days (today included), follows paging, and replaces those days in `AdSpendDaily`.
+> - **Purchase counting:** `omni_purchase` > `purchase` > pixel purchase, so a sale is never counted under two overlapping types. Unit-tested.
+> - **When it runs:** `/cron/meta-insights` every 6 hours, plus a "Sync now" button in Settings → Marketing.
+> - **Metrics** (`core/src/read/marketing-analytics.ts`): ROAS from our own orders vs Meta-reported ROAS; MER; CAC (customers whose first ever order came from `PAID_SOCIAL`); and per campaign spend, CTR, CPM, orders, revenue, ROAS and CPA.
+> - **Tagging problems are surfaced:** paid-social orders with no campaign tag are counted and flagged. A tag that matches no campaign id (usually a name used instead of an id) gets its own row.
 
 **Access.**
 - In Meta Business Settings, create a **System User** with the `ads_read` permission on the ad account.
@@ -306,7 +344,11 @@ model AdSpendDaily {
 
 ---
 
-## Phase 6: Admin analytics pages
+## Phase 6: Admin analytics pages — first page built
+
+> **Built so far:** `admin/app/(dashboard)/analytics/page.tsx` (nav: Analytics, `orders:read`). It has KPI tiles (sessions, conversion rate, orders, revenue), the funnel, devices, sales by channel, and the Meta section (spend, ROAS, MER, CAC, and the campaign table). It reads one procedure: `marketing.analytics`.
+>
+> **Still to do from the list below:** drill-down to ad set and ad, custom date ranges, a products report, customer cohorts, and CSV export.
 
 A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (permission `analytics.view`). Sub-pages are under `admin/app/(dashboard)/analytics/`, with one tRPC router `analytics.*` in `api/src/routers/`, reading `AnalyticsDaily`, `AdSpendDaily`, `OrderAttribution`, `Order` and `ProductSignal`.
 
@@ -346,9 +388,9 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 | # | Phase | Repos | Depends on | Size |
 |---|---|---|---|---|
 | 1 | Pixel, browser events | website | — | ✅ done |
-| 2+3 | CAPI and attribution (ship together) | backend, contract, website, admin | 1 | ~3–4 days |
-| 4 | Sessions and funnel | backend, contract, website | 3 (channel rules) | ~3 days |
-| 5 | Meta insights pull | backend, admin | 2 (settings) | ~2 days |
+| 2+3 | CAPI and attribution (ship together) | backend, contract, website, admin | 1 | ✅ done |
+| 4 | Sessions and funnel | backend, contract, website | 3 (channel rules) | ✅ done |
+| 5 | Meta insights pull | backend, admin | 2 (settings) | ✅ done |
 | 6 | Admin analytics pages | admin, backend | 3, 4, 5 (each page lights up as its data lands) | ~4–5 days |
 | 7 | Catalog feed and extras | website, backend | 1 | ~1–2 days |
 

@@ -169,6 +169,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'payments.reorder': 'Reordered the payment methods',
   'payments.refundUnplaced': 'Refunded a payment that could not become an order',
 
+  'marketing.meta': 'Changed the Meta Conversions API settings',
+  'marketing.meta.test': 'Sent a test event to Meta',
+
   'settings.store': 'Updated the store details',
   'settings.commerce': 'Updated the order and payment settings',
   'settings.wallet': 'Updated the wallet and cashback rules',

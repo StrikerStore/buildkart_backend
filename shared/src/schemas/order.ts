@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 import { MONEY_PATTERN } from '../money.ts';
 import { optionalText } from './common.ts';
+import { orderAttributionSchema } from '../attribution.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
 import { ORDER_STATUSES, PAYMENT_METHODS, PAYMENT_STATUSES } from '../orders.ts';
 import {
@@ -386,6 +387,13 @@ export const createOrderSchema = z.object({
 
   customerNote: optionalText(2000),
   internalNote: optionalText(2000),
+
+  /**
+   * Where a storefront order came from, carried down by `prepareCustomerOrder`
+   * and frozen into a payment session with the rest of the order. Ignored for
+   * an order the shop takes itself — `writeOrder` files those as ADMIN.
+   */
+  attribution: orderAttributionSchema,
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 

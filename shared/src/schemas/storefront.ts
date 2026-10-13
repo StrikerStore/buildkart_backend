@@ -16,6 +16,7 @@ import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 import { PAYMENT_METHODS } from '../orders.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
 import { CHECKOUT_OPTIONS, ONLINE_GATEWAYS } from '../checkout-options.ts';
+import { orderAttributionSchema } from '../attribution.ts';
 
 /**
  * Twenty-four, not the admin's twenty-five.
@@ -277,6 +278,14 @@ export const placeOrderSchema = z.object({
 
   /** Add the unloading service. The fee is read from settings, never posted. */
   unloading: z.boolean().default(false),
+
+  /**
+   * How the shopper reached the shop — UTM tags, ad click ids, the referrer —
+   * from the storefront's `bk_attr` cookie. Marketing data only: it never
+   * changes what the order costs or whether it is accepted, and a malformed
+   * value is dropped rather than refused.
+   */
+  attribution: orderAttributionSchema,
 });
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
 

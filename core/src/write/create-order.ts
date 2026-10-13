@@ -37,6 +37,7 @@ import {
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
 import { notifyOrder } from '../notify/dispatch.ts';
+import { recordOrderAttribution, reportOrderPurchaseInBackground } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
@@ -631,6 +632,25 @@ export async function writeOrder(
   // Every path that makes an order comes through here — COD, the counter, and
   // an online payment once it has landed — so this is the one place to say so.
   notifyOrder('order.placed', created.order.id);
+
+  /*
+   * Marketing, after the commit and never inside it: where the order came
+   * from, then the server copy of the Purchase for Meta. Both swallow their
+   * own failures — a marketing table that is missing or a Meta outage must not
+   * be able to fail a sale that has already been written.
+   *
+   * Awaited, the attribution: it is one insert, and the Purchase reads the
+   * browser ids (`fbp`, `fbc`, user agent) back from it. Only a customer's own
+   * order is an ad conversion; one the shop took is filed as ADMIN and not
+   * reported.
+   */
+  await recordOrderAttribution(
+    created.order.id,
+    actor.kind === 'customer'
+      ? { kind: 'customer', attribution: data.attribution }
+      : { kind: 'admin' },
+  );
+  if (actor.kind === 'customer') reportOrderPurchaseInBackground(created.order.id);
 
   return actionOk({
     orderId: created.order.id,

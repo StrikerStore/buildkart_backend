@@ -4,6 +4,7 @@ import { catalogRouter } from './catalog.ts';
 import { contentRouter } from './content.ts';
 import { operationsRouter } from './operations.ts';
 import { ordersRouter } from './orders.ts';
+import { marketingRouter } from './marketing.ts';
 import { notificationsRouter } from './notifications.ts';
 import { paymentsRouter } from './payments.ts';
 import { storefrontRouter } from './storefront.ts';
@@ -23,6 +24,7 @@ export const appRouter = router({
   content: contentRouter,
   operations: operationsRouter,
   orders: ordersRouter,
+  marketing: marketingRouter,
   notifications: notificationsRouter,
   payments: paymentsRouter,
   /*

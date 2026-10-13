@@ -1077,6 +1077,7 @@ model Order {
   walletLots     WalletLot[]
   walletEntries  WalletEntry[]
   paymentSession PaymentSession?
+  attribution    OrderAttribution?
 
   @@index([status, placedAt])
   @@index([customerId, placedAt])
@@ -1164,6 +1165,193 @@ model WalletLotUse {
 
   @@index([entryId])
   @@index([lotId])
+}
+
+/// Where an order came from: the storefront's first and last marketing touch,
+/// and the browser identifiers Meta's Conversions API matches on.
+///
+/// One row per order written since attribution began. Its own table rather than
+/// columns on `Order`, which every list, report and invoice already reads — two
+/// dozen nullable marketing fields there would ride along on every query that
+/// has no use for them.
+///
+/// `channel` is a VARCHAR plus `ACQUISITION_CHANNELS` in shared, for the reason
+/// `ProductSignal.kind` gives: a new channel should not cost an ALTER.
+///
+/// `ipAddress` is kept only as long as Meta will accept an event for the order
+/// (seven days) plus a margin, then cleared by `/cron/marketing`.
+model OrderAttribution {
+  orderId String @id @db.VarChar(191)
+  channel String @db.VarChar(20)
+
+  firstSource   String?   @db.VarChar(100)
+  firstMedium   String?   @db.VarChar(100)
+  firstCampaign String?   @db.VarChar(150)
+  firstContent  String?   @db.VarChar(150)
+  firstTerm     String?   @db.VarChar(150)
+  firstLanding  String?   @db.VarChar(500)
+  firstReferrer String?   @db.VarChar(500)
+  firstAt       DateTime?
+
+  lastSource   String?   @db.VarChar(100)
+  lastMedium   String?   @db.VarChar(100)
+  lastCampaign String?   @db.VarChar(150)
+  lastContent  String?   @db.VarChar(150)
+  lastTerm     String?   @db.VarChar(150)
+  lastLanding  String?   @db.VarChar(500)
+  lastReferrer String?   @db.VarChar(500)
+  lastAt       DateTime?
+
+  fbclid    String? @db.VarChar(255)
+  gclid     String? @db.VarChar(255)
+  fbp       String? @db.VarChar(100)
+  fbc       String? @db.VarChar(300)
+  userAgent String? @db.VarChar(500)
+  ipAddress String? @db.VarChar(45)
+
+  /// The storefront session the order was placed in (`bk_sid`), which is how
+  /// a `StorefrontSession` learns it converted.
+  sessionId String? @db.VarChar(64)
+
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([channel, createdAt])
+  @@index([lastCampaign])
+  @@index([createdAt])
+}
+
+/// One visit to the storefront: Shopify's "online store session".
+///
+/// A session is the `bk_sid` cookie, which the storefront rolls after thirty
+/// minutes without a page view — the same rule Shopify and Google Analytics
+/// use, so the conversion rate here can be compared with theirs. Written by
+/// the storefront's first-party beacon (`/api/t`), never by a third-party
+/// script, so an ad blocker does not hide a visit.
+///
+/// The funnel flags only ever go from false to true. `orderId` is set when an
+/// order placed in this session is written, which is what "converted" means.
+///
+/// No IP is stored, hashed or otherwise. Raw rows are kept for 90 days and
+/// summarised into `AnalyticsDaily` hourly by `/cron/analytics`.
+model StorefrontSession {
+  id         String  @id @db.VarChar(64)
+  visitorId  String  @db.VarChar(64)
+  customerId String? @db.VarChar(191)
+
+  /// The store (IST) day the session started on — what reports bucket by.
+  day        DateTime @db.Date
+  startedAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  landingPath String  @db.VarChar(300)
+  channel     String  @db.VarChar(20)
+  source      String? @db.VarChar(100)
+  medium      String? @db.VarChar(100)
+  campaign    String? @db.VarChar(150)
+  /// MOBILE, TABLET or DESKTOP, from the user agent.
+  device      String  @db.VarChar(10)
+  isReturning Boolean @default(false)
+
+  pageViews       Int     @default(0)
+  viewedProduct   Boolean @default(false)
+  addedToCart     Boolean @default(false)
+  reachedCheckout Boolean @default(false)
+  orderId         String? @db.VarChar(191)
+
+  @@index([day, channel])
+  @@index([visitorId])
+  @@index([startedAt])
+}
+
+/// Sessions summarised per store day, channel and device — what the Analytics
+/// page reads. Rebuilt for the last three days every hour, so a session that
+/// converts the next morning still lands in the day it started.
+model AnalyticsDaily {
+  day     DateTime @db.Date
+  channel String   @db.VarChar(20)
+  device  String   @db.VarChar(10)
+
+  sessions          Int @default(0)
+  returningSessions Int @default(0)
+  productSessions   Int @default(0)
+  cartSessions      Int @default(0)
+  checkoutSessions  Int @default(0)
+  convertedSessions Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@id([day, channel, device])
+}
+
+/// Ad spend and delivery per ad per day, pulled from Meta's Insights API by
+/// `/cron/meta-insights`. The last seven days are re-pulled every run because
+/// Meta restates recent days as late conversions arrive.
+///
+/// `day` is in the ad account's own time zone, which for an Indian account is
+/// IST — the same day the shop's orders are bucketed by.
+///
+/// The `meta*` columns are what Meta *claims* its ads caused, under its own
+/// attribution model. They are kept beside the shop's own order data, never
+/// in place of it.
+model AdSpendDaily {
+  day      DateTime @db.Date
+  platform String   @db.VarChar(16)
+  adId     String   @db.VarChar(40)
+
+  adName       String? @db.VarChar(255)
+  adsetId      String  @db.VarChar(40)
+  adsetName    String? @db.VarChar(255)
+  campaignId   String  @db.VarChar(40)
+  campaignName String? @db.VarChar(255)
+
+  spend       Decimal @default(0) @db.Decimal(12, 2)
+  impressions Int     @default(0)
+  reach       Int     @default(0)
+  clicks      Int     @default(0)
+  linkClicks  Int     @default(0)
+
+  metaPurchases     Int     @default(0)
+  metaPurchaseValue Decimal @default(0) @db.Decimal(12, 2)
+  metaAddToCarts    Int     @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@id([day, platform, adId])
+  @@index([campaignId, day])
+}
+
+/// A server-side event sent to an ad platform (Meta's Conversions API).
+///
+/// The log and the retry queue in one, like `NotificationMessage`. `eventId` is
+/// the deduplication key Meta pairs with the browser pixel — `purchase-<orderId>`
+/// for a purchase — and unique here, so a second attempt to report the same
+/// order finds the first instead of sending twice. `payload` is the event as
+/// sent, `event_time` included, so a retry reports the original moment.
+model MarketingEvent {
+  id        String  @id @default(cuid())
+  platform  String  @db.VarChar(16)
+  eventName String  @db.VarChar(64)
+  eventId   String  @unique @db.VarChar(191)
+  orderId   String? @db.VarChar(191)
+
+  payload Json
+  /// PENDING, SENT or FAILED. A VARCHAR for the same reason as the channel.
+  status    String  @default("PENDING") @db.VarChar(16)
+  attempts  Int     @default(0)
+  lastError String? @db.VarChar(500)
+  /// Meta's `fbtrace_id`, for a support ticket about a specific event.
+  traceId   String? @db.VarChar(64)
+  isTest    Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  sentAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([orderId])
+  @@index([createdAt])
 }
 
 model OrderItem {

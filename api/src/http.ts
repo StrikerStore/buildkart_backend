@@ -29,6 +29,9 @@ import {
   publishScheduledProducts,
   refreshPendingWhatsappTemplates,
   retryQueuedNotifications,
+  pullMetaInsights,
+  runAnalyticsJobs,
+  runMarketingJobs,
   runWalletJobs,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
@@ -174,7 +177,10 @@ export async function handleHttpRoute(
     path === '/cron/publish-scheduled' ||
     path === '/cron/wallet' ||
     path === '/cron/payment-sessions' ||
-    path === '/cron/notifications'
+    path === '/cron/notifications' ||
+    path === '/cron/marketing' ||
+    path === '/cron/analytics' ||
+    path === '/cron/meta-insights'
   ) {
     const auth = cronAuthorised(req);
     if (auth === 'unset') return (json(res, 503, { error: 'CRON_SECRET is not set.' }), true);
@@ -188,6 +194,13 @@ export async function handleHttpRoute(
     // `/cron/notifications` re-sends WhatsApp messages that hit a transient
     // failure and reads Meta's verdict on submitted templates. Every five
     // minutes: a delivery update that is an hour late is barely news.
+    // `/cron/marketing` retries Conversions API events Meta did not take,
+    // reports any recent order that has none, and clears client IPs once no
+    // event could still use them. Every ten minutes is plenty.
+    // `/cron/analytics` rebuilds the last three days of the session summary
+    // and drops raw sessions after 90 days. Hourly.
+    // `/cron/meta-insights` re-pulls the last seven days of Meta ad spend.
+    // Every six hours: Meta itself updates spend a few times a day.
     const result =
       path === '/cron/media-gc'
         ? await collectMediaGarbage()
@@ -200,7 +213,13 @@ export async function handleHttpRoute(
                   messages: await retryQueuedNotifications(),
                   templates: await refreshPendingWhatsappTemplates(),
                 }
-              : await publishScheduledProducts();
+              : path === '/cron/marketing'
+                ? await runMarketingJobs()
+                : path === '/cron/analytics'
+                  ? await runAnalyticsJobs()
+                  : path === '/cron/meta-insights'
+                    ? await pullMetaInsights()
+                    : await publishScheduledProducts();
     json(res, 200, { ok: true, ...result });
     return true;
   }

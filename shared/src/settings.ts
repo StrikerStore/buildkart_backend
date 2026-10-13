@@ -419,6 +419,60 @@ export const SETTING_SCHEMAS = {
       webhookSecretEnc: EMPTY_SECRET,
     }),
 
+  /**
+   * Meta (Facebook / Instagram) ads: the Conversions API.
+   *
+   * The browser pixel's id is *not* read from here — the storefront takes it
+   * from its own `META_PIXEL_ID` env var so a page render never waits on this
+   * row. The two must name the same pixel, or Meta cannot pair a browser
+   * Purchase with its server copy; the admin screen says so.
+   *
+   * Private: not on `SETTINGS_DTO_KEYS`. The token is a long-lived credential
+   * that can write events into the shop's ad account.
+   */
+  'marketing.meta': z
+    .object({
+      enabled: z.boolean().default(false),
+      pixelId: z.string().default(''),
+      /** A Conversions API access token from Events Manager → Settings. */
+      accessTokenEnc: encryptedSecretSchema,
+      /**
+       * Events Manager → Test events. While set, every server event is sent as
+       * a test and shows up there instead of in the ad account's real data —
+       * so it must be cleared once checking is done.
+       */
+      testEventCode: z.string().default(''),
+      /**
+       * The ad account Insights are read from, digits only (no `act_`). Spend
+       * is pulled from here by `/cron/meta-insights`.
+       */
+      adAccountId: z.string().default(''),
+      /**
+       * A System User token with `ads_read` on that account. The Conversions
+       * API token from Events Manager usually cannot read Insights; when this
+       * is blank the CAPI token is tried anyway, for a token that can do both.
+       */
+      insightsTokenEnc: encryptedSecretSchema,
+    })
+    .default({
+      enabled: false,
+      pixelId: '',
+      accessTokenEnc: EMPTY_SECRET,
+      testEventCode: '',
+      adAccountId: '',
+      insightsTokenEnc: EMPTY_SECRET,
+    }),
+
+  /** When ad spend was last pulled from Meta, and why the last pull failed. Not secret. */
+  'marketing.metaInsightsSync': z
+    .object({
+      lastRunAt: z.string().nullable().default(null),
+      lastOkAt: z.string().nullable().default(null),
+      lastError: z.string().nullable().default(null),
+      rows: z.number().int().default(0),
+    })
+    .default({ lastRunAt: null, lastOkAt: null, lastError: null, rows: 0 }),
+
   'notifications.email': z
     .object({
       enabled: z.boolean().default(false),

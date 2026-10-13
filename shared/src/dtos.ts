@@ -2639,3 +2639,134 @@ export type SupportCannedReplyDto = {
   position: number;
   isActive: boolean;
 };
+
+// from core/src/read/marketing.ts
+/** One server-side event sent to an ad platform, for the Marketing screen's log. */
+export type MarketingEventDto = {
+  id: string;
+  platform: 'META';
+  eventName: string;
+  eventId: string;
+  orderId: string | null;
+  orderNumber: string | null;
+  value: string | null;
+  status: 'PENDING' | 'SENT' | 'FAILED';
+  attempts: number;
+  lastError: string | null;
+  /** Sent with Meta's test code, so it went to Test events rather than live data. */
+  isTest: boolean;
+  createdAt: string;
+  sentAt: string | null;
+};
+
+// from core/src/read/marketing.ts
+export type MetaMarketingDto = {
+  enabled: boolean;
+  pixelId: string;
+  accessToken: SecretFieldDto;
+  testEventCode: string;
+  adAccountId: string;
+  insightsToken: SecretFieldDto;
+  insightsSync: {
+    lastRunAt: string | null;
+    lastOkAt: string | null;
+    lastError: string | null;
+    rows: number;
+  };
+  /** False when SETTINGS_ENCRYPTION_KEY is absent; the token cannot be saved. */
+  secretsKeyConfigured: boolean;
+  /** Customer orders in the last 30 days, and how many carry a known source. */
+  attribution: {
+    orders: number;
+    withSource: number;
+    byChannel: Array<{ channel: string; label: string; orders: number; revenue: string }>;
+  };
+  recentEvents: MarketingEventDto[];
+};
+
+// from core/src/read/marketing-analytics.ts
+export type FunnelStepDto = {
+  key: 'sessions' | 'product' | 'cart' | 'checkout' | 'converted';
+  label: string;
+  sessions: number;
+  /** Share of all sessions that reached this step, 0–1. */
+  rate: number;
+};
+
+// from core/src/read/marketing-analytics.ts
+export type ChannelPerformanceDto = {
+  channel: string;
+  label: string;
+  sessions: number;
+  convertedSessions: number;
+  /** Converted sessions ÷ sessions, 0–1; null with no sessions. */
+  conversionRate: number | null;
+  orders: number;
+  revenue: string;
+  newCustomers: number;
+};
+
+// from core/src/read/marketing-analytics.ts
+export type CampaignPerformanceDto = {
+  campaignId: string;
+  campaignName: string;
+  spend: string;
+  impressions: number;
+  linkClicks: number;
+  /** Link clicks ÷ impressions, 0–1. */
+  ctr: number | null;
+  /** Spend per thousand impressions. */
+  cpm: string | null;
+  metaPurchases: number;
+  metaPurchaseValue: string;
+  /** The shop's own orders whose campaign tag is this campaign. */
+  orders: number;
+  revenue: string;
+  /** Own revenue ÷ spend. */
+  roas: number | null;
+  /** Meta's claimed purchase value ÷ spend. */
+  metaRoas: number | null;
+  /** Spend ÷ own orders. */
+  cpa: string | null;
+};
+
+// from core/src/read/marketing-analytics.ts
+export type MarketingAnalyticsDto = {
+  range: AnalyticsRange;
+  /** "YYYY-MM-DD", inclusive. */
+  from: string;
+  to: string;
+  sessions: { value: number; change: number | null };
+  conversionRate: { value: number | null; change: number | null };
+  returningRate: number | null;
+  orders: { value: number; change: number | null };
+  revenue: { value: string; change: number | null };
+  funnel: FunnelStepDto[];
+  channels: ChannelPerformanceDto[];
+  devices: Array<{
+    device: string;
+    label: string;
+    sessions: number;
+    convertedSessions: number;
+    conversionRate: number | null;
+  }>;
+  meta: {
+    configured: boolean;
+    lastOkAt: string | null;
+    lastError: string | null;
+    spend: { value: string; change: number | null };
+    /** Paid-social orders and their revenue, from the shop's own data. */
+    orders: number;
+    revenue: string;
+    roas: number | null;
+    metaRoas: number | null;
+    /** All revenue ÷ all ad spend. */
+    mer: number | null;
+    /** Spend ÷ customers whose first order came from paid social. */
+    cac: string | null;
+    newCustomers: number;
+    /** Paid-social orders carrying no campaign tag — set the URL parameters. */
+    untaggedOrders: number;
+    campaigns: CampaignPerformanceDto[];
+  };
+};

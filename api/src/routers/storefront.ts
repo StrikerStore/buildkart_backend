@@ -48,6 +48,7 @@ import {
   placeLocation,
   priceCart,
   recordProductSignal,
+  recordStorefrontVisit,
   requestOtp,
   requestPincode,
   reorderLines,
@@ -219,6 +220,16 @@ export const storefrontRouter = router({
   recordProductSignal: publicProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => recordProductSignal(input, ctx.clientIp)),
+
+  /*
+   * One storefront session event, forwarded by the website's `/api/t` route
+   * with the session and visitor cookies it minted. Public: most visitors are
+   * not signed in, and the actor is used only to note who the session was
+   * when one is.
+   */
+  recordVisit: publicProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => recordStorefrontVisit(ctx.actor, input)),
 
   // --- sign-in ------------------------------------------------------------
 

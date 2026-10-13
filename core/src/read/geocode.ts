@@ -91,13 +91,17 @@ async function locationConfig(): Promise<LocationConfig> {
 
   let key = '';
   try {
-    key = openSecret(stored.serverGeocodeKeyEnc, 'checkout.location.serverGeocodeKey');
-  } catch {
+    // The context must match the one `saveCheckoutLocation` sealed it under —
+    // the setting key, as for every other stored credential — or GCM refuses it.
+    key = openSecret(stored.serverGeocodeKeyEnc, 'checkout.location');
+  } catch (error) {
     /*
-     * No key, or no encryption key to open it with. Not an error: OSM works
-     * without one, and falling back is better than a picker that fails closed
-     * on a shop that has not configured anything yet.
+     * A key that is stored but will not open. Still not fatal: OSM works
+     * without one, and falling back is better than a picker that fails closed.
+     * But it is said out loud, because a silent fallback is what hid a key
+     * that had been saved correctly and never once been used.
      */
+    console.error('[geocode] stored geocoding key could not be opened; using OSM', error);
     key = '';
   }
 
