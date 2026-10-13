@@ -13,7 +13,7 @@ import {
   sendMetaTestEvent,
   syncMetaInsightsNow,
 } from '@buildkart/core';
-import { ANALYTICS_RANGES } from '@buildkart/shared';
+import { analyticsQuerySchema } from '@buildkart/shared';
 import { adminProcedure, router } from '../trpc.ts';
 
 /** Inputs stay `unknown`: core owns the schema and validates it itself. */
@@ -27,8 +27,11 @@ export const marketingRouter = router({
   sendMetaTest: adminProcedure.mutation(({ ctx }) => sendMetaTestEvent(ctx.actor)),
   syncMetaInsights: adminProcedure.mutation(({ ctx }) => syncMetaInsightsNow(ctx.actor)),
 
-  /** Sessions, funnel, channels and Meta spend for the Analytics page. */
+  /**
+   * The Analytics overview. Kept here for the admin build that first called
+   * it; `analytics.overview` is the same read.
+   */
   analytics: adminProcedure
-    .input(z.object({ range: z.enum(ANALYTICS_RANGES).default('30d') }))
-    .query(({ ctx, input }) => loadMarketingAnalytics(ctx.actor, input.range)),
+    .input(analyticsQuerySchema)
+    .query(({ ctx, input }) => loadMarketingAnalytics(ctx.actor, input)),
 });

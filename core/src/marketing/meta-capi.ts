@@ -21,6 +21,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { prisma } from '@buildkart/database';
 import { creditedTouch, deriveChannel, toPaise, type OrderAttributionInput } from '@buildkart/shared';
+import type { Actor } from '../actor.ts';
 import { metaCapiConfig, type MetaCapiConfig } from './config.ts';
 
 /*
@@ -132,9 +133,18 @@ type AddressSnapshot = { city?: string; state?: string; pincode?: string; name?:
 
 /**
  * The Purchase event for one order, as Meta's API takes it — or null when the
- * order is not one to report (the shop's own counter sales).
+ * order is not one to report.
+ *
+ * An order the shop took itself (channel ADMIN) is reported only when the
+ * owner has switched on offline conversions, and then as `phone_call`: no
+ * browser placed it, so there is no page, cookie or user agent to send — just
+ * the customer, hashed, which is how Meta credits an ad that made the phone
+ * ring.
  */
-async function buildPurchaseEvent(orderId: string): Promise<Record<string, unknown> | null> {
+async function buildPurchaseEvent(
+  orderId: string,
+  { reportCounterOrders }: { reportCounterOrders: boolean },
+): Promise<Record<string, unknown> | null> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     select: {
@@ -149,7 +159,8 @@ async function buildPurchaseEvent(orderId: string): Promise<Record<string, unkno
     },
   });
   if (!order) return null;
-  if (order.attribution?.channel === 'ADMIN') return null;
+  const offline = order.attribution?.channel === 'ADMIN';
+  if (offline && !reportCounterOrders) return null;
 
   const address = (order.addressSnapshot ?? {}) as AddressSnapshot;
   const attribution = order.attribution;
@@ -176,8 +187,8 @@ async function buildPurchaseEvent(orderId: string): Promise<Record<string, unkno
      * still a real sale, and `system_generated` is how Meta takes an event the
      * server knows about but no browser was involved in sending.
      */
-    action_source: userAgent ? 'website' : 'system_generated',
-    ...(base ? { event_source_url: `${base}/account/orders/${order.id}` } : {}),
+    action_source: offline ? 'phone_call' : userAgent ? 'website' : 'system_generated',
+    ...(base && !offline ? { event_source_url: `${base}/account/orders/${order.id}` } : {}),
     user_data: buildUserData({
       customerId: order.customer.id,
       phone: order.customer.phone,
@@ -297,7 +308,7 @@ export async function reportOrderPurchase(orderId: string): Promise<'sent' | 'fa
   const existing = await prisma.marketingEvent.findUnique({ where: { eventId }, select: { id: true } });
   if (existing) return 'skipped';
 
-  const event = await buildPurchaseEvent(orderId);
+  const event = await buildPurchaseEvent(orderId, config);
   if (!event) return 'skipped';
 
   let row: { id: string; payload: unknown };
@@ -325,6 +336,126 @@ export async function reportOrderPurchase(orderId: string): Promise<'sent' | 'fa
 export function reportOrderPurchaseInBackground(orderId: string): void {
   void reportOrderPurchase(orderId).catch((error: unknown) =>
     console.error('[marketing] could not report purchase', orderId, error),
+  );
+}
+
+/**
+ * Records that an event will **not** be sent, because the shopper declined ad
+ * tracking on the consent banner. A row rather than nothing: its unique
+ * `eventId` is what stops the sweep in `runMarketingJobs` from reporting the
+ * order anyway, and the Marketing screen shows it as skipped.
+ */
+async function recordDeclined(eventId: string, eventName: string, orderId: string | null) {
+  try {
+    await prisma.marketingEvent.create({
+      data: {
+        platform: 'META',
+        eventName,
+        eventId,
+        orderId,
+        payload: { skipped: 'adConsent denied' },
+        status: 'SKIPPED',
+      },
+    });
+  } catch {
+    // Already recorded.
+  }
+}
+
+/**
+ * The marketing half of `writeOrder`, after the commit: where the order came
+ * from, then — unless the shopper declined — the Purchase for Meta. Never
+ * throws.
+ */
+export async function afterOrderWritten(
+  orderId: string,
+  actor: Actor,
+  attribution: OrderAttributionInput,
+): Promise<void> {
+  await recordOrderAttribution(
+    orderId,
+    actor.kind === 'customer' ? { kind: 'customer', attribution } : { kind: 'admin' },
+  );
+  if (actor.kind === 'customer' && attribution?.adConsent === 'denied') {
+    await recordDeclined(purchaseEventId(orderId), 'Purchase', orderId);
+    return;
+  }
+  // Counter orders too: `buildPurchaseEvent` drops them unless the owner has
+  // switched offline conversions on.
+  reportOrderPurchaseInBackground(orderId);
+}
+
+// ---------------------------------------------------------------------------
+// CompleteRegistration
+// ---------------------------------------------------------------------------
+
+export function registrationEventId(customerId: string): string {
+  return `register-${customerId}`;
+}
+
+/**
+ * A new account, reported once: `register-<customerId>`, the same id the
+ * storefront's pixel sends, so Meta counts the pair as one sign-up.
+ */
+export async function reportRegistration(
+  customerId: string,
+  attribution: OrderAttributionInput,
+): Promise<'sent' | 'failed' | 'off' | 'skipped'> {
+  const eventId = registrationEventId(customerId);
+  if (attribution?.adConsent === 'denied') {
+    await recordDeclined(eventId, 'CompleteRegistration', null);
+    return 'skipped';
+  }
+
+  const config = await metaCapiConfig();
+  if (!config) return 'off';
+
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { id: true, phone: true, email: true, name: true, createdAt: true },
+  });
+  if (!customer) return 'skipped';
+
+  const base = websiteUrl();
+  const userAgent = attribution?.userAgent ?? null;
+  const event = {
+    event_name: 'CompleteRegistration',
+    event_time: Math.floor(customer.createdAt.getTime() / 1000),
+    event_id: eventId,
+    action_source: userAgent ? 'website' : 'system_generated',
+    ...(base ? { event_source_url: `${base}/login` } : {}),
+    user_data: buildUserData({
+      customerId: customer.id,
+      phone: customer.phone,
+      email: customer.email,
+      name: customer.name,
+      city: null,
+      state: null,
+      pincode: null,
+      fbp: attribution?.fbp ?? null,
+      fbc: attribution?.fbc ?? null,
+      ipAddress: attribution?.ipAddress ?? null,
+      userAgent,
+    }),
+    custom_data: { status: 'registered', currency: 'INR', value: 0 },
+  };
+
+  let row: { id: string; payload: unknown };
+  try {
+    row = await prisma.marketingEvent.create({
+      data: { platform: 'META', eventName: 'CompleteRegistration', eventId, payload: event as never },
+      select: { id: true, payload: true },
+    });
+  } catch {
+    return 'skipped';
+  }
+  const result = await deliver(config, row);
+  return result.ok ? 'sent' : 'failed';
+}
+
+export function reportRegistrationInBackground(customerId: string, attribution: OrderAttributionInput): void {
+  void reportRegistration(customerId, attribution).catch((error: unknown) =>
+    console.error('[marketing] could not report registration', customerId, error),
   );
 }
 
@@ -380,7 +511,7 @@ export async function runMarketingJobs(): Promise<{
   // --- orders with no event ------------------------------------------------
   const recent = await prisma.orderAttribution.findMany({
     where: {
-      channel: { not: 'ADMIN' },
+      ...(config.reportCounterOrders ? {} : { channel: { not: 'ADMIN' } }),
       createdAt: { gt: new Date(now - 2 * 24 * 60 * 60 * 1000), lt: new Date(now - 2 * 60 * 1000) },
     },
     select: { orderId: true },

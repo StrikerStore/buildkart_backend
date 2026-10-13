@@ -71,6 +71,9 @@ export async function getMetaMarketing(actor: Actor): Promise<MetaMarketingDto> 
     adAccountId: stored.adAccountId,
     insightsToken: maskSecret(stored.insightsTokenEnc),
     insightsSync: sync,
+    domainVerification: stored.domainVerification,
+    reportCounterOrders: stored.reportCounterOrders,
+    consentBanner: stored.consentBanner,
     secretsKeyConfigured: isSecretsKeyConfigured(),
     attribution: {
       orders: attributed.length,

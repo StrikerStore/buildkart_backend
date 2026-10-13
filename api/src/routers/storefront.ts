@@ -38,6 +38,7 @@ import {
   getMyOrder,
   getMyProfile,
   getMyWallet,
+  getCatalogFeed,
   getSitemap,
   listCartCoupons,
   listMyAddresses,
@@ -202,6 +203,13 @@ export const storefrontRouter = router({
    * sitemap the first time a staging deploy generated it.
    */
   sitemap: publicProcedure.query(() => getSitemap()),
+
+  /*
+   * Every active product as Meta's catalog takes it, for the storefront's
+   * `/feeds/meta.csv`. Image keys, not URLs — the storefront owns the CDN
+   * address, as it does for every other image.
+   */
+  catalogFeed: publicProcedure.query(() => getCatalogFeed()),
 
   /*
    * "Tell me when you deliver here." The one unauthenticated *write* on this

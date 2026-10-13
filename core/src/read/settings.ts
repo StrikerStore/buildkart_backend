@@ -93,6 +93,27 @@ export async function getSettings(): Promise<SettingsDto> {
     },
     wallet: toWalletRulesDto(parseSetting('rewards.wallet', byKey.get('rewards.wallet'))),
     unloading: toUnloadingDto(parseSetting('delivery.unloading', byKey.get('delivery.unloading'))),
+    marketing: toPublicMarketing(parseSetting('marketing.meta', byKey.get('marketing.meta'))),
+  };
+}
+
+/**
+ * The storefront's view of `marketing.meta`, field by field — the row also
+ * holds the sealed Conversions API and Insights tokens.
+ *
+ * The pixel id: the admin's Marketing screen wins; the API's own META_PIXEL_ID
+ * is the fallback, so a pixel configured on either service reaches the
+ * storefront, and the browser pixel and the server events name the same one.
+ */
+function toPublicMarketing(value: {
+  pixelId: string;
+  domainVerification: string;
+  consentBanner: boolean;
+}) {
+  return {
+    metaPixelId: value.pixelId || process.env.META_PIXEL_ID?.trim() || null,
+    domainVerification: value.domainVerification || null,
+    consentBanner: value.consentBanner,
   };
 }
 

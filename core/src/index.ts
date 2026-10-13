@@ -87,6 +87,8 @@ export * from './marketing/config.ts';
 export * from './marketing/meta-capi.ts';
 export * from './marketing/meta-insights.ts';
 export * from './read/marketing-analytics.ts';
+export * from './read/analytics-reports.ts';
+export * from './read/catalog-feed.ts';
 export * from './write/sessions.ts';
 export * from './read/marketing.ts';
 export * from './write/marketing.ts';

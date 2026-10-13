@@ -37,7 +37,7 @@ import {
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
 import { notifyOrder } from '../notify/dispatch.ts';
-import { recordOrderAttribution, reportOrderPurchaseInBackground } from '../marketing/meta-capi.ts';
+import { afterOrderWritten } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
@@ -640,17 +640,11 @@ export async function writeOrder(
    * be able to fail a sale that has already been written.
    *
    * Awaited, the attribution: it is one insert, and the Purchase reads the
-   * browser ids (`fbp`, `fbc`, user agent) back from it. Only a customer's own
-   * order is an ad conversion; one the shop took is filed as ADMIN and not
-   * reported.
+   * browser ids (`fbp`, `fbc`, user agent) back from it. An order the shop
+   * took is filed as ADMIN and reported only when offline conversions are
+   * switched on; a shopper who declined ad tracking is not reported at all.
    */
-  await recordOrderAttribution(
-    created.order.id,
-    actor.kind === 'customer'
-      ? { kind: 'customer', attribution: data.attribution }
-      : { kind: 'admin' },
-  );
-  if (actor.kind === 'customer') reportOrderPurchaseInBackground(created.order.id);
+  await afterOrderWritten(created.order.id, actor, data.attribution);
 
   return actionOk({
     orderId: created.order.id,

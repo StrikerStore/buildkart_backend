@@ -19,6 +19,7 @@ import {
   isBotUserAgent,
   storeDayKey,
   storefrontVisitSchema,
+  touchSource,
   type ActionResult,
 } from '@buildkart/shared';
 import type { Actor } from '../actor.ts';
@@ -85,7 +86,7 @@ export async function recordStorefrontVisit(
         lastSeenAt: now,
         landingPath: visit.path,
         channel: deriveChannel(visit.touch),
-        source: visit.touch?.source ?? null,
+        source: touchSource(visit.touch)?.slice(0, 100) ?? null,
         medium: visit.touch?.medium ?? null,
         campaign: visit.touch?.campaign ?? null,
         device: deviceFromUserAgent(visit.userAgent),

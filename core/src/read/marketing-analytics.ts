@@ -17,7 +17,9 @@
 import { prisma } from '@buildkart/database';
 import {
   ACQUISITION_CHANNEL_LABELS,
-  analyticsWindow,
+  bucketDaily,
+  dayKeysIn,
+  resolveAnalyticsPeriod,
   DEVICE_LABELS,
   fromPaise,
   parseSetting,
@@ -25,7 +27,7 @@ import {
   previousWindow,
   storeDayKey,
   type AcquisitionChannel,
-  type AnalyticsRange,
+  type AnalyticsQuery,
   type CampaignPerformanceDto,
   type ChannelPerformanceDto,
   type Device,
@@ -36,10 +38,9 @@ import { assertPermission, type Actor } from '../actor.ts';
 import { paiseOf } from '../marketing/meta-capi.ts';
 
 const SOLD = { status: { not: 'CANCELLED' } } as const;
-const DAY_MS = 86_400_000;
 
 /** The DATE-column bounds of a window: first day inclusive, day after the last exclusive. */
-function dayBounds(window: Window) {
+export function dayBounds(window: Window) {
   return {
     gte: new Date(`${storeDayKey(window.from)}T00:00:00.000Z`),
     lt: new Date(`${storeDayKey(window.to)}T00:00:00.000Z`),
@@ -75,11 +76,12 @@ async function spendPaise(window: Window) {
 
 export async function loadMarketingAnalytics(
   actor: Actor,
-  range: AnalyticsRange,
+  query: AnalyticsQuery,
 ): Promise<MarketingAnalyticsDto> {
   assertPermission(actor, 'orders:read');
 
-  const window = analyticsWindow(range);
+  const period = resolveAnalyticsPeriod(query);
+  const window = period.window;
   const previous = previousWindow(window);
   const days = dayBounds(window);
 
@@ -291,12 +293,33 @@ export async function loadMarketingAnalytics(
   const metaSettings = parseSetting('marketing.meta', byKey.get('marketing.meta'));
   const sync = parseSetting('marketing.metaInsightsSync', byKey.get('marketing.metaInsightsSync'));
 
-  const lastDay = new Date(window.to.getTime() - DAY_MS);
+  // --- daily trend -----------------------------------------------------------
+  const sessionsByDay = new Map<string, { sessions: number; converted: number }>();
+  for (const row of daily) {
+    const key = row.day.toISOString().slice(0, 10);
+    const entry = sessionsByDay.get(key) ?? { sessions: 0, converted: 0 };
+    entry.sessions += row.sessions;
+    entry.converted += row.convertedSessions;
+    sessionsByDay.set(key, entry);
+  }
+  const ordersByDay = new Map(
+    bucketDaily(
+      attributed.map((order) => ({ at: order.placedAt, amount: order.grandTotal.toFixed(2) })),
+      window,
+    ).map((point) => [point.day, point]),
+  );
 
   return {
-    range,
-    from: storeDayKey(window.from),
-    to: storeDayKey(lastDay),
+    range: period.range,
+    from: period.from,
+    to: period.to,
+    daily: dayKeysIn(window).map((day) => ({
+      day,
+      sessions: sessionsByDay.get(day)?.sessions ?? 0,
+      convertedSessions: sessionsByDay.get(day)?.converted ?? 0,
+      orders: ordersByDay.get(day)?.orders ?? 0,
+      revenue: ordersByDay.get(day)?.revenue ?? '0.00',
+    })),
     sessions: { value: sessionsNow.sessions, change: percentChange(sessionsNow.sessions, sessionsBefore.sessions) },
     conversionRate: {
       value: ratio(sessionsNow.converted, sessionsNow.sessions),

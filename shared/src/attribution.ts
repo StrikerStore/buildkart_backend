@@ -86,6 +86,11 @@ export const orderAttributionSchema = z
     ipAddress: text(45),
     /** The storefront session (`bk_sid`) the order was placed in. */
     sessionId: text(64),
+    /**
+     * The shopper's answer to the consent banner, when the shop shows one.
+     * `denied` keeps them out of the server-side events Meta receives.
+     */
+    adConsent: z.enum(['granted', 'denied']).optional().catch(undefined),
   })
   .optional()
   .catch(undefined);
@@ -155,6 +160,16 @@ export function deriveChannel(touch: AttributionTouch | undefined | null): Acqui
   }
 
   return 'DIRECT';
+}
+
+/**
+ * The source to report for a touch: its `utm_source` tag, else the host of the
+ * site that referred it (`google.co.in`, `l.facebook.com`), else nothing.
+ * Sessions and orders both use this, so the Acquisition table lines up.
+ */
+export function touchSource(touch: AttributionTouch | undefined | null): string | null {
+  if (!touch) return null;
+  return touch.source ?? hostOf(touch.referrer)?.replace(/^www\./, '') ?? null;
 }
 
 /** True when a touch says anything about where the shopper came from. */

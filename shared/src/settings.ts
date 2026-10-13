@@ -453,6 +453,24 @@ export const SETTING_SCHEMAS = {
        * is blank the CAPI token is tried anyway, for a token that can do both.
        */
       insightsTokenEnc: encryptedSecretSchema,
+      /**
+       * The `facebook-domain-verification` code from Business settings →
+       * Brand safety → Domains. Rendered as a meta tag on every page.
+       */
+      domainVerification: z.string().default(''),
+      /**
+       * Report orders the shop takes at the counter or on the phone to Meta as
+       * offline conversions (`action_source: phone_call`), so ads that make the
+       * phone ring get credit. Off by default: it shares customers' hashed phone
+       * numbers for sales they did not place online.
+       */
+      reportCounterOrders: z.boolean().default(false),
+      /**
+       * Ask storefront visitors before the Meta Pixel runs. When on, the pixel
+       * starts revoked and only sends once the shopper accepts, and a shopper
+       * who declines is left out of the server-side events too.
+       */
+      consentBanner: z.boolean().default(false),
     })
     .default({
       enabled: false,
@@ -461,6 +479,9 @@ export const SETTING_SCHEMAS = {
       testEventCode: '',
       adAccountId: '',
       insightsTokenEnc: EMPTY_SECRET,
+      domainVerification: '',
+      reportCounterOrders: false,
+      consentBanner: false,
     }),
 
   /** When ad spend was last pulled from Meta, and why the last pull failed. Not secret. */
@@ -687,6 +708,11 @@ export const SETTINGS_DTO_KEYS = [
   'payments.snapmint',
   'rewards.wallet',
   'delivery.unloading',
+  /*
+   * Holds a sealed token, so the second rule applies: `getSettings` reads
+   * `pixelId` from it and nothing else.
+   */
+  'marketing.meta',
 ] as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;

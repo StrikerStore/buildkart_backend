@@ -32,6 +32,15 @@ export const metaMarketingSchema = z
       .default(''),
     insightsToken: z.string().trim().max(1024).default(''),
     clearInsightsToken: z.boolean().default(false),
+    /** Pasted as the code alone, or as the whole `<meta>` tag Meta shows. */
+    domainVerification: z
+      .string()
+      .trim()
+      .transform((value) => value.match(/content=["']?([A-Za-z0-9]+)/)?.[1] ?? value)
+      .pipe(z.string().regex(/^[A-Za-z0-9]{0,64}$/, 'Paste the code from Business settings → Domains'))
+      .default(''),
+    reportCounterOrders: z.boolean().default(false),
+    consentBanner: z.boolean().default(false),
   })
   .superRefine((value, ctx) => {
     if (value.enabled && value.pixelId === '') {

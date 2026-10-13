@@ -230,6 +230,22 @@ function websiteUrl(): string {
   return (process.env.WEBSITE_URL ?? '').trim().replace(/\/+$/, '');
 }
 
+/**
+ * A storefront link for a WhatsApp message, tagged so the visit it brings is
+ * credited to WhatsApp — and to the message that sent it — rather than counted
+ * as direct. Empty when WEBSITE_URL is not set, as before.
+ */
+export function messageLink(path: string, event: string): string {
+  const base = websiteUrl();
+  if (!base) return '';
+  const params = new URLSearchParams({
+    utm_source: 'whatsapp',
+    utm_medium: 'notification',
+    utm_campaign: event,
+  });
+  return `${base}${path}${path.includes('?') ? '&' : '?'}${params}`;
+}
+
 /** storeName, supportPhone and customerName — available to every event. */
 export async function commonTokens(
   customer: { name: string | null; locale: string } | null,
@@ -293,7 +309,6 @@ export function notifyOrder(
       });
       if (!order) return null;
 
-      const base = websiteUrl();
       return {
         event,
         recipient: toRecipient(order.customer),
@@ -303,7 +318,7 @@ export function notifyOrder(
           orderNumber: order.orderNumber,
           orderTotal: formatINR(order.grandTotal.toFixed(2)),
           itemCount: String(order._count.items),
-          orderUrl: base ? `${base}/account/orders/${order.id}` : '',
+          orderUrl: messageLink(`/account/orders/${order.id}`, event),
           ...extra,
         },
         dedupeKey: `${event}:${order.id}${keySuffix ? `:${keySuffix}` : ''}`,
@@ -331,7 +346,6 @@ export function notifyPaymentSession(
       });
       if (!session) return null;
 
-      const base = websiteUrl();
       return {
         event,
         recipient: toRecipient(session.customer),
@@ -339,7 +353,7 @@ export function notifyPaymentSession(
         values: {
           ...(await commonTokens(session.customer)),
           orderTotal: formatINR(session.grandTotal.toFixed(2)),
-          retryUrl: base ? `${base}/cart` : '',
+          retryUrl: messageLink('/cart', event),
           ...extra,
         },
         dedupeKey: `${event}:session:${session.id}`,

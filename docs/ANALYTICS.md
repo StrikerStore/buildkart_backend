@@ -2,7 +2,7 @@
 
 > **Goal:** give the owner what Shopify Analytics gives a merchant (sessions, a conversion funnel, sales by channel, AOV, new vs returning customers, product performance), **joined to Meta ad spend**. Then "is Meta paying for itself?" is answered from our own orders, not from Meta's self-reported numbers.
 >
-> **Status:** Phases 1–5 are built, with a first Analytics page from Phase 6. Phases 6 (the rest) and 7 are planned. Each phase can ship alone and adds value without the ones after it.
+> **Status:** All seven phases are built. Each phase can ship alone and adds value without the ones after it.
 
 ---
 
@@ -20,7 +20,7 @@ Nothing stores UTM parameters, `fbclid`, the referrer or the landing page. **An 
 
 ## Phase 1: Meta Pixel, browser events ✅ built
 
-**Config:** `META_PIXEL_ID` on the website service (Railway). Production value `1793332318385090`. It is read per request in `app/layout.tsx`, so it can be changed without a rebuild. Unset means no script and no events.
+**Config:** the pixel id is resolved per request in `website/app/layout.tsx`, in this order: `META_PIXEL_ID` on the **website** service; else the id the API reports in public settings (`marketing.metaPixelId`), which is the pixel id saved in Admin → Settings → Marketing, else `META_PIXEL_ID` on the **API** service. Production value `1793332318385090`. If none is set, there is no script and no events. Before contract 0.19.0, only the website's own variable worked.
 
 | Event | Fired from | Key params |
 |---|---|---|
@@ -344,11 +344,19 @@ model AdSpendDaily {
 
 ---
 
-## Phase 6: Admin analytics pages — first page built
+## Phase 6: Admin analytics pages ✅ built
 
-> **Built so far:** `admin/app/(dashboard)/analytics/page.tsx` (nav: Analytics, `orders:read`). It has KPI tiles (sessions, conversion rate, orders, revenue), the funnel, devices, sales by channel, and the Meta section (spend, ROAS, MER, CAC, and the campaign table). It reads one procedure: `marketing.analytics`.
->
-> **Still to do from the list below:** drill-down to ad set and ad, custom date ranges, a products report, customer cohorts, and CSV export.
+> **As built.**
+> - **Pages:** five, under `admin/app/(dashboard)/analytics/`, in nav as Analytics (`orders:read`). Each reads one procedure on the new `analytics` router (`api/src/routers/analytics.ts`):
+>   - **Overview** (`analytics.overview`): KPI tiles, sessions per day and conversion rate per day (two charts, one axis each), the funnel, devices, sales by channel, and the Meta summary.
+>   - **Acquisition** (`analytics.acquisition`): channel → source / medium with sessions, conversion, orders, new customers and revenue; top 25 landing pages. It warns when the period reaches past the 90 days raw sessions are kept.
+>   - **Meta ads** (`analytics.marketing`): spend per day and paid-social revenue per day; an expandable **campaign → ad set → ad** tree. Our own orders are matched by `utm_campaign` / `utm_term` / `utm_content`, which are the ids from the recommended Ads Manager parameters.
+>   - **Products** (`analytics.products`): viewers, cart adds, view→cart rate, units, orders and revenue, plus a "Viewed but not added" list.
+>   - **Customers** (`analytics.customers`): new vs returning customers and revenue, repeat rate, a 12-month cohort retention grid (single-hue heatmap with the value printed in every cell), and value per customer by first-order channel.
+> - **Period:** every page takes `?range=7d|30d|90d` or a custom `?from=YYYY-MM-DD&to=YYYY-MM-DD` (up to 366 days), resolved by `resolveAnalyticsPeriod` in `shared/src/analytics-period.ts` (unit-tested). The tabs carry the period between pages.
+> - **CSV:** every table downloads from the rows on screen (`components/analytics/CsvButton.tsx`), with formula-injection guarding and a UTF-8 BOM for Excel.
+> - **Tests:** cohort maths is `buildCohorts` (unit-tested). `marketing.analytics` stays as an alias for `analytics.overview`.
+> - **Contract:** **0.19.0**.
 
 A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (permission `analytics.view`). Sub-pages are under `admin/app/(dashboard)/analytics/`, with one tRPC router `analytics.*` in `api/src/routers/`, reading `AnalyticsDaily`, `AdSpendDaily`, `OrderAttribution`, `Order` and `ProductSignal`.
 
@@ -369,7 +377,28 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 
 ---
 
-## Phase 7: Catalog, extras, compliance
+## Phase 7: Catalog, extras, compliance ✅ built
+
+> **As built.** Everything below is switched on or configured in **Admin → Settings → Marketing**.
+> - **Catalog feed:** `https://<storefront>/feeds/meta.csv` (`website/app/feeds/meta.csv/route.ts`), from `storefront.catalogFeed` → `getCatalogFeed` (`core/src/read/catalog-feed.ts`).
+>   - **Item id** = product handle. **Price** is the advertised variant's compare-at price, with its selling price as `sale_price` when lower.
+>   - **Images** are 1024px. **Brand** falls back to the store name.
+>   - **Left out:** products with no image or no active variant.
+>   - **Register it** in Commerce Manager as a scheduled daily data feed.
+> - **Domain verification:** a `marketing.meta.domainVerification` setting (it accepts the code or the whole meta tag). It reaches the storefront through public settings and is rendered by `generateMetadata` in the layout.
+> - **CompleteRegistration:**
+>   - `verifyOtp` returns `isNewCustomer` and sends the server copy (`reportRegistration`, `register-<customerId>`).
+>   - The sign-in action leaves a 10-minute `bk_reg` cookie, and `<RegistrationEvent>` fires the browser copy with the same id on the page the redirect lands on.
+> - **Contact:** `<ContactLink>` sends `Contact` on every call and WhatsApp link (footer, help page, order page).
+> - **WhatsApp attribution:** links in the shop's own WhatsApp messages (`orderUrl`, `retryUrl`) carry `utm_source=whatsapp&utm_medium=notification&utm_campaign=<event>` (`messageLink` in `core/src/notify/dispatch.ts`).
+> - **Offline conversions:**
+>   - With `reportCounterOrders` on, admin-entered orders are sent as Purchase with `action_source: phone_call`. They carry no browser data; the hashed phone, name and address are what Meta matches on.
+>   - The cron sweep includes them too.
+> - **Consent (`consentBanner`):** the storefront shows Allow / Don't allow, stored in the `bk_consent` cookie for a year.
+>   - **Pixel:** it starts with `fbq('consent','revoke')` until the shopper allows.
+>   - **Server events:** `adConsent: denied` travels with the order and the sign-in, and those events are recorded as `SKIPPED` instead of sent.
+>   - **Not affected:** the shop's own sessions and attribution, which go to no third party.
+> - **IP retention:** IPs are cleared after 10 days (Phase 2).
 
 - **Meta catalog feed:** `website/app/feeds/meta/route.ts` (CSV), with `id = handle` (it **must** match the pixel's `content_ids`), title, description, availability, price `415.00 INR`, `sale_price`, link, `image_link` (Cloudflare-resized 1024px), brand and `google_product_category`. Register it in Commerce Manager. This enables **Advantage+ catalog ads** and dynamic retargeting ("you viewed UltraTech OPC 53, still need it?").
 - **Domain verification:** add Meta's `facebook-domain-verification` meta tag through `metadata.other` in `website/app/layout.tsx`. Then configure the Purchase event priority in Events Manager.
@@ -391,9 +420,17 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 | 2+3 | CAPI and attribution (ship together) | backend, contract, website, admin | 1 | ✅ done |
 | 4 | Sessions and funnel | backend, contract, website | 3 (channel rules) | ✅ done |
 | 5 | Meta insights pull | backend, admin | 2 (settings) | ✅ done |
-| 6 | Admin analytics pages | admin, backend | 3, 4, 5 (each page lights up as its data lands) | ~4–5 days |
-| 7 | Catalog feed and extras | website, backend | 1 | ~1–2 days |
+| 6 | Admin analytics pages | admin, backend | 3, 4, 5 (each page lights up as its data lands) | ✅ done |
+| 7 | Catalog feed and extras | website, backend | 1 | ✅ done |
 
 **Why 2 and 3 together:** CAPI's match quality depends on `fbp`, `fbc`, the IP and the user agent being captured with the order, and Phase 3 is what carries them there.
 
 **Can run in parallel:** 4 and 7. 5 can start as soon as the `marketing.meta` setting from Phase 2 exists.
+
+---
+
+## Privacy policy: suggested wording
+
+For the policy page (Admin → Website → Pages). This is a starting point, not legal advice; have it checked against the DPDP Act and its rules before publishing.
+
+> **Advertising and measurement.** We use Meta's (Facebook and Instagram) advertising tools to show our ads to people likely to need building materials, and to measure whether those ads lead to orders. When you visit our website, Meta's pixel may record the pages you view and the products you add to your cart. When you place an order or create an account, we send Meta the event together with your phone number, name and delivery city in a scrambled (hashed) form, so Meta can match it to an ad you saw without receiving those details in readable form. We also keep, on our own systems, how you reached our website (for example, the ad or link you clicked) to understand which of our marketing works. We do not sell your information. [If the consent banner is on:] You can choose whether to allow Meta measurement using the banner shown on your first visit, and change it by clearing this site's cookies.

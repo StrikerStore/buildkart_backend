@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { creditedTouch, deriveChannel, orderAttributionSchema } from './attribution.ts';
+import { creditedTouch, deriveChannel, orderAttributionSchema, touchSource } from './attribution.ts';
 
 test('the Ads Manager URL parameters land as paid social', () => {
   assert.equal(
@@ -67,4 +67,11 @@ test('a mangled cookie costs the attribution, never the order', () => {
 test('over-long values are cut, not refused', () => {
   const parsed = orderAttributionSchema.parse({ last: { source: 'x'.repeat(500) } });
   assert.equal(parsed?.last?.source?.length, 100);
+});
+
+test('the reported source is the tag, else the referring host', () => {
+  assert.equal(touchSource({ source: 'facebook', referrer: 'https://www.google.com/' }), 'facebook');
+  assert.equal(touchSource({ referrer: 'https://www.google.co.in/' }), 'google.co.in');
+  assert.equal(touchSource({ landingPath: '/' }), null);
+  assert.equal(touchSource(undefined), null);
 });

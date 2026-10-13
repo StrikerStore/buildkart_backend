@@ -901,6 +901,17 @@ export type SettingsDto = {
   wallet: WalletRulesDto;
   /** The unloading service offered in the cart. */
   unloading: UnloadingServiceDto;
+  /**
+   * The Meta Pixel the storefront loads. Public by nature — the id is in the
+   * page source of every site that runs a pixel. Null when none is set.
+   */
+  marketing: {
+    metaPixelId: string | null;
+    /** The `facebook-domain-verification` meta tag's content, if set. */
+    domainVerification: string | null;
+    /** Ask before the Meta Pixel runs. */
+    consentBanner: boolean;
+  };
 };
 
 export type DistancePricingDto = {
@@ -2155,6 +2166,12 @@ export type CustomerIdentityDto = {
   id: string;
   phone: string;
   name: string | null;
+  /**
+   * True when this sign-in created the account — what the storefront reports
+   * to Meta as CompleteRegistration. False for a returning customer, and for
+   * one the shop created earlier from a phone order.
+   */
+  isNewCustomer?: boolean;
 };
 
 export type OtpRequestDto = {
@@ -2650,7 +2667,8 @@ export type MarketingEventDto = {
   orderId: string | null;
   orderNumber: string | null;
   value: string | null;
-  status: 'PENDING' | 'SENT' | 'FAILED';
+  /** SKIPPED: not sent, because the shopper declined ad tracking. */
+  status: 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED';
   attempts: number;
   lastError: string | null;
   /** Sent with Meta's test code, so it went to Test events rather than live data. */
@@ -2667,6 +2685,9 @@ export type MetaMarketingDto = {
   testEventCode: string;
   adAccountId: string;
   insightsToken: SecretFieldDto;
+  domainVerification: string;
+  reportCounterOrders: boolean;
+  consentBanner: boolean;
   insightsSync: {
     lastRunAt: string | null;
     lastOkAt: string | null;
@@ -2732,10 +2753,12 @@ export type CampaignPerformanceDto = {
 
 // from core/src/read/marketing-analytics.ts
 export type MarketingAnalyticsDto = {
-  range: AnalyticsRange;
+  range: AnalyticsRange | 'custom';
   /** "YYYY-MM-DD", inclusive. */
   from: string;
   to: string;
+  /** Sessions, orders and revenue per store day, for the trend charts. */
+  daily: OverviewPointDto[];
   sessions: { value: number; change: number | null };
   conversionRate: { value: number | null; change: number | null };
   returningRate: number | null;
@@ -2769,4 +2792,155 @@ export type MarketingAnalyticsDto = {
     untaggedOrders: number;
     campaigns: CampaignPerformanceDto[];
   };
+};
+
+// from core/src/read/analytics-reports.ts
+export type OverviewPointDto = {
+  /** "YYYY-MM-DD" in store time. */
+  day: string;
+  sessions: number;
+  convertedSessions: number;
+  orders: number;
+  revenue: string;
+};
+
+// from core/src/read/analytics-reports.ts
+export type AnalyticsPeriodDto = {
+  range: AnalyticsRange | 'custom';
+  from: string;
+  to: string;
+  days: number;
+};
+
+// from core/src/read/analytics-reports.ts
+export type AcquisitionRowDto = {
+  channel: string;
+  channelLabel: string;
+  /** utm_source, or the referring site's host when there was no tag. */
+  source: string | null;
+  medium: string | null;
+  sessions: number;
+  convertedSessions: number;
+  conversionRate: number | null;
+  orders: number;
+  revenue: string;
+  newCustomers: number;
+};
+
+// from core/src/read/analytics-reports.ts
+export type AcquisitionDto = {
+  period: AnalyticsPeriodDto;
+  rows: AcquisitionRowDto[];
+  landingPages: Array<{
+    path: string;
+    sessions: number;
+    convertedSessions: number;
+    conversionRate: number | null;
+  }>;
+  /**
+   * False when the period reaches back past the 90 days raw sessions are kept:
+   * session counts by source cover only the part still held.
+   */
+  sessionsComplete: boolean;
+};
+
+// from core/src/read/analytics-reports.ts
+/** One campaign, ad set or ad, with the shop's own orders matched to it. */
+export type AdNodeDto = {
+  id: string;
+  name: string;
+  spend: string;
+  impressions: number;
+  linkClicks: number;
+  ctr: number | null;
+  cpm: string | null;
+  metaPurchases: number;
+  metaPurchaseValue: string;
+  orders: number;
+  revenue: string;
+  roas: number | null;
+  metaRoas: number | null;
+  cpa: string | null;
+  children: AdNodeDto[];
+};
+
+// from core/src/read/analytics-reports.ts
+export type MarketingReportDto = {
+  period: AnalyticsPeriodDto;
+  configured: boolean;
+  lastOkAt: string | null;
+  lastError: string | null;
+  totals: Omit<AdNodeDto, 'id' | 'name' | 'children'>;
+  daily: Array<{ day: string; spend: string; revenue: string; metaPurchaseValue: string }>;
+  /** Campaign → ad set → ad. */
+  campaigns: AdNodeDto[];
+  untaggedOrders: number;
+};
+
+// from core/src/read/analytics-reports.ts
+export type ProductPerformanceDto = {
+  productId: string;
+  handle: string;
+  name: string;
+  /** Visitor-days that opened the product page. */
+  views: number;
+  /** Visitor-days that added it to a cart. */
+  carts: number;
+  viewToCart: number | null;
+  units: number;
+  orders: number;
+  revenue: string;
+};
+
+// from core/src/read/analytics-reports.ts
+export type ProductReportDto = {
+  period: AnalyticsPeriodDto;
+  rows: ProductPerformanceDto[];
+};
+
+// from core/src/read/analytics-reports.ts
+export type CustomerReportDto = {
+  period: AnalyticsPeriodDto;
+  customers: number;
+  newCustomers: number;
+  returningCustomers: number;
+  newRevenue: string;
+  returningRevenue: string;
+  /** Of the customers who ordered in the period, the share with two or more orders ever. */
+  repeatRate: number | null;
+  /** Monthly cohorts by first order: share of each cohort ordering N months later. */
+  cohorts: Array<{ month: string; size: number; retention: Array<number | null> }>;
+  /** Customers grouped by where their first order came from (attributed orders only). */
+  ltvByChannel: Array<{
+    channel: string;
+    label: string;
+    customers: number;
+    ordersPerCustomer: number;
+    revenuePerCustomer: string;
+  }>;
+};
+
+// from core/src/read/catalog-feed.ts
+/**
+ * One product as Meta's catalog takes it. `handle` is the item id — the same id
+ * the Pixel sends as `content_ids`, which is what lets catalog ads match views
+ * and purchases to products.
+ */
+export type CatalogFeedItemDto = {
+  handle: string;
+  title: string;
+  /** Plain text, HTML stripped, at most 5000 characters. */
+  description: string;
+  brand: string | null;
+  productType: string | null;
+  googleProductCategory: string | null;
+  /** Main image first, then up to nine more. R2 keys; the storefront turns them into URLs. */
+  imageKeys: string[];
+  /** The list price of the advertised variant: the compare-at price when on sale. */
+  price: string;
+  /** The selling price when lower than `price`. */
+  salePrice: string | null;
+  inStock: boolean;
+  /** Units on hand when stock is tracked, else null. */
+  quantity: number | null;
 };

@@ -65,6 +65,9 @@ export async function saveMetaMarketing(actor: Actor, input: unknown): Promise<A
     testEventCode: data.testEventCode,
     adAccountId: data.adAccountId,
     insightsTokenEnc,
+    domainVerification: data.domainVerification,
+    reportCounterOrders: data.reportCounterOrders,
+    consentBanner: data.consentBanner,
   };
 
   await prisma.setting.upsert({
@@ -87,6 +90,9 @@ export async function saveMetaMarketing(actor: Actor, input: unknown): Promise<A
       adAccountId: data.adAccountId,
       insightsTokenChanged: Boolean(data.insightsToken),
       insightsTokenCleared: data.clearInsightsToken,
+      domainVerificationSet: Boolean(data.domainVerification),
+      reportCounterOrders: data.reportCounterOrders,
+      consentBanner: data.consentBanner,
     },
   });
 

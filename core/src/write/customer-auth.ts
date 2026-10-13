@@ -17,6 +17,7 @@ import {
   actionError,
   actionErrorFromZod,
   actionOk,
+  orderAttributionSchema,
   phoneSchema,
   type ActionResult,
   type CustomerIdentityDto,
@@ -24,6 +25,7 @@ import {
 } from '@buildkart/shared';
 import { z } from 'zod';
 import { notifyCustomer, sendWhatsappOtp } from '../notify/dispatch.ts';
+import { reportRegistrationInBackground } from '../marketing/meta-capi.ts';
 import { grantSignupBonus, loadWalletRules } from './wallet.ts';
 
 /** Six digits: what fits in an SMS and what a person can hold in their head. */
@@ -60,6 +62,12 @@ const verifySchema = z.object({
     .regex(new RegExp(`^\\d{${CODE_LENGTH}}$`), `Enter the ${CODE_LENGTH}-digit code`),
   /** The "updates on WhatsApp" box on the sign-in form. Absent means not shown. */
   whatsappOptIn: z.boolean().optional(),
+  /**
+   * The shopper's browser ids, user agent and ad-consent answer, for the
+   * server copy of CompleteRegistration. Marketing only; a bad value is
+   * dropped, never a reason to refuse a sign-in.
+   */
+  attribution: orderAttributionSchema,
 });
 
 /**
@@ -215,7 +223,7 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
   const parsed = verifySchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
 
-  const { phone, code, whatsappOptIn } = parsed.data;
+  const { phone, code, whatsappOptIn, attribution } = parsed.data;
   const now = new Date();
 
   const otp = await prisma.customerOtp.findFirst({
@@ -287,11 +295,15 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
   }
 
   // Created by this sign-in, not by a phone order the shop took earlier.
-  if (customer.createdAt.getTime() >= now.getTime() - 1000) {
+  const isNewCustomer = customer.createdAt.getTime() >= now.getTime() - 1000;
+  if (isNewCustomer) {
     notifyCustomer('customer.welcome', customer.id, {}, `customer.welcome:${customer.id}`);
+    // Meta's CompleteRegistration, server side; the storefront sends the
+    // browser copy with the same event id once the redirect lands.
+    reportRegistrationInBackground(customer.id, attribution);
   }
 
-  return actionOk({ id: customer.id, phone: customer.phone, name: customer.name });
+  return actionOk({ id: customer.id, phone: customer.phone, name: customer.name, isNewCustomer });
 }
 
 /**

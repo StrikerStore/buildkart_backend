@@ -14,6 +14,8 @@ export type MetaCapiConfig = {
   accessToken: string;
   /** Set while the owner is checking events in Events Manager → Test events. */
   testEventCode: string | null;
+  /** Report counter and phone orders as offline conversions. */
+  reportCounterOrders: boolean;
 };
 
 /** Switched on but unusable. The message is safe to show an admin. */
@@ -51,6 +53,7 @@ export async function metaCapiConfig(
     pixelId: stored.pixelId,
     accessToken,
     testEventCode: stored.testEventCode || null,
+    reportCounterOrders: stored.reportCounterOrders,
   };
 }
 

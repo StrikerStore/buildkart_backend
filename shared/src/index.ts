@@ -31,6 +31,7 @@ export * from './delivery-pricing.ts';
 export * from './discounts.ts';
 export * from './wallet.ts';
 export * from './analytics.ts';
+export * from './analytics-period.ts';
 export * from './attribution.ts';
 export * from './sessions.ts';
 export * from './trending.ts';
