@@ -221,7 +221,7 @@ export async function saveWhatsappProvider(
     });
   }
 
-  const value = { enabled: data.enabled, apiKeyEnc };
+  const value = { enabled: data.enabled, apiKeyEnc, alertPhones: data.alertPhones };
 
   await prisma.setting.upsert({
     where: { key: 'notifications.whatsapp' },
@@ -238,6 +238,7 @@ export async function saveWhatsappProvider(
       enabled: data.enabled,
       keyChanged: Boolean(data.apiKey.trim()),
       keyCleared: data.clearApiKey,
+      alertPhones: data.alertPhones.length,
     },
   });
 

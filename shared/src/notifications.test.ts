@@ -146,12 +146,12 @@ test('the rupee sign is not GSM and forces unicode', () => {
 
 test('a realistic order message fits one English segment', () => {
   const body = previewTemplate(
-    'Hi {{customerName}}, we have your order {{orderNumber}} for {{orderTotal}}. We will call to confirm. - {{storeName}}',
+    'Hi {{customerName}}, we have your order {{orderNumber}} for ₹{{orderTotal}}. We will call to confirm. - {{storeName}}',
     'order.placed',
   );
   const result = smsLength(body);
-  // It contains a rupee sign, so it is unicode — and therefore does NOT fit in
-  // one segment. Exactly the thing the counter exists to show.
+  // The template writes the rupee sign itself, so it is unicode — and therefore
+  // does NOT fit in one segment. Exactly the thing the counter exists to show.
   assert.equal(result.unicode, true);
   assert.ok(result.segments >= 2);
 });

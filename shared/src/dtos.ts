@@ -1506,6 +1506,8 @@ export type NotificationProvidersDto = {
   whatsapp: {
     enabled: boolean;
     apiKey: SecretFieldDto;
+    /** Shop numbers told about every new order, ten digits each. */
+    alertPhones: string[];
   };
   email: {
     enabled: boolean;

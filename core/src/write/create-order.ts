@@ -36,7 +36,7 @@ import {
 } from '@buildkart/shared';
 import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
-import { notifyOrder } from '../notify/dispatch.ts';
+import { notifyOrder, notifyShopOfOrder } from '../notify/dispatch.ts';
 import { afterOrderWritten } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import { allocateOrderNumber } from './order-number.ts';
@@ -639,6 +639,7 @@ export async function writeOrder(
   // Every path that makes an order comes through here — COD, the counter, and
   // an online payment once it has landed — so this is the one place to say so.
   notifyOrder('order.placed', created.order.id);
+  notifyShopOfOrder(created.order.id);
 
   /*
    * Marketing, after the commit and never inside it: where the order came

@@ -14,6 +14,7 @@ import {
   whatsappParam,
 } from './notifications.ts';
 import { advanceOrderStatusSchema } from './schemas/order.ts';
+import { whatsappProviderSchema } from './schemas/notification.ts';
 import { toWhatsappNumber } from './phone.ts';
 
 test('named tokens become positional, numbered by first appearance', () => {
@@ -105,4 +106,17 @@ test('sending out for delivery needs an expected time; other moves do not', () =
       .success,
     true,
   );
+});
+
+test('alert numbers are cleaned to ten digits, blanks and repeats dropped', () => {
+  const parsed = whatsappProviderSchema.parse({
+    alertPhones: ['+91 98260-12345', '', '9826012345', '7477075458'],
+  });
+  assert.deepEqual(parsed.alertPhones, ['9826012345', '7477075458']);
+});
+
+test('a bad alert number, or too many, is refused', () => {
+  assert.equal(whatsappProviderSchema.safeParse({ alertPhones: ['12345'] }).success, false);
+  const six = ['9826012341', '9826012342', '9826012343', '9826012344', '9826012345', '9826012346'];
+  assert.equal(whatsappProviderSchema.safeParse({ alertPhones: six }).success, false);
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   EMAIL_PROVIDERS,
+  MAX_ALERT_PHONES,
   NOTIFICATION_CHANNELS,
   NOTIFICATION_EVENTS,
   SMS_PROVIDERS,
@@ -8,6 +9,7 @@ import {
   needsProviderTemplateId,
   unknownTokens,
 } from '../notifications.ts';
+import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 import { encryptedSecretSchema } from '../secrets.ts';
 
 /** en or hi. One template per language, so a Hindi customer is not sent English. */
@@ -98,6 +100,25 @@ export const whatsappProviderSchema = z.object({
   enabled: z.boolean().default(false),
   apiKey: secretField,
   clearApiKey: z.boolean().default(false),
+  /**
+   * The shop's own numbers, told about every new order. Blank entries are
+   * dropped; each one left must be a real mobile, stored as its ten digits.
+   */
+  alertPhones: z
+    .array(z.string().trim().max(20))
+    .default([])
+    .transform((phones) => phones.filter((phone) => phone !== ''))
+    .pipe(
+      z
+        .array(
+          z
+            .string()
+            .refine((phone) => indianMobileError(phone) === null, 'Enter a valid 10-digit mobile number')
+            .transform((phone) => normalizeIndianMobile(phone)),
+        )
+        .max(MAX_ALERT_PHONES, `At most ${MAX_ALERT_PHONES} numbers`)
+        .transform((phones) => [...new Set(phones)]),
+    ),
 });
 
 export const emailProviderSchema = z
@@ -145,6 +166,7 @@ export const storedSmsSchema = z.object({
 export const storedWhatsappSchema = z.object({
   enabled: z.boolean().default(false),
   apiKeyEnc: encryptedSecretSchema,
+  alertPhones: z.array(z.string()).default([]),
 });
 
 export const storedEmailSchema = z.object({

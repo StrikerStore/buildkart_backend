@@ -121,6 +121,28 @@ export function formatINR(money: string): string {
   return paise % 100 === 0 ? INR_WHOLE.format(rupees) : INR_PAISE.format(rupees);
 }
 
+const AMOUNT_WHOLE = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+const AMOUNT_PAISE = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * `formatINR` without the rupee sign: "12480.00" -> "12,480", "410.50" -> "410.50".
+ *
+ * For text that supplies its own symbol — a WhatsApp template that already
+ * says "₹{{2}}" or "Rs. {{2}}" would otherwise print it twice.
+ */
+export function formatAmount(money: string): string {
+  const paise = toPaise(money);
+  const rupees = paise / 100;
+  return paise % 100 === 0 ? AMOUNT_WHOLE.format(rupees) : AMOUNT_PAISE.format(rupees);
+}
+
 /** "₹410 / bag" — the unit label comes from the variant. */
 export function formatUnitPrice(money: string, unitLabel?: string | null): string {
   const base = formatINR(money);

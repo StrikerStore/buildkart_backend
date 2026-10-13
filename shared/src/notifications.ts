@@ -26,6 +26,7 @@ export const NOTIFICATION_EVENTS = [
   'delivery.areaNowServiced',
   'customer.otp',
   'customer.welcome',
+  'shop.orderPlaced',
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 
@@ -42,6 +43,7 @@ export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
   'delivery.areaNowServiced': 'We now deliver to your area',
   'customer.otp': 'Sign-in code',
   'customer.welcome': 'Welcome',
+  'shop.orderPlaced': 'New order alert',
 };
 
 export const NOTIFICATION_EVENT_HINTS: Record<NotificationEvent, string> = {
@@ -57,6 +59,8 @@ export const NOTIFICATION_EVENT_HINTS: Record<NotificationEvent, string> = {
   'delivery.areaNowServiced': 'Answers a pincode request from someone you could not reach before.',
   'customer.otp': 'The sign-in code itself. Never turn this into marketing.',
   'customer.welcome': 'First order, or first sign-in.',
+  'shop.orderPlaced':
+    'To the shop, not the customer: every new order, to each alert number saved with the WhatsApp provider.',
 };
 
 /**
@@ -66,7 +70,7 @@ export const NOTIFICATION_EVENT_HINTS: Record<NotificationEvent, string> = {
  * buckets by, and an event whose prefix is missing renders nowhere at all.
  * `notifications.test.ts` holds that.
  */
-export const NOTIFICATION_GROUPS = ['order', 'payment', 'delivery', 'customer'] as const;
+export const NOTIFICATION_GROUPS = ['order', 'payment', 'delivery', 'customer', 'shop'] as const;
 export type NotificationGroup = (typeof NOTIFICATION_GROUPS)[number];
 
 export const NOTIFICATION_GROUP_LABELS: Record<NotificationGroup, string> = {
@@ -74,6 +78,7 @@ export const NOTIFICATION_GROUP_LABELS: Record<NotificationGroup, string> = {
   payment: 'Payments',
   delivery: 'Delivery',
   customer: 'Customers',
+  shop: 'Shop alerts',
 };
 
 export function eventGroup(event: NotificationEvent): NotificationGroup {
@@ -105,7 +110,7 @@ const COMMON_TOKENS: TokenSpec[] = [
 
 const ORDER_TOKENS: TokenSpec[] = [
   { token: 'orderNumber', sample: 'BK-1042' },
-  { token: 'orderTotal', sample: '₹12,480.00' },
+  { token: 'orderTotal', sample: '12,480', note: 'The amount only — write ₹ in the message.' },
   { token: 'itemCount', sample: '3' },
   {
     token: 'itemList',
@@ -162,7 +167,7 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
    */
   'payment.failed': [
     ...COMMON_TOKENS,
-    { token: 'orderTotal', sample: '₹12,480.00' },
+    { token: 'orderTotal', sample: '12,480', note: 'The amount only — write ₹ in the message.' },
     { token: 'failureReason', sample: 'Card declined' },
     { token: 'retryUrl', sample: 'https://buildkart.co/cart' },
   ],
@@ -193,7 +198,21 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
     { token: 'expiryMinutes', sample: '10' },
   ],
   'customer.welcome': [...COMMON_TOKENS],
+  'shop.orderPlaced': [
+    ...COMMON_TOKENS,
+    ...ORDER_TOKENS,
+    { token: 'customerPhone', sample: '+91 98260 12345' },
+    { token: 'paymentMethod', sample: 'Cash on delivery' },
+    {
+      token: 'adminOrderUrl',
+      sample: 'https://admin.buildkart.co/orders/clx123',
+      note: 'The order in the admin. Needs ADMIN_URL set on the API server.',
+    },
+  ],
 };
+
+/** How many shop numbers a new-order alert can go to. */
+export const MAX_ALERT_PHONES = 5;
 
 /** Above this, a WhatsApp parameter starts to crowd out the rest of the message. */
 const ITEM_LIST_BUDGET = 600;

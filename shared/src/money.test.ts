@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatINR } from './money.ts';
+import { formatAmount, formatINR } from './money.ts';
 
 test('money never renders with a single decimal place', () => {
   // A whole amount drops its paise entirely — construction prices are
@@ -18,4 +18,11 @@ test('money never renders with a single decimal place', () => {
 test('large amounts group the Indian way', () => {
   assert.equal(formatINR('226889.50'), '₹2,26,889.50');
   assert.equal(formatINR('100000.00'), '₹1,00,000');
+});
+
+test('an amount without the rupee sign keeps Indian grouping and real paise', () => {
+  assert.equal(formatAmount('12480.00'), '12,480');
+  assert.equal(formatAmount('1250000.00'), '12,50,000');
+  assert.equal(formatAmount('410.50'), '410.50');
+  assert.equal(formatAmount('0.00'), '0');
 });

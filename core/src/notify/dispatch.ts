@@ -23,8 +23,9 @@
  */
 import { prisma, Prisma } from '@buildkart/database';
 import {
+  PAYMENT_METHOD_LABELS,
+  formatAmount,
   formatDeliveryAddress,
-  formatINR,
   formatItemList,
   formatStoreDateTime,
   parseAddressSnapshot,
@@ -319,51 +320,120 @@ export function notifyOrder(
 ): void {
   notifyInBackground(
     (async (): Promise<NotifyInput | null> => {
-      const order = await prisma.order.findUnique({
-        where: { id: orderId },
-        select: {
-          id: true,
-          orderNumber: true,
-          grandTotal: true,
-          addressSnapshot: true,
-          expectedDeliveryAt: true,
-          deliveredAt: true,
-          customer: { select: RECIPIENT_SELECT },
-          items: { select: { variantSnapshot: true, quantity: true }, orderBy: { id: 'asc' } },
-        },
-      });
-      if (!order) return null;
-
-      const items = order.items.map((item) => {
-        const snapshot = parseVariantSnapshot(item.variantSnapshot);
-        const hindi = order.customer.locale === 'hi' && snapshot.nameHi;
-        return {
-          name: (hindi ? snapshot.nameHi : snapshot.nameEn) ?? snapshot.nameEn,
-          options: snapshot.optionValues,
-          quantity: item.quantity,
-        };
-      });
-
+      const loaded = await loadOrderValues(orderId, event);
+      if (!loaded) return null;
       return {
         event,
-        recipient: toRecipient(order.customer),
-        orderId: order.id,
-        values: {
-          ...(await commonTokens(order.customer)),
-          orderNumber: order.orderNumber,
-          orderTotal: formatINR(order.grandTotal.toFixed(2)),
-          itemCount: String(items.length),
-          itemList: formatItemList(items),
-          deliveryAddress: formatDeliveryAddress(parseAddressSnapshot(order.addressSnapshot)),
-          expectedDelivery: order.expectedDeliveryAt ? formatStoreDateTime(order.expectedDeliveryAt) : '',
-          deliveredOn: order.deliveredAt ? formatStoreDateTime(order.deliveredAt) : '',
-          orderUrl: messageLink(`/account/orders/${order.id}`, event),
-          ...extra,
-        },
-        dedupeKey: `${event}:${order.id}${keySuffix ? `:${keySuffix}` : ''}`,
+        recipient: toRecipient(loaded.order.customer),
+        orderId,
+        values: { ...loaded.values, ...extra },
+        dedupeKey: `${event}:${orderId}${keySuffix ? `:${keySuffix}` : ''}`,
       };
     })(),
   );
+}
+
+/**
+ * The order tokens every order message can use, read once from the order.
+ *
+ * Item names follow the customer's language, because the customer is who
+ * these are usually for; the shop's own alert overrides that below.
+ */
+async function loadOrderValues(orderId: string, event: NotificationEvent, locale?: string) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      grandTotal: true,
+      paymentMethod: true,
+      addressSnapshot: true,
+      expectedDeliveryAt: true,
+      deliveredAt: true,
+      customer: { select: RECIPIENT_SELECT },
+      items: { select: { variantSnapshot: true, quantity: true }, orderBy: { id: 'asc' } },
+    },
+  });
+  if (!order) return null;
+
+  const language = locale ?? order.customer.locale;
+  const items = order.items.map((item) => {
+    const snapshot = parseVariantSnapshot(item.variantSnapshot);
+    const hindi = language === 'hi' && snapshot.nameHi;
+    return {
+      name: (hindi ? snapshot.nameHi : snapshot.nameEn) ?? snapshot.nameEn,
+      options: snapshot.optionValues,
+      quantity: item.quantity,
+    };
+  });
+
+  return {
+    order,
+    values: {
+      ...(await commonTokens(order.customer)),
+      orderNumber: order.orderNumber,
+      // A bare amount: the template carries its own ₹ or "Rs.".
+      orderTotal: formatAmount(order.grandTotal.toFixed(2)),
+      itemCount: String(items.length),
+      itemList: formatItemList(items),
+      deliveryAddress: formatDeliveryAddress(parseAddressSnapshot(order.addressSnapshot)),
+      expectedDelivery: order.expectedDeliveryAt ? formatStoreDateTime(order.expectedDeliveryAt) : '',
+      deliveredOn: order.deliveredAt ? formatStoreDateTime(order.deliveredAt) : '',
+      orderUrl: messageLink(`/account/orders/${order.id}`, event),
+    } as Record<string, string>,
+  };
+}
+
+/** The order in the admin, or empty while ADMIN_URL is not set. */
+function adminOrderUrl(orderId: string): string {
+  const base = (process.env.ADMIN_URL ?? '').trim().replace(/\/+$/, '');
+  return base ? `${base}/orders/${orderId}` : '';
+}
+
+/**
+ * Tells the shop about a new order: one WhatsApp to each alert number saved
+ * with the WhatsApp provider, through the "New order alert" campaign.
+ *
+ * These go to the shop's own phones, so the customer's opt-in has nothing to
+ * say about them, and each number is its own message — one number that fails
+ * does not stop the others.
+ */
+export function notifyShopOfOrder(orderId: string): void {
+  void (async () => {
+    const row = await prisma.setting.findUnique({ where: { key: 'notifications.whatsapp' } });
+    const phones = parseSetting('notifications.whatsapp', row?.value).alertPhones;
+    if (phones.length === 0) return;
+
+    const event: NotificationEvent = 'shop.orderPlaced';
+    const loaded = await loadOrderValues(orderId, event, 'en');
+    if (!loaded) return;
+
+    const { order } = loaded;
+    const values: Record<string, string> = {
+      ...loaded.values,
+      // The shop wants the name on the order, not "there".
+      customerName: order.customer.name?.trim() || 'Customer',
+      customerPhone: `+91 ${order.customer.phone}`,
+      paymentMethod: PAYMENT_METHOD_LABELS[order.paymentMethod] ?? order.paymentMethod,
+      adminOrderUrl: adminOrderUrl(orderId),
+    };
+
+    for (const phone of phones) {
+      await notify({
+        event,
+        recipient: {
+          customerId: null,
+          name: `${values.storeName ?? 'Shop'} team`,
+          phone,
+          locale: 'en',
+          optedIn: true,
+        },
+        orderId,
+        values,
+        dedupeKey: `${event}:${orderId}:${phone}`,
+      });
+    }
+  })().catch((error: unknown) => console.error('[notify] shop alert', error));
 }
 
 /**
@@ -391,7 +461,7 @@ export function notifyPaymentSession(
         paymentSessionId: session.id,
         values: {
           ...(await commonTokens(session.customer)),
-          orderTotal: formatINR(session.grandTotal.toFixed(2)),
+          orderTotal: formatAmount(session.grandTotal.toFixed(2)),
           retryUrl: messageLink('/cart', event),
           ...extra,
         },

@@ -408,8 +408,10 @@ export const SETTING_SCHEMAS = {
        * is not a Campaign API key and must not be sent as one.
        */
       apiKeyEnc: encryptedSecretSchema,
+      /** The shop's numbers for new-order alerts, as ten digits each. */
+      alertPhones: z.array(z.string()).default([]),
     })
-    .default({ enabled: false, apiKeyEnc: EMPTY_SECRET }),
+    .default({ enabled: false, apiKeyEnc: EMPTY_SECRET, alertPhones: [] }),
 
   /**
    * Meta (Facebook / Instagram) ads: the Conversions API.

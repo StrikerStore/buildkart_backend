@@ -131,6 +131,7 @@ async function readProviders(): Promise<NotificationProvidersDto> {
     whatsapp: {
       enabled: whatsapp.enabled,
       apiKey: maskSecret(whatsapp.apiKeyEnc),
+      alertPhones: whatsapp.alertPhones,
     },
     email: {
       enabled: email.enabled,
