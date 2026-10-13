@@ -46,6 +46,7 @@ import {
   listMyWalletEntries,
   listServiceableAreas,
   placeCustomerOrder,
+  requestCodOtp,
   placeLocation,
   priceCart,
   recordProductSignal,
@@ -323,6 +324,14 @@ export const storefrontRouter = router({
   placeOrder: customerProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => placeCustomerOrder(ctx.actor, input)),
+
+  /*
+   * Cash on delivery is confirmed with a WhatsApp code before it is placed.
+   * Same payload as `placeOrder`; the code goes to the account's own phone.
+   */
+  requestCodOtp: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => requestCodOtp(ctx.actor, input, ctx.clientIp)),
 
   // --- paying online ------------------------------------------------------
 

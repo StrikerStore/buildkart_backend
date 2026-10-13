@@ -280,6 +280,12 @@ export const placeOrderSchema = z.object({
   unloading: z.boolean().default(false),
 
   /**
+   * Cash on delivery only: the code sent to the customer's WhatsApp to confirm
+   * the order is really theirs. Required for COD — see `placeCustomerOrder`.
+   */
+  codOtp: z.string().trim().max(12).optional(),
+
+  /**
    * How the shopper reached the shop — UTM tags, ad click ids, the referrer —
    * from the storefront's `bk_attr` cookie. Marketing data only: it never
    * changes what the order costs or whether it is accepted, and a malformed

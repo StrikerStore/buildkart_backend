@@ -132,11 +132,7 @@ async function sendOtp(phone: string, code: string): Promise<'sent' | 'off' | 'f
 }
 
 /**
- * Asks for a code.
- *
- * Rate limited per phone over a rolling window, counting codes *sent* rather
- * than sign-ins attempted — the cost being defended is the SMS bill and the
- * nuisance to whoever owns that number, both of which are paid on send.
+ * Asks for a sign-in code.
  *
  * Deliberately does **not** say whether the number belongs to an existing
  * customer. Answering that turns this endpoint into a way to test whether
@@ -150,17 +146,6 @@ export async function requestOtp(
   if (!parsed.success) return actionErrorFromZod(parsed.error);
 
   const { phone } = parsed.data;
-  const now = new Date();
-  const since = new Date(now.getTime() - SEND_WINDOW_MINUTES * 60_000);
-
-  const recent = await prisma.customerOtp.count({
-    where: { phone, createdAt: { gte: since } },
-  });
-  if (recent >= MAX_SENDS) {
-    return actionError(
-      `Too many codes requested. Try again in ${SEND_WINDOW_MINUTES} minutes.`,
-    );
-  }
 
   /*
    * A blocked customer is refused here rather than at verify. Sending a code to
@@ -175,22 +160,56 @@ export async function requestOtp(
     return actionError('This number cannot be used to sign in. Please call us.');
   }
 
+  return issueOtp(phone, 'LOGIN', ip);
+}
+
+/**
+ * What a code is for. Kept apart so a code sent to confirm a cash-on-delivery
+ * order can never sign anybody in, and a sign-in code never places an order.
+ */
+export type OtpPurpose = 'LOGIN' | 'COD';
+
+/**
+ * Mints a code for a phone and sends it on WhatsApp, through the same
+ * "Sign-in code" campaign whatever it is for.
+ *
+ * Rate limited per phone over a rolling window, counting codes *sent* of any
+ * purpose — the cost being defended is the message bill and the nuisance to
+ * whoever owns that number, both of which are paid on send.
+ */
+export async function issueOtp(
+  phone: string,
+  purpose: OtpPurpose,
+  ip: string | null,
+): Promise<ActionResult<OtpRequestDto>> {
+  const now = new Date();
+  const since = new Date(now.getTime() - SEND_WINDOW_MINUTES * 60_000);
+
+  const recent = await prisma.customerOtp.count({
+    where: { phone, createdAt: { gte: since } },
+  });
+  if (recent >= MAX_SENDS) {
+    return actionError(
+      `Too many codes requested. Try again in ${SEND_WINDOW_MINUTES} minutes.`,
+    );
+  }
+
   const code = mintCode();
   const salt = randomBytes(16).toString('hex');
   const expiresAt = new Date(now.getTime() + TTL_MINUTES * 60_000);
 
   /*
-   * Any earlier live code for this number is retired first. Two valid codes at
-   * once means the older SMS still works, which is exactly the window a
-   * forwarded or shoulder-read message needs.
+   * Any earlier live code for this number and purpose is retired first. Two
+   * valid codes at once means the older message still works, which is exactly
+   * the window a forwarded or shoulder-read message needs.
    */
   await prisma.$transaction([
     prisma.customerOtp.updateMany({
-      where: { phone, consumedAt: null, expiresAt: { gt: now } },
+      where: { phone, purpose, consumedAt: null, expiresAt: { gt: now } },
       data: { consumedAt: now },
     }),
     prisma.customerOtp.create({
-      data: { phone, codeHash: hashCode(code, salt), salt, expiresAt, ip },
+      data: { phone, purpose, codeHash: hashCode(code, salt), salt, expiresAt, ip },
     }),
   ]);
 
@@ -204,6 +223,52 @@ export async function requestOtp(
     expiresAt: expiresAt.toISOString(),
     devCode: sent === 'off' ? code : null,
   });
+}
+
+/**
+ * Checks a code and, when it is right, spends it.
+ *
+ * The spend is conditional on the code still being unspent, so two requests
+ * arriving together with the same code cannot both succeed — which for a
+ * cash-on-delivery order is the difference between one order and two.
+ */
+export async function spendOtp(
+  phone: string,
+  purpose: OtpPurpose,
+  code: string,
+): Promise<ActionResult<void>> {
+  if (!new RegExp(`^\\d{${CODE_LENGTH}}$`).test(code.trim())) {
+    return actionError(`Enter the ${CODE_LENGTH}-digit code`, { code: 'Enter the code' });
+  }
+  const now = new Date();
+
+  const otp = await prisma.customerOtp.findFirst({
+    where: { phone, purpose, consumedAt: null, expiresAt: { gt: now } },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!otp) return actionError(BAD_CODE, { code: BAD_CODE });
+
+  if (otp.attempts >= MAX_ATTEMPTS) {
+    await prisma.customerOtp.update({ where: { id: otp.id }, data: { consumedAt: now } });
+    return actionError('Too many wrong attempts. Ask for a new code.', { code: 'Ask for a new code' });
+  }
+
+  if (!hashesMatch(otp.codeHash, hashCode(code.trim(), otp.salt))) {
+    await prisma.customerOtp.update({
+      where: { id: otp.id },
+      data: { attempts: { increment: 1 } },
+    });
+    return actionError(BAD_CODE, { code: BAD_CODE });
+  }
+
+  const spent = await prisma.customerOtp.updateMany({
+    where: { id: otp.id, consumedAt: null },
+    data: { consumedAt: now },
+  });
+  // Someone else spent it a moment ago — the same code is not good twice.
+  if (spent.count === 0) return actionError(BAD_CODE, { code: BAD_CODE });
+
+  return actionOk();
 }
 
 
@@ -227,7 +292,7 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
   const now = new Date();
 
   const otp = await prisma.customerOtp.findFirst({
-    where: { phone, consumedAt: null, expiresAt: { gt: now } },
+    where: { phone, purpose: 'LOGIN', consumedAt: null, expiresAt: { gt: now } },
     orderBy: { createdAt: 'desc' },
   });
 

@@ -131,6 +131,11 @@ model CustomerOtp {
   /// Kept for the rate limit and for spotting a number being sprayed at.
   ip String? @db.VarChar(45)
 
+  /// What the code is for: "LOGIN" signs in, "COD" confirms a cash-on-delivery
+  /// order. Kept apart so a code sent to confirm an order can never sign
+  /// anyone in, and a sign-in code can never place an order.
+  purpose String @default("LOGIN") @db.VarChar(16)
+
   createdAt DateTime @default(now())
 
   /// The lookup: newest live code for a phone.

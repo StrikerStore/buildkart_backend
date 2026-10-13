@@ -29,6 +29,7 @@ import {
   placeOrderSchema,
   type ActionResult,
   type CreateOrderInput,
+  type OtpRequestDto,
   type PaymentMethod,
   type PlaceOrderInput,
   type PlacedOrderDto,
@@ -37,6 +38,7 @@ import { ForbiddenError, type Actor } from '../actor.ts';
 import { priceCart } from '../read/cart.ts';
 import { getCheckoutMethods } from '../read/payment-settings.ts';
 import { writeOrder } from './create-order.ts';
+import { issueOtp, spendOtp } from './customer-auth.ts';
 
 /*
  * `PaymentMethod` and `PaymentProvider` are the same four values — RAZORPAY,
@@ -72,10 +74,45 @@ export async function placeCustomerOrder(
   if (!prepared.ok) return prepared;
 
   /*
+   * Nobody pays for a cash-on-delivery order until the van arrives, so the
+   * customer confirms it with a code sent to their own WhatsApp — the same
+   * "Sign-in code" message, kept to its own purpose so neither code works for
+   * the other. Checked after the order itself passes, so a code is never
+   * spent on an order that was going to be refused anyway; spent before the
+   * write, so a double tap cannot place it twice.
+   */
+  const confirmed = await spendOtp(prepared.data.customer.phone, 'COD', data.codOtp ?? '');
+  if (!confirmed.ok) return confirmed;
+
+  /*
    * One call, one transaction. The pin travels inside `payload.address`, so
    * there is no second write to fail after the order has already committed.
    */
   return writeOrder(actor, prepared.data.payload, { useWallet: data.useWallet });
+}
+
+/**
+ * Sends the code that confirms a cash-on-delivery order.
+ *
+ * Takes the same payload as placing the order and runs every check placing it
+ * would — stock, area, minimum, COD limit — before sending anything, so the
+ * customer is never asked for a code for an order that cannot be placed. The
+ * code goes to the phone on the account, never to one in the payload.
+ */
+export async function requestCodOtp(
+  actor: Actor,
+  input: unknown,
+  ip: string | null,
+): Promise<ActionResult<OtpRequestDto>> {
+  const parsed = placeOrderSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+  const { paymentMethod, ...data } = parsed.data;
+  if (paymentMethod !== 'COD') return actionError('Only cash on delivery is confirmed with a code.');
+
+  const prepared = await prepareCustomerOrder(actor, data, paymentMethod);
+  if (!prepared.ok) return prepared;
+
+  return issueOtp(prepared.data.customer.phone, 'COD', ip);
 }
 
 /** What an order will be, worked out and checked, but not yet written. */
