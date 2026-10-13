@@ -1,31 +1,29 @@
 /**
- * AiSensy's Project API, over REST. No SDK: sending a template, submitting one
- * for approval and reading its verdict are the only calls this shop makes.
+ * AiSensy's Campaign API: one endpoint, one call per message.
  *
- * Auth is one header, `X-AiSensy-Project-API-Pwd`, carrying the password of a
- * Custom App created in the AiSensy dashboard. The same app's shared secret
- * signs the webhooks that report delivery.
+ * Each message the shop sends is an **API campaign** created by hand in the
+ * AiSensy dashboard, set Live, and bound to one approved WhatsApp template.
+ * This client names the campaign and supplies the template's parameters, in
+ * order; the wording lives in AiSensy.
  *
- * Spec: https://aisensy.stoplight.io/docs/project-api
+ * Auth is the account's API key, sent **in the body** (AiSensy → Manage → API
+ * Key). There is no header, no message id in the answer, and no webhook:
+ * delivery and read receipts are only visible in the AiSensy dashboard.
+ *
+ * Docs: https://wiki.aisensy.com/en/articles/11501889-api-reference-docs
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
-const DEFAULT_API = 'https://apis.aisensy.com/project-apis/v1';
+const DEFAULT_URL = 'https://backend.aisensy.com/campaign/t1/api/v2';
 
 /** A send must never hang the request that triggered it for long. */
 const TIMEOUT_MS = 10_000;
 
-export type AisensyConfig = {
-  projectId: string;
-  /** The Custom App password. */
-  password: string;
-};
-
 /**
- * AiSensy answered, but not with what was asked for.
+ * AiSensy answered, but not with a yes.
  *
- * `transient` is what the retry job reads: a timeout or a 5xx is worth trying
- * again, a 4xx (bad template name, bad number) will fail the same way forever.
+ * `transient` is what the retry job reads: a timeout, a 5xx or a 429 is worth
+ * trying again; a 4xx — a campaign that is not Live, the wrong number of
+ * parameters — will fail the same way every time.
  */
 export class AisensyError extends Error {
   readonly status: number | undefined;
@@ -38,29 +36,60 @@ export class AisensyError extends Error {
   }
 }
 
-function apiBase(): string {
-  return (process.env.AISENSY_API_BASE?.trim() || DEFAULT_API).replace(/\/+$/, '');
+/** A URL or copy-code button parameter. Index 0 is the template's first button. */
+export type CampaignButton = { index: number; text: string };
+
+export type CampaignMessage = {
+  /** The Live API campaign's name, exactly as AiSensy shows it. */
+  campaignName: string;
+  /** Country code and number, digits only: `919826012345`. */
+  destination: string;
+  /** Required by AiSensy; it names the contact it creates or updates. */
+  userName: string;
+  /** Must be exactly as many as the template has, or AiSensy rejects the call. */
+  templateParams: string[];
+  buttons?: CampaignButton[];
+};
+
+function campaignUrl(): string {
+  return process.env.AISENSY_CAMPAIGN_URL?.trim() || DEFAULT_URL;
 }
 
-async function call<T>(
-  config: AisensyConfig,
-  method: 'GET' | 'POST',
-  path: string,
-  body?: unknown,
-): Promise<T> {
+/** The request body, separate from the call so its exact shape can be tested. */
+export function campaignBody(apiKey: string, message: CampaignMessage): Record<string, unknown> {
+  return {
+    apiKey,
+    campaignName: message.campaignName,
+    destination: message.destination,
+    userName: message.userName,
+    source: 'BuildKart',
+    templateParams: message.templateParams,
+    // The shape of AiSensy's own authentication-template example: the code
+    // fills the body parameter and the button's URL parameter alike.
+    ...(message.buttons?.length
+      ? {
+          buttons: message.buttons.map((button) => ({
+            type: 'button',
+            sub_type: 'url',
+            index: String(button.index),
+            parameters: [{ type: 'text', text: button.text }],
+          })),
+        }
+      : {}),
+  };
+}
+
+/** Triggers one API campaign for one number. Resolves when AiSensy accepts it. */
+export async function sendAisensyCampaign(apiKey: string, message: CampaignMessage): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   let response: Response;
   try {
-    response = await fetch(`${apiBase()}/project/${encodeURIComponent(config.projectId)}${path}`, {
-      method,
-      headers: {
-        'X-AiSensy-Project-API-Pwd': config.password,
-        Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
+    response = await fetch(campaignUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(campaignBody(apiKey, message)),
       signal: controller.signal,
     });
   } catch {
@@ -71,163 +100,16 @@ async function call<T>(
     clearTimeout(timer);
   }
 
-  const text = await response.text();
-  let parsed: unknown = text;
+  if (response.ok) return;
+
+  const text = await response.text().catch(() => '');
+  let reason = text.slice(0, 200) || `HTTP ${response.status}`;
   try {
-    parsed = text ? JSON.parse(text) : {};
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const candidate = parsed.message ?? parsed.errorMessage ?? parsed.error ?? parsed.msg;
+    if (typeof candidate === 'string' && candidate) reason = candidate;
   } catch {
-    // Left as text; the error branch below quotes it.
+    // Not JSON; the raw text stands.
   }
-
-  if (!response.ok) {
-    // Errors come back as `{ name: "ERR400", message: "Template name already exists!" }`.
-    const message =
-      (parsed as { message?: string })?.message ??
-      (parsed as { error?: { message?: string } })?.error?.message ??
-      (typeof parsed === 'string' && parsed ? parsed.slice(0, 200) : `HTTP ${response.status}`);
-    throw new AisensyError(String(message).slice(0, 400), response.status);
-  }
-  return parsed as T;
-}
-
-// ---------------------------------------------------------------------------
-// Sending
-// ---------------------------------------------------------------------------
-
-export type TemplateMessage = {
-  /** Country code and number, digits only: `919826012345`. */
-  to: string;
-  /** The approved template's name. */
-  name: string;
-  /** `en`, `hi` — the template's language code. */
-  languageCode: string;
-  bodyParams: string[];
-  /**
-   * Parameters for a URL button, or the code for an authentication template's
-   * copy-code button. Index 0 is the first button.
-   */
-  buttonParams?: { index: number; text: string }[];
-};
-
-/** Sends one approved template. Returns WhatsApp's `wamid.…` for the message. */
-export async function sendAisensyTemplate(
-  config: AisensyConfig,
-  message: TemplateMessage,
-): Promise<string> {
-  const components: unknown[] = [];
-  if (message.bodyParams.length > 0) {
-    components.push({
-      type: 'body',
-      parameters: message.bodyParams.map((text) => ({ type: 'text', text })),
-    });
-  }
-  for (const button of message.buttonParams ?? []) {
-    components.push({
-      type: 'button',
-      sub_type: 'url',
-      index: String(button.index),
-      parameters: [{ type: 'text', text: button.text }],
-    });
-  }
-
-  const result = await call<{ messages?: { id?: string }[] }>(config, 'POST', '/messages', {
-    to: message.to,
-    type: 'template',
-    template: {
-      name: message.name,
-      language: { policy: 'deterministic', code: message.languageCode },
-      components,
-    },
-  });
-
-  const id = result.messages?.[0]?.id;
-  if (!id) throw new AisensyError('AiSensy accepted the message but returned no message id.');
-  return id;
-}
-
-// ---------------------------------------------------------------------------
-// Templates
-// ---------------------------------------------------------------------------
-
-export type AisensyTemplate = {
-  id: string;
-  name: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | string;
-  rejected_reason?: string;
-};
-
-export type TemplateSubmission = {
-  /** Lowercase, digits and underscores: Meta's rule for template names. */
-  name: string;
-  label: string;
-  /** Meta's names; `TRANSACTIONAL` is the older name AiSensy's schema still lists. */
-  category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION' | 'TRANSACTIONAL';
-  /** AiSensy wants the language's name, not its code: "English", "Hindi". */
-  language: string;
-  /** Positional body: `Order {{1}} is placed.` */
-  text: string;
-  /** The same body with sample values, for Meta's reviewer. */
-  sampleText: string;
-  footerText?: string;
-};
-
-/**
- * Submits a template for Meta's approval. The verdict arrives later; read it
- * back with `getAisensyTemplate`.
- */
-export async function submitAisensyTemplate(
-  config: AisensyConfig,
-  template: TemplateSubmission,
-): Promise<AisensyTemplate> {
-  return call<AisensyTemplate>(config, 'POST', '/wa_template', {
-    name: template.name,
-    label: template.label,
-    category: template.category,
-    type: 'TEXT',
-    language: template.language,
-    text: template.text,
-    sample_text: template.sampleText,
-    ...(template.footerText ? { footer_text: template.footerText } : {}),
-  });
-}
-
-export async function getAisensyTemplate(
-  config: AisensyConfig,
-  templateId: string,
-): Promise<AisensyTemplate> {
-  return call<AisensyTemplate>(config, 'GET', `/wa_template/${encodeURIComponent(templateId)}`);
-}
-
-// ---------------------------------------------------------------------------
-// Webhooks
-// ---------------------------------------------------------------------------
-
-function hexHmacMatches(payload: string, secret: string, signature: string): boolean {
-  const expected = createHmac('sha256', secret).update(payload).digest('hex');
-  const a = Buffer.from(expected, 'utf8');
-  const b = Buffer.from(signature.trim().toLowerCase(), 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-/**
- * `X-AiSensy-Signature`: hex HMAC-SHA256 of the request body under the Custom
- * App's shared secret.
- *
- * The prose of AiSensy's docs says the raw body; their own Node sample signs
- * `JSON.stringify` of the parsed body. Those differ whenever the sender's
- * serialiser spaces or escapes differently, so both are accepted — each is
- * still a full HMAC under our secret, so neither is weaker than the other.
- */
-export function verifyAisensySignature(
-  rawBody: string,
-  signature: string,
-  secret: string,
-): boolean {
-  if (!secret || !signature) return false;
-  if (hexHmacMatches(rawBody, secret, signature)) return true;
-  try {
-    return hexHmacMatches(JSON.stringify(JSON.parse(rawBody)), secret, signature);
-  } catch {
-    return false;
-  }
+  throw new AisensyError(reason.slice(0, 400), response.status);
 }

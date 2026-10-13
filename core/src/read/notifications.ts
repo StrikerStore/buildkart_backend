@@ -67,8 +67,6 @@ function toTemplateDto(row: {
   body: string;
   providerTemplateId: string | null;
   isActive: boolean;
-  providerStatus: string | null;
-  providerRejectedReason: string | null;
   updatedAt: Date;
 }): NotificationTemplateDto {
   const sms = smsLength(row.body);
@@ -81,8 +79,6 @@ function toTemplateDto(row: {
     body: row.body,
     providerTemplateId: row.providerTemplateId ?? '',
     isActive: row.isActive,
-    providerStatus: row.providerStatus ?? '',
-    providerRejectedReason: row.providerRejectedReason ?? '',
     // Computed here rather than in the browser so the list and the editor
     // cannot disagree about what a message costs.
     smsSegments: sms.segments,
@@ -111,12 +107,6 @@ export async function getNotificationTemplate(
   return row ? toTemplateDto(row) : null;
 }
 
-/** Where AiSensy should post delivery reports. Empty until API_PUBLIC_URL is set. */
-function aisensyWebhookUrl(): string {
-  const base = process.env.API_PUBLIC_URL?.trim().replace(/\/+$/, '');
-  return base ? `${base}/webhooks/aisensy` : '';
-}
-
 /** Credentials, masked. Nothing here can carry a plaintext key. */
 async function readProviders(): Promise<NotificationProvidersDto> {
   const rows = await prisma.setting.findMany({
@@ -140,12 +130,7 @@ async function readProviders(): Promise<NotificationProvidersDto> {
     },
     whatsapp: {
       enabled: whatsapp.enabled,
-      provider: whatsapp.provider,
-      phoneNumberId: whatsapp.phoneNumberId,
-      projectId: whatsapp.projectId,
-      apiToken: maskSecret(whatsapp.apiTokenEnc),
-      webhookSecret: maskSecret(whatsapp.webhookSecretEnc),
-      webhookUrl: aisensyWebhookUrl(),
+      apiKey: maskSecret(whatsapp.apiKeyEnc),
     },
     email: {
       enabled: email.enabled,
@@ -241,8 +226,6 @@ export async function listNotificationMessages(
       attempts: row.attempts,
       createdAt: dateToIso(row.createdAt),
       sentAt: row.sentAt ? dateToIso(row.sentAt) : null,
-      deliveredAt: row.deliveredAt ? dateToIso(row.deliveredAt) : null,
-      readAt: row.readAt ? dateToIso(row.readAt) : null,
       failedAt: row.failedAt ? dateToIso(row.failedAt) : null,
     })),
     nextCursor: rows.length > query.limit ? (page[page.length - 1]?.id ?? null) : null,

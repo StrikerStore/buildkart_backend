@@ -3,8 +3,8 @@
  *
  * **Nothing here sends anything.** This module is the vocabulary: the
  * catalogue of moments worth a message, the tokens each can fill, and the
- * providers. Sending lives in `@buildkart/core` (`notify/`), which calls
- * WhatsApp through AiSensy; SMS and email are still only configuration.
+ * providers. Sending lives in `@buildkart/core` (`notify/`), which triggers
+ * AiSensy API campaigns on WhatsApp; SMS and email are still only configuration.
  *
  * **The events are code; the templates are data.** An admin that could invent
  * an event would write a message nothing ever fires, and the tokens it offered
@@ -305,15 +305,9 @@ export function smsLength(body: string): SmsLength {
 // ---------------------------------------------------------------------------
 
 export const SMS_PROVIDERS = ['MSG91', 'TWILIO', 'TEXTLOCAL'] as const;
-export const WHATSAPP_PROVIDERS = ['AISENSY', 'META', 'GUPSHUP', 'INTERAKT'] as const;
+/** WhatsApp goes through AiSensy and nothing else. */
+export const WHATSAPP_PROVIDERS = ['AISENSY'] as const;
 export type WhatsappProvider = (typeof WHATSAPP_PROVIDERS)[number];
-
-/**
- * Providers this build can actually send through. The others can be saved —
- * the form predates any of them working — but nothing is sent while one of
- * them is selected.
- */
-export const SENDING_WHATSAPP_PROVIDERS: readonly WhatsappProvider[] = ['AISENSY'];
 export const EMAIL_PROVIDERS = ['SMTP', 'RESEND'] as const;
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -321,9 +315,6 @@ export const PROVIDER_LABELS: Record<string, string> = {
   TWILIO: 'Twilio',
   TEXTLOCAL: 'Textlocal',
   AISENSY: 'AiSensy',
-  META: 'Meta (WhatsApp Business)',
-  GUPSHUP: 'Gupshup',
-  INTERAKT: 'Interakt',
   SMTP: 'SMTP',
   RESEND: 'Resend',
 };

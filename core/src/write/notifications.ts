@@ -40,20 +40,6 @@ export async function saveNotificationTemplate(
   if (!parsed.success) return actionErrorFromZod(parsed.error);
   const data = parsed.data;
 
-  /*
-   * A WhatsApp template submitted from here is approved for its exact text. If
-   * the body changes, what is sent no longer matches what Meta approved — the
-   * parameter count can differ and the send fails. Marked EDITED so it stops
-   * sending until it is submitted again; a hand-registered template (no ref)
-   * is the owner's responsibility and is left alone.
-   */
-  const previous = await prisma.notificationTemplate.findUnique({
-    where: { event_channel_locale: { event: data.event, channel: data.channel, locale: data.locale } },
-    select: { body: true, providerTemplateRef: true },
-  });
-  const approvalInvalidated =
-    data.channel === 'WHATSAPP' && Boolean(previous?.providerTemplateRef) && previous?.body !== data.body;
-
   await prisma.notificationTemplate.upsert({
     where: {
       event_channel_locale: {
@@ -76,7 +62,6 @@ export async function saveNotificationTemplate(
       body: data.body,
       providerTemplateId: data.providerTemplateId || null,
       isActive: data.isActive,
-      ...(approvalInvalidated ? { providerStatus: 'EDITED', providerRejectedReason: null } : {}),
     },
   });
 
@@ -226,35 +211,17 @@ export async function saveWhatsappProvider(
   const existing = await prisma.setting.findUnique({ where: { key: 'notifications.whatsapp' } });
   const stored = parseSetting('notifications.whatsapp', existing?.value);
 
-  const apiTokenEnc = nextSecret(
-    data.apiToken,
-    data.clearApiToken,
-    stored.apiTokenEnc,
-    'notifications.whatsapp',
-  );
-  const webhookSecretEnc = nextSecret(
-    data.webhookSecret,
-    data.clearWebhookSecret,
-    stored.webhookSecretEnc,
-    'notifications.whatsapp',
-  );
-  if (!apiTokenEnc || !webhookSecretEnc) return actionError(MISSING_KEY);
+  const apiKeyEnc = nextSecret(data.apiKey, data.clearApiKey, stored.apiKeyEnc, 'notifications.whatsapp');
+  if (!apiKeyEnc) return actionError(MISSING_KEY);
 
-  // Switching on with no password would look configured and send nothing.
-  if (data.enabled && data.provider === 'AISENSY' && !apiTokenEnc.enc) {
-    return actionError('Enter the AiSensy Custom App password before switching WhatsApp on.', {
-      apiToken: 'Needed to send',
+  // Switching on with no key would look configured and send nothing.
+  if (data.enabled && !apiKeyEnc.enc) {
+    return actionError('Enter the AiSensy API key before switching WhatsApp on.', {
+      apiKey: 'Needed to send',
     });
   }
 
-  const value = {
-    enabled: data.enabled,
-    provider: data.provider,
-    phoneNumberId: data.phoneNumberId,
-    projectId: data.projectId,
-    apiTokenEnc,
-    webhookSecretEnc,
-  };
+  const value = { enabled: data.enabled, apiKeyEnc };
 
   await prisma.setting.upsert({
     where: { key: 'notifications.whatsapp' },
@@ -269,12 +236,8 @@ export async function saveWhatsappProvider(
     diff: {
       channel: 'WHATSAPP',
       enabled: data.enabled,
-      provider: data.provider,
-      projectId: data.projectId,
-      keyChanged: Boolean(data.apiToken.trim()),
-      keyCleared: data.clearApiToken,
-      webhookSecretChanged: Boolean(data.webhookSecret.trim()),
-      webhookSecretCleared: data.clearWebhookSecret,
+      keyChanged: Boolean(data.apiKey.trim()),
+      keyCleared: data.clearApiKey,
     },
   });
 

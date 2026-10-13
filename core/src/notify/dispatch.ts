@@ -1,5 +1,10 @@
 /**
- * Sending customer messages — WhatsApp, through AiSensy.
+ * Sending customer messages — WhatsApp, through AiSensy API campaigns.
+ *
+ * Each event's template row names a Live API campaign in AiSensy
+ * (`providerTemplateId`), and its body mirrors that campaign's template with
+ * named tokens in place of `{{1}}`, `{{2}}`. The order the tokens appear in is
+ * the order the values are sent in.
  *
  * Three rules shape everything here:
  *
@@ -25,7 +30,7 @@ import {
   whatsappParam,
   type NotificationEvent,
 } from '@buildkart/shared';
-import { AisensyError, sendAisensyTemplate } from './aisensy.ts';
+import { AisensyError, sendAisensyCampaign, type CampaignMessage } from './aisensy.ts';
 import { whatsappSender, WhatsappConfigError, type WhatsappSender } from './config.ts';
 
 /** After this many attempts a transient failure is given up on. */
@@ -35,6 +40,8 @@ const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type Recipient = {
   customerId: string | null;
+  /** What AiSensy files the contact under. Null for someone who never gave one. */
+  name: string | null;
   /** As stored: usually the bare ten digits. */
   phone: string;
   locale: string;
@@ -49,7 +56,7 @@ export type NotifyInput = {
   /** Token values by name. Missing ones are sent as a dash. */
   values: Record<string, string>;
   dedupeKey: string;
-  buttonParams?: { index: number; text: string }[];
+  buttons?: CampaignMessage['buttons'];
   /** For the sign-in code: never store the values in the clear. */
   maskParams?: boolean;
   /** For the sign-in code: the customer asked for it, so consent is not the question. */
@@ -68,8 +75,8 @@ function errorText(error: unknown): string {
 
 /**
  * The template to send for an event: the customer's language first, English
- * when that one was never written. Only one that is switched on, has a
- * registered name, and — if it was submitted from here — has been approved.
+ * when that one was never written. Only one that is switched on and names an
+ * AiSensy campaign.
  */
 async function findTemplate(event: NotificationEvent, locale: string) {
   const candidates = await prisma.notificationTemplate.findMany({
@@ -81,10 +88,13 @@ async function findTemplate(event: NotificationEvent, locale: string) {
       providerTemplateId: { not: null },
     },
   });
-  const usable = candidates.filter(
-    (row) => row.providerTemplateId && (row.providerStatus === null || row.providerStatus === 'APPROVED'),
-  );
+  const usable = candidates.filter((row) => Boolean(row.providerTemplateId?.trim()));
   return usable.find((row) => row.locale === locale) ?? usable.find((row) => row.locale === 'en') ?? null;
+}
+
+/** AiSensy requires a name; a customer who never gave one is still a customer. */
+function userNameOf(recipient: Recipient): string {
+  return recipient.name?.trim().slice(0, 191) || 'Customer';
 }
 
 async function loadSender(): Promise<WhatsappSender | null> {
@@ -158,6 +168,7 @@ async function deliver(input: NotifyInput, override: DeliveryOverride): Promise<
         orderId: input.orderId ?? null,
         paymentSessionId: input.paymentSessionId ?? null,
         phone: to ?? input.recipient.phone.slice(0, 20),
+        userName: userNameOf(input.recipient),
         templateName: template.providerTemplateId,
         params: input.maskParams ? params.map(() => '******') : params,
         status: skipReason ? 'SKIPPED' : 'QUEUED',
@@ -174,30 +185,34 @@ async function deliver(input: NotifyInput, override: DeliveryOverride): Promise<
   if (skipReason || !to) return 'skipped';
 
   return attempt(sender, row.id, {
-    to,
-    name: template.providerTemplateId,
-    languageCode: template.locale,
-    bodyParams: params,
-    ...(input.buttonParams ? { buttonParams: input.buttonParams } : {}),
+    campaignName: template.providerTemplateId,
+    destination: to,
+    userName: userNameOf(input.recipient),
+    templateParams: params,
+    ...(input.buttons ? { buttons: input.buttons } : {}),
     // A sign-in code is useless in ten minutes; never leave one for the retry job.
     retryable: !input.maskParams,
   });
 }
 
-/** One call to AiSensy for a logged row, and the row updated with the result. */
+/**
+ * One call to AiSensy for a logged row, and the row updated with the result.
+ *
+ * SENT means AiSensy accepted it. The Campaign API reports nothing further —
+ * delivered and read are visible only in the AiSensy dashboard.
+ */
 async function attempt(
   sender: WhatsappSender,
   rowId: string,
-  message: Parameters<typeof sendAisensyTemplate>[1] & { retryable: boolean },
+  message: CampaignMessage & { retryable: boolean },
 ): Promise<NotifyOutcome> {
   const { retryable, ...payload } = message;
   try {
-    const messageId = await sendAisensyTemplate(sender, payload);
+    await sendAisensyCampaign(sender.apiKey, payload);
     await prisma.notificationMessage.update({
       where: { id: rowId },
       data: {
         status: 'SENT',
-        providerMessageId: messageId,
         sentAt: new Date(),
         attempts: { increment: 1 },
         lastError: null,
@@ -271,12 +286,14 @@ const RECIPIENT_SELECT = {
 
 function toRecipient(customer: {
   id: string;
+  name: string | null;
   phone: string;
   locale: string;
   whatsappOptIn: boolean;
 }): Recipient {
   return {
     customerId: customer.id,
+    name: customer.name,
     phone: customer.phone,
     locale: customer.locale,
     optedIn: customer.whatsappOptIn,
@@ -409,7 +426,7 @@ export function notifyPhone(
         event,
         recipient: customer
           ? toRecipient(customer)
-          : { customerId: null, phone, locale: 'en', optedIn: true },
+          : { customerId: null, name: null, phone, locale: 'en', optedIn: true },
         values: { ...(await commonTokens(customer)), ...extra },
         dedupeKey,
       };
@@ -422,8 +439,8 @@ export function notifyPhone(
  * caller has to know whether the code went out to decide what to tell the
  * browser.
  *
- * The code goes in as both the body parameter and the copy-code button's —
- * Meta's authentication templates require both.
+ * The code goes in as both the template parameter and the copy-code
+ * button's, the shape of AiSensy's authentication-template example.
  *
  * `off` means WhatsApp or its sign-in template is not set up; anything other
  * than `sent` or `off` means it is set up and this send did not go out.
@@ -439,9 +456,9 @@ export async function sendWhatsappOtp(
       event: 'customer.otp',
       recipient: customer
         ? toRecipient(customer)
-        : { customerId: null, phone, locale: 'en', optedIn: true },
+        : { customerId: null, name: null, phone, locale: 'en', optedIn: true },
       values: { ...(await commonTokens(customer)), otp: code, expiryMinutes: String(expiryMinutes) },
-      buttonParams: [{ index: 0, text: code }],
+      buttons: [{ index: 0, text: code }],
       // Unique per request: every code asked for is its own message.
       dedupeKey: `customer.otp:${phone}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
       maskParams: true,
@@ -485,10 +502,10 @@ export async function retryQueuedNotifications(): Promise<{ retried: number; sen
   for (const row of rows) {
     const params = Array.isArray(row.params) ? row.params.map((value) => String(value)) : [];
     const outcome = await attempt(sender, row.id, {
-      to: row.phone,
-      name: row.templateName,
-      languageCode: row.locale,
-      bodyParams: params,
+      campaignName: row.templateName,
+      destination: row.phone,
+      userName: row.userName || 'Customer',
+      templateParams: params,
       retryable: true,
     });
     if (outcome === 'sent') sent += 1;

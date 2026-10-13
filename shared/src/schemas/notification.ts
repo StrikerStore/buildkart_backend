@@ -4,7 +4,6 @@ import {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_EVENTS,
   SMS_PROVIDERS,
-  WHATSAPP_PROVIDERS,
   channelHasSubject,
   needsProviderTemplateId,
   unknownTokens,
@@ -56,9 +55,12 @@ export const notificationTemplateSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['providerTemplateId'],
-        // Without the registered id the message is simply not delivered, and
-        // nothing about that failure is visible from this end.
-        message: 'A registered template id is needed, or this will not be delivered',
+        // Without it the message is simply not delivered, and nothing about
+        // that failure is visible from this end.
+        message:
+          value.channel === 'WHATSAPP'
+            ? 'Enter the AiSensy API campaign name, or this will not be sent'
+            : 'A registered template id is needed, or this will not be delivered',
       });
     }
   });
@@ -89,30 +91,14 @@ export const smsProviderSchema = z.object({
 });
 
 /**
- * WhatsApp credentials.
- *
- * For AiSensy: `projectId` is the project the Custom App belongs to, `apiToken`
- * is that app's password (sent as `X-AiSensy-Project-API-Pwd`) and
- * `webhookSecret` is its shared secret, which signs delivery reports. The other
- * providers use `phoneNumberId` and `apiToken` and ignore the rest.
+ * WhatsApp credentials: the AiSensy API key (Manage → API Key), which goes in
+ * the body of every Campaign API call. Blank keeps what is stored.
  */
-export const whatsappProviderSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-    provider: z.enum(WHATSAPP_PROVIDERS).default('AISENSY'),
-    phoneNumberId: z.string().trim().max(64).default(''),
-    projectId: z.string().trim().max(64).default(''),
-    apiToken: secretField,
-    clearApiToken: z.boolean().default(false),
-    webhookSecret: secretField,
-    clearWebhookSecret: z.boolean().default(false),
-  })
-  .superRefine((value, ctx) => {
-    if (!value.enabled) return;
-    if (value.provider === 'AISENSY' && value.projectId === '') {
-      ctx.addIssue({ code: 'custom', path: ['projectId'], message: 'AiSensy needs the project id' });
-    }
-  });
+export const whatsappProviderSchema = z.object({
+  enabled: z.boolean().default(false),
+  apiKey: secretField,
+  clearApiKey: z.boolean().default(false),
+});
 
 export const emailProviderSchema = z
   .object({
@@ -158,11 +144,7 @@ export const storedSmsSchema = z.object({
 
 export const storedWhatsappSchema = z.object({
   enabled: z.boolean().default(false),
-  provider: z.enum(WHATSAPP_PROVIDERS).default('AISENSY'),
-  phoneNumberId: z.string().default(''),
-  projectId: z.string().default(''),
-  apiTokenEnc: encryptedSecretSchema,
-  webhookSecretEnc: encryptedSecretSchema,
+  apiKeyEnc: encryptedSecretSchema,
 });
 
 export const storedEmailSchema = z.object({
@@ -174,12 +156,6 @@ export const storedEmailSchema = z.object({
   port: z.number().int().default(587),
   username: z.string().default(''),
   passwordEnc: encryptedSecretSchema,
-});
-
-/** Submit one WhatsApp template (or re-read its verdict) — the slot it lives in. */
-export const whatsappTemplateKeySchema = z.object({
-  event: z.enum(NOTIFICATION_EVENTS),
-  locale: z.enum(TEMPLATE_LOCALES).default('en'),
 });
 
 /** Send a template to a number, filled with its sample values. */
@@ -194,14 +170,8 @@ export const customerWhatsappOptInSchema = z.object({
   optIn: z.boolean(),
 });
 
-export const NOTIFICATION_MESSAGE_STATUSES = [
-  'QUEUED',
-  'SENT',
-  'DELIVERED',
-  'READ',
-  'FAILED',
-  'SKIPPED',
-] as const;
+/** SENT means AiSensy accepted it; delivery and reads are only in AiSensy. */
+export const NOTIFICATION_MESSAGE_STATUSES = ['QUEUED', 'SENT', 'FAILED', 'SKIPPED'] as const;
 
 export const notificationLogQuerySchema = z.object({
   status: z.enum(NOTIFICATION_MESSAGE_STATUSES).optional(),

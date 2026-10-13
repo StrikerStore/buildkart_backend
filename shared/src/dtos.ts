@@ -1456,26 +1456,14 @@ export type NotificationTemplateDto = {
   locale: 'en' | 'hi';
   subject: string;
   body: string;
+  /** SMS: the DLT template id. WhatsApp: the AiSensy API campaign name. */
   providerTemplateId: string;
   isActive: boolean;
-  /**
-   * WhatsApp approval, for a template submitted from the admin: PENDING,
-   * APPROVED or REJECTED. Empty for one registered by hand in the provider.
-   */
-  providerStatus: string;
-  providerRejectedReason: string;
   /** Computed server-side so the list and the editor cannot disagree. */
   smsSegments: number;
   /** True when the body forces UCS-2 — in practice, any Hindi at all. */
   smsUnicode: boolean;
   updatedAt: string;
-};
-
-// from core/src/write/whatsapp.ts
-export type WhatsappTemplateStatusDto = {
-  providerTemplateId: string;
-  providerStatus: string;
-  providerRejectedReason: string;
 };
 
 // from core/src/write/whatsapp.ts
@@ -1493,14 +1481,13 @@ export type NotificationMessageDto = {
   phone: string;
   templateName: string;
   params: string[];
-  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'SKIPPED';
+  /** SENT means AiSensy accepted it; delivery and reads are only in AiSensy. */
+  status: 'QUEUED' | 'SENT' | 'FAILED' | 'SKIPPED';
   skipReason: string | null;
   lastError: string | null;
   attempts: number;
   createdAt: string;
   sentAt: string | null;
-  deliveredAt: string | null;
-  readAt: string | null;
   failedAt: string | null;
 };
 
@@ -1513,15 +1500,10 @@ export type NotificationProvidersDto = {
     dltEntityId: string;
     apiKey: SecretFieldDto;
   };
+  /** AiSensy, through API campaigns. */
   whatsapp: {
     enabled: boolean;
-    provider: string;
-    phoneNumberId: string;
-    projectId: string;
-    apiToken: SecretFieldDto;
-    webhookSecret: SecretFieldDto;
-    /** Where AiSensy should post delivery reports — shown so it can be pasted. */
-    webhookUrl: string;
+    apiKey: SecretFieldDto;
   };
   email: {
     enabled: boolean;

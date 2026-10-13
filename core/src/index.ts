@@ -82,7 +82,6 @@ export * from './write/whatsapp.ts';
 export * from './notify/aisensy.ts';
 export * from './notify/config.ts';
 export * from './notify/dispatch.ts';
-export * from './notify/webhook.ts';
 export * from './marketing/config.ts';
 export * from './marketing/meta-capi.ts';
 export * from './marketing/meta-insights.ts';

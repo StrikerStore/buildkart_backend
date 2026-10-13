@@ -887,9 +887,10 @@ model Customer {
   signupBonusAt DateTime?
 
   /// Whether order, payment and delivery updates may go to this number on
-  /// WhatsApp. On by default — the box is shown ticked at checkout and sign-in —
-  /// and turned off by the customer unticking it or replying STOP. The sign-in
-  /// code ignores it: a customer who asked for a code is owed the code.
+  /// WhatsApp. On by default — the box is shown ticked at sign-in — and turned
+  /// off by the customer unticking it or by the shop. A STOP reply is handled
+  /// inside AiSensy, which never reports it back. The sign-in code ignores
+  /// this: a customer who asked for a code is owed the code.
   whatsappOptIn    Boolean   @default(true)
   whatsappOptOutAt DateTime?
 
@@ -2025,22 +2026,15 @@ model NotificationTemplate {
 
   body String @db.Text
 
-  /// The provider's own registered id — DLT for Indian SMS, an approved
-  /// template name for WhatsApp. Without it the message is accepted and never
-  /// delivered, which is why it is captured before anything can send.
+  /// The provider's own name for this message — the DLT template id for Indian
+  /// SMS, the Live AiSensy API campaign name for WhatsApp. Without it the
+  /// message is accepted and never delivered, which is why it is captured
+  /// before anything can send.
   providerTemplateId String? @db.VarChar(128)
 
   /// Off by default. A template nobody has read should not be the first thing a
   /// customer receives.
   isActive Boolean @default(false)
-
-  /// WhatsApp only, set when the template was submitted from here: the
-  /// provider's own id for it, and Meta's verdict. Null for a template
-  /// registered by hand in the provider's dashboard — that one is trusted as
-  /// approved, because the owner pasted its name.
-  providerTemplateRef    String? @db.VarChar(64)
-  providerStatus         String? @db.VarChar(16)
-  providerRejectedReason String? @db.VarChar(255)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2071,6 +2065,9 @@ model NotificationMessage {
 
   /// As sent: country code and number, digits only.
   phone        String @db.VarChar(20)
+  /// The name AiSensy files the contact under; kept so a retry sends the same.
+  userName     String @default("") @db.VarChar(191)
+  /// WhatsApp: the AiSensy API campaign the message was sent through.
   templateName String @db.VarChar(128)
   /// The positional values, in order. A sign-in code is stored masked.
   params       Json
@@ -2078,20 +2075,15 @@ model NotificationMessage {
   status     NotificationMessageStatus @default(QUEUED)
   skipReason String?                   @db.VarChar(64)
 
-  /// WhatsApp's `wamid.…` — what delivery reports are matched on.
-  providerMessageId String? @unique @db.VarChar(191)
-
   attempts  Int     @default(0)
   lastError String? @db.VarChar(500)
 
   dedupeKey String @unique @db.VarChar(191)
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  sentAt      DateTime?
-  deliveredAt DateTime?
-  readAt      DateTime?
-  failedAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  sentAt    DateTime?
+  failedAt  DateTime?
 
   @@index([status, createdAt])
   @@index([orderId])
@@ -2500,14 +2492,13 @@ enum NotificationChannel {
   EMAIL
 }
 
-/// QUEUED → SENT → DELIVERED → READ, or FAILED. SKIPPED is a message that was
-/// deliberately not sent (opted out, no number) — logged so "why didn't they
-/// get it" has an answer.
+/// QUEUED → SENT, or FAILED. SENT means AiSensy accepted it: the Campaign API
+/// reports nothing after that, so delivered and read live in AiSensy's
+/// dashboard. SKIPPED is a message deliberately not sent (opted out, no
+/// number) — logged so "why didn't they get it" has an answer.
 enum NotificationMessageStatus {
   QUEUED
   SENT
-  DELIVERED
-  READ
   FAILED
   SKIPPED
 }

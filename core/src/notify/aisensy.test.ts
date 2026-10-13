@@ -1,47 +1,100 @@
 /**
- * The AiSensy webhook signature.
+ * The Campaign API call.
  *
- * Worth a test because the docs contradict themselves — raw body in the prose,
- * re-serialised JSON in the sample — and the check accepts both. Neither
- * acceptance may turn into accepting something unsigned.
+ * Worth testing because AiSensy rejects the whole message on a body it does
+ * not like, and because `transient` decides whether the retry job tries again
+ * or gives up — getting it backwards either spams a customer or drops them.
  */
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
-import { verifyAisensySignature } from './aisensy.ts';
+import { AisensyError, campaignBody, sendAisensyCampaign } from './aisensy.ts';
 
-const SECRET = 'shared-secret';
-const sign = (payload: string, secret = SECRET) => createHmac('sha256', secret).update(payload).digest('hex');
-
-const raw = '{ "topic": "message.status.updated", "data": { "message": { "messageId": "wamid.X", "status": "DELIVERED" } } }';
-
-test('a signature over the raw body is accepted', () => {
-  assert.equal(verifyAisensySignature(raw, sign(raw), SECRET), true);
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = realFetch;
 });
 
-test('a signature over the re-serialised body is accepted', () => {
-  assert.equal(verifyAisensySignature(raw, sign(JSON.stringify(JSON.parse(raw))), SECRET), true);
+function answer(status: number, body = ''): void {
+  globalThis.fetch = (async () => new Response(body, { status })) as typeof fetch;
+}
+
+const message = {
+  campaignName: 'order_placed_en',
+  destination: '919826012345',
+  userName: 'Rajesh',
+  templateParams: ['BK-1042', '₹12,480'],
+};
+
+test('the body carries the key and the campaign, with no buttons when there are none', () => {
+  assert.deepEqual(campaignBody('key-123', message), {
+    apiKey: 'key-123',
+    campaignName: 'order_placed_en',
+    destination: '919826012345',
+    userName: 'Rajesh',
+    source: 'BuildKart',
+    templateParams: ['BK-1042', '₹12,480'],
+  });
 });
 
-test('upper-case hex is accepted', () => {
-  assert.equal(verifyAisensySignature(raw, sign(raw).toUpperCase(), SECRET), true);
+test('a sign-in code fills the parameter and the copy-code button alike', () => {
+  const body = campaignBody('key-123', {
+    ...message,
+    campaignName: 'otp_en',
+    templateParams: ['482913'],
+    buttons: [{ index: 0, text: '482913' }],
+  });
+  assert.deepEqual(body.buttons, [
+    { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: '482913' }] },
+  ]);
 });
 
-test('a signature under another secret is refused', () => {
-  assert.equal(verifyAisensySignature(raw, sign(raw, 'someone-else'), SECRET), false);
+test('the request is a JSON POST with the key in the body', async () => {
+  let seen: { url: string; init: RequestInit } | null = null;
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    seen = { url, init };
+    return new Response('{"success":true}', { status: 200 });
+  }) as unknown as typeof fetch;
+
+  await sendAisensyCampaign('key-123', message);
+  assert.ok(seen);
+  const { url, init } = seen as { url: string; init: RequestInit };
+  assert.equal(url, 'https://backend.aisensy.com/campaign/t1/api/v2');
+  assert.equal(init.method, 'POST');
+  assert.equal(JSON.parse(String(init.body)).apiKey, 'key-123');
 });
 
-test('a tampered body is refused', () => {
-  const tampered = raw.replace('DELIVERED', 'READ');
-  assert.equal(verifyAisensySignature(tampered, sign(raw), SECRET), false);
+test('a 2xx resolves', async () => {
+  answer(200, 'Success');
+  await sendAisensyCampaign('key', message);
 });
 
-test('no secret or no signature is never a match', () => {
-  assert.equal(verifyAisensySignature(raw, sign(raw), ''), false);
-  assert.equal(verifyAisensySignature(raw, '', SECRET), false);
+test('a 4xx is permanent and quotes AiSensy', async () => {
+  answer(400, '{"message":"Campaign not live"}');
+  await assert.rejects(sendAisensyCampaign('key', message), (error: unknown) => {
+    assert.ok(error instanceof AisensyError);
+    assert.equal(error.transient, false);
+    assert.equal(error.message, 'Campaign not live');
+    return true;
+  });
 });
 
-test('a body that is not JSON still checks against the raw form only', () => {
-  assert.equal(verifyAisensySignature('not json', sign('not json'), SECRET), true);
-  assert.equal(verifyAisensySignature('not json', sign('other'), SECRET), false);
+test('a 5xx or a 429 is worth retrying', async () => {
+  for (const status of [503, 429]) {
+    answer(status, 'busy');
+    await assert.rejects(sendAisensyCampaign('key', message), (error: unknown) => {
+      assert.ok(error instanceof AisensyError && error.transient);
+      return true;
+    });
+  }
+});
+
+test('an unreachable AiSensy is worth retrying', async () => {
+  globalThis.fetch = (async () => {
+    throw new TypeError('fetch failed');
+  }) as typeof fetch;
+  await assert.rejects(sendAisensyCampaign('key', message), (error: unknown) => {
+    assert.ok(error instanceof AisensyError && error.transient);
+    assert.equal(error.message, 'AiSensy could not be reached.');
+    return true;
+  });
 });
