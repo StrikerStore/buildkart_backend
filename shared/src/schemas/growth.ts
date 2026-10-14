@@ -556,8 +556,23 @@ export const commerceSettingsSchema = z
      * behind `payments:write` rather than `settings:write`.
      */
     promiseHours: z.coerce.number().int().min(1).max(72),
+    deliveryStartTime: z
+      .string()
+      .trim()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM, e.g. 10:00')
+      .default('10:00'),
     cutoffTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM, e.g. 18:00'),
+    nextMorningBy: z
+      .string()
+      .trim()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM, e.g. 12:00')
+      .default('12:00'),
     ...orderNumberFields,
+  })
+  // "HH:MM" compares correctly as text.
+  .refine((v) => v.deliveryStartTime < v.cutoffTime, {
+    message: 'Deliveries must start before the daily cutoff',
+    path: ['deliveryStartTime'],
   })
   .refine(
     (v) =>

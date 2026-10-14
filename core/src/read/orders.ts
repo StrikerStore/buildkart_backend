@@ -19,6 +19,7 @@ import {
   toOrderListItemDto,
   type OrderDetailDto,
 } from '../dto.ts';
+import { orderDeliveryPromise } from './delivery-promise.ts';
 import { orderDetailInclude } from './order-include.ts';
 import type { OrderListResultDto } from '@buildkart/shared';
 export type { OrderListResultDto };
@@ -168,5 +169,16 @@ export async function getOrderDetail(actor: Actor, id: string): Promise<OrderDet
   assertPermission(actor, 'orders:read');
 
   const row = await prisma.order.findUnique({ where: { id }, include: orderDetailInclude });
-  return row ? toOrderDetailDto(row) : null;
+  if (!row) return null;
+
+  const detail = toOrderDetailDto(row);
+  return {
+    ...detail,
+    delivery: await orderDeliveryPromise({
+      status: row.status,
+      expectedDeliveryAt: row.expectedDeliveryAt,
+      pincode: detail.address.pincode || null,
+      events: row.statusEvents,
+    }),
+  };
 }

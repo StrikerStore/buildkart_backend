@@ -504,6 +504,8 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
     placedAt: dateToIso(row.placedAt),
     deliveredAt: dateToIso(row.deliveredAt),
     expectedDeliveryAt: dateToIso(row.expectedDeliveryAt),
+    // Needs the store's rules and the area's, so `getOrderDetail` fills it in.
+    delivery: null,
     customer: row.customer,
     items: row.items.map((item) => ({
       id: item.id,

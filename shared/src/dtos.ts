@@ -308,6 +308,8 @@ export type OrderDetailDto = {
   deliveredAt: string | null;
   /** Entered on "Send out for delivery"; quoted to the customer. */
   expectedDeliveryAt: string | null;
+  /** What the customer has been promised; null before confirmation or once done. */
+  delivery: DeliveryPromiseDto | null;
   customer: {
     id: string;
     name: string | null;
@@ -318,6 +320,17 @@ export type OrderDetailDto = {
   };
   items: OrderItemDto[];
   events: OrderEventDto[];
+};
+
+// from core/src/read/delivery-promise.ts
+/**
+ * When a confirmed order is due. `countdownFrom` is when to start a live
+ * countdown (null: now); before it, say "by {by}" instead.
+ */
+export type DeliveryPromiseDto = {
+  by: string;
+  kind: 'SAME_DAY' | 'NEXT_MORNING' | 'SCHEDULED';
+  countdownFrom: string | null;
 };
 
 // from core/src/read/analytics.ts
@@ -879,7 +892,11 @@ export type CommerceSettingsDto = {
   payuEnabled: boolean;
   snapmintEnabled: boolean;
   promiseHours: number;
+  /** "10:00" — orders confirmed from here until the cutoff get the hours promise. */
+  deliveryStartTime: string;
   cutoffTime: string;
+  /** "12:00" — when an order confirmed outside the window is promised for. */
+  nextMorningBy: string;
   orderNumberPrefix: string;
   orderNumberSuffix: string;
   orderNumberPadding: number;
@@ -2275,6 +2292,12 @@ export type MyOrderDetailDto = {
   items: MyOrderItemDto[];
   /** Every status the order has passed through, oldest first. */
   timeline: Array<{ status: OrderStatus; at: string }>;
+  /**
+   * When it is due: four hours from confirmation inside the delivery window,
+   * the next morning outside it, or the time given when it went out. Null
+   * before confirmation and once delivered or cancelled.
+   */
+  delivery: DeliveryPromiseDto | null;
 };
 
 /**

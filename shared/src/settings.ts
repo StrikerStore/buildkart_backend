@@ -541,10 +541,19 @@ export const SETTING_SCHEMAS = {
     })
     .default({ enabled: true, rotateSeconds: 5, items: [] }),
 
-  /** Honest messaging for the 4-hour promise: orders after cutoff deliver next morning. */
+  /**
+   * Honest messaging for the 4-hour promise. Orders confirmed between
+   * `startTime` and `cutoffTime` are due `hours` later; outside that window,
+   * by `nextMorningBy` on the next delivery morning. See `delivery-promise.ts`.
+   */
   'delivery.promise': z
-    .object({ hours: z.number().int().min(1).max(72).default(4), cutoffTime: z.string().default('18:00') })
-    .default({ hours: 4, cutoffTime: '18:00' }),
+    .object({
+      hours: z.number().int().min(1).max(72).default(4),
+      startTime: z.string().default('10:00'),
+      cutoffTime: z.string().default('18:00'),
+      nextMorningBy: z.string().default('12:00'),
+    })
+    .default({ hours: 4, startTime: '10:00', cutoffTime: '18:00', nextMorningBy: '12:00' }),
 
   /**
    * Charging by distance from the warehouse that holds the goods, rather than

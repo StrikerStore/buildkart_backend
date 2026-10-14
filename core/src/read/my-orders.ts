@@ -26,6 +26,7 @@ import {
   type MyOrderListItemDto,
 } from '@buildkart/shared';
 import { ForbiddenError, type Actor } from '../actor.ts';
+import { orderDeliveryPromise } from './delivery-promise.ts';
 import { signInvoiceToken, verifyInvoiceToken } from './invoice-token.ts';
 import { dateToIso, decimalToString } from '../dto.ts';
 
@@ -127,6 +128,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       customerNote: true,
       placedAt: true,
       deliveredAt: true,
+      expectedDeliveryAt: true,
       buyerGstin: true,
       items: {
         orderBy: { id: 'asc' },
@@ -168,6 +170,13 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
 
   if (!order) return null;
   const online = order.transactions[0] ?? null;
+  const address = parseAddressSnapshot(order.addressSnapshot);
+  const delivery = await orderDeliveryPromise({
+    status: order.status,
+    expectedDeliveryAt: order.expectedDeliveryAt,
+    pincode: address.pincode || null,
+    events: order.statusEvents,
+  });
 
   return {
     id: order.id,
@@ -206,7 +215,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
      * typed that day; a customer who has since edited their address book must
      * still see where this one actually went.
      */
-    address: parseAddressSnapshot(order.addressSnapshot),
+    address,
     customerNote: order.customerNote,
     placedAt: dateToIso(order.placedAt),
     deliveredAt: order.deliveredAt ? dateToIso(order.deliveredAt) : null,
@@ -234,6 +243,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       status: event.toStatus,
       at: dateToIso(event.createdAt),
     })),
+    delivery,
   };
 }
 

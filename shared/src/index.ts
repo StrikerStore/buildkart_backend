@@ -17,6 +17,7 @@ export * from './sku.ts';
 export * from './category-rules.ts';
 export * from './orders.ts';
 export * from './time.ts';
+export * from './delivery-promise.ts';
 export * from './phone.ts';
 export * from './payments.ts';
 export * from './checkout-options.ts';

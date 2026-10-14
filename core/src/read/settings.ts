@@ -73,7 +73,9 @@ export async function getSettings(): Promise<SettingsDto> {
       payuEnabled: parseSetting('payments.payu', byKey.get('payments.payu')).enabled,
       snapmintEnabled: parseSetting('payments.snapmint', byKey.get('payments.snapmint')).enabled,
       promiseHours: promise.hours,
+      deliveryStartTime: promise.startTime,
       cutoffTime: promise.cutoffTime,
+      nextMorningBy: promise.nextMorningBy,
     },
     // Field by field like everything else here, though this key holds nothing
     // sensitive: the rule is what keeps a future secret from riding along on a

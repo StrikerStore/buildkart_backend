@@ -45,6 +45,7 @@ export * from './read/device-location.ts';
 export * from './read/geocode.ts';
 export * from './read/my-account.ts';
 export * from './read/my-orders.ts';
+export * from './read/delivery-promise.ts';
 export * from './read/checkout-config.ts';
 export * from './read/content.ts';
 export * from './read/reviews.ts';

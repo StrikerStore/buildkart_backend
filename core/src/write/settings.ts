@@ -82,7 +82,15 @@ export async function saveCommerceSettings(
 
   await writeSettings([
     { key: 'order.minimumValue', value: { amount: data.orderMinimumValue } },
-    { key: 'delivery.promise', value: { hours: data.promiseHours, cutoffTime: data.cutoffTime } },
+    {
+      key: 'delivery.promise',
+      value: {
+        hours: data.promiseHours,
+        startTime: data.deliveryStartTime,
+        cutoffTime: data.cutoffTime,
+        nextMorningBy: data.nextMorningBy,
+      },
+    },
   ]);
 
   // Separate, and after: the order number format shares its row with the live
