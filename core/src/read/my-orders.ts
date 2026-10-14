@@ -114,7 +114,8 @@ const OVERDUE_DROP_MS = 24 * 3_600_000;
 
 /**
  * The customer's orders still on their way, each with its countdown — for the
- * capsule on the home screen. Soonest first.
+ * capsule on the home screen. Latest order first: the one just placed is the
+ * one the customer is looking for.
  *
  * The same promise the order page shows, from the same function, so the
  * capsule and the page cannot disagree about when the lorry arrives.
@@ -155,7 +156,8 @@ export async function listMyActiveDeliveries(actor: Actor): Promise<MyActiveDeli
     active.push({ id: order.id, orderNumber: order.orderNumber, status: order.status, delivery });
   }
 
-  return active.sort((a, b) => Date.parse(a.delivery.by) - Date.parse(b.delivery.by));
+  // Already latest first, from the query.
+  return active;
 }
 
 export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrderDetailDto | null> {

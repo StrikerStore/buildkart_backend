@@ -2302,7 +2302,10 @@ export type MyOrderDetailDto = {
   delivery: DeliveryPromiseDto | null;
 };
 
-/** One of the customer's orders still on its way, for the home screen's countdown capsule. */
+/**
+ * One of the customer's orders still on its way, for the home screen's
+ * countdown capsule. Listed latest order first.
+ */
 export type MyActiveDeliveryDto = {
   id: string;
   orderNumber: string;
