@@ -10,6 +10,8 @@ import { prisma } from '@buildkart/database';
 import {
   deliveryPromiseFor,
   parseSetting,
+  promiseFromConfirmation,
+  type DeliveryPromise,
   type DeliveryPromiseDto,
   type DeliveryPromiseRules,
   type OrderStatus,
@@ -37,17 +39,30 @@ export async function deliveryPromiseRules(pincode: string | null): Promise<Deli
 
 /**
  * What to tell the customer about when their order arrives, or null when there
- * is nothing to promise (not confirmed yet, delivered, cancelled).
+ * is nothing to promise (waiting on the shop, delivered, cancelled).
  *
  * Counted from the latest confirmation, so an order reopened and confirmed
  * again is promised from the second time.
+ *
+ * A storefront order still in its auto-confirm minute is promised from the
+ * moment it will confirm itself, so the confirmation screen counts down
+ * straight away rather than a minute later. If the shop confirms it first, the
+ * real confirmation takes over on the page's next refresh; if the shop cancels
+ * it, the promise goes away.
  */
 export async function orderDeliveryPromise(order: {
   status: OrderStatus;
   expectedDeliveryAt: Date | null;
   pincode: string | null;
   events: Array<{ toStatus: OrderStatus; createdAt: Date }>;
+  /** Passed by the customer's view only; the admin sees an unconfirmed order as one. */
+  autoConfirmAt?: Date | null;
 }): Promise<DeliveryPromiseDto | null> {
+  if (order.status === 'PLACED' && order.autoConfirmAt) {
+    return toDto(
+      promiseFromConfirmation(order.autoConfirmAt, await deliveryPromiseRules(order.pincode)),
+    );
+  }
   if (!['CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY'].includes(order.status)) return null;
 
   const confirmedAt =
@@ -56,8 +71,10 @@ export async function orderDeliveryPromise(order: {
     { status: order.status, confirmedAt, expectedDeliveryAt: order.expectedDeliveryAt },
     await deliveryPromiseRules(order.pincode),
   );
-  if (!promise) return null;
+  return promise ? toDto(promise) : null;
+}
 
+function toDto(promise: DeliveryPromise): DeliveryPromiseDto {
   return {
     by: promise.by.toISOString(),
     kind: promise.kind,

@@ -21,6 +21,7 @@ import {
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
+  type MyActiveDeliveryDto,
   type MyInvoiceDto,
   type MyOrderDetailDto,
   type MyOrderListItemDto,
@@ -97,6 +98,66 @@ export async function listMyOrders(actor: Actor): Promise<MyOrderListItemDto[]> 
   }));
 }
 
+/**
+ * A customer with more open orders than this is a trade account; the capsule
+ * is a reminder, not the order list.
+ */
+const ACTIVE_DELIVERIES_MAX = 5;
+
+/**
+ * Past its promised time by this much, an order is one the shop delivered and
+ * forgot to mark — not one the customer is still waiting on. Without the cut a
+ * single unmarked order would sit on the home screen saying "any moment now"
+ * for good.
+ */
+const OVERDUE_DROP_MS = 24 * 3_600_000;
+
+/**
+ * The customer's orders still on their way, each with its countdown — for the
+ * capsule on the home screen. Soonest first.
+ *
+ * The same promise the order page shows, from the same function, so the
+ * capsule and the page cannot disagree about when the lorry arrives.
+ */
+export async function listMyActiveDeliveries(actor: Actor): Promise<MyActiveDeliveryDto[]> {
+  const customerId = customerIdOf(actor);
+
+  const rows = await prisma.order.findMany({
+    where: { customerId, status: { in: ['PLACED', 'CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY'] } },
+    orderBy: { placedAt: 'desc' },
+    take: ACTIVE_DELIVERIES_MAX,
+    select: {
+      id: true,
+      orderNumber: true,
+      status: true,
+      expectedDeliveryAt: true,
+      autoConfirmAt: true,
+      addressSnapshot: true,
+      statusEvents: {
+        where: { toStatus: 'CONFIRMED' },
+        orderBy: { createdAt: 'asc' },
+        select: { toStatus: true, createdAt: true },
+      },
+    },
+  });
+
+  const now = Date.now();
+  const active: MyActiveDeliveryDto[] = [];
+  for (const order of rows) {
+    const delivery = await orderDeliveryPromise({
+      status: order.status,
+      expectedDeliveryAt: order.expectedDeliveryAt,
+      pincode: parseAddressSnapshot(order.addressSnapshot).pincode || null,
+      events: order.statusEvents,
+      autoConfirmAt: order.autoConfirmAt,
+    });
+    if (!delivery || Date.parse(delivery.by) < now - OVERDUE_DROP_MS) continue;
+    active.push({ id: order.id, orderNumber: order.orderNumber, status: order.status, delivery });
+  }
+
+  return active.sort((a, b) => Date.parse(a.delivery.by) - Date.parse(b.delivery.by));
+}
+
 export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrderDetailDto | null> {
   const customerId = customerIdOf(actor);
 
@@ -129,6 +190,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       placedAt: true,
       deliveredAt: true,
       expectedDeliveryAt: true,
+      autoConfirmAt: true,
       buyerGstin: true,
       items: {
         orderBy: { id: 'asc' },
@@ -176,6 +238,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
     expectedDeliveryAt: order.expectedDeliveryAt,
     pincode: address.pincode || null,
     events: order.statusEvents,
+    autoConfirmAt: order.autoConfirmAt,
   });
 
   return {

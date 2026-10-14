@@ -41,6 +41,7 @@ import {
   getCatalogFeed,
   getSitemap,
   listCartCoupons,
+  listMyActiveDeliveries,
   listMyAddresses,
   listMyOrders,
   listMyWalletEntries,
@@ -372,6 +373,12 @@ export const storefrontRouter = router({
     .mutation(({ ctx, input }) => removeSavedCard(ctx.actor, input)),
 
   myOrders: customerProcedure.query(({ ctx }) => listMyOrders(ctx.actor)),
+
+  /*
+   * The orders still on their way, with their countdowns — polled by the home
+   * screen's capsule while it is open, so kept to what that one bar draws.
+   */
+  myActiveDeliveries: customerProcedure.query(({ ctx }) => listMyActiveDeliveries(ctx.actor)),
 
   /*
    * Null for an order that is not this customer's, rather than FORBIDDEN. The

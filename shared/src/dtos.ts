@@ -2294,10 +2294,20 @@ export type MyOrderDetailDto = {
   timeline: Array<{ status: OrderStatus; at: string }>;
   /**
    * When it is due: four hours from confirmation inside the delivery window,
-   * the next morning outside it, or the time given when it went out. Null
-   * before confirmation and once delivered or cancelled.
+   * the next morning outside it, or the time given when it went out. A
+   * storefront order still in its auto-confirm minute is promised from the
+   * moment it will confirm. Null while waiting on the shop, and once delivered
+   * or cancelled.
    */
   delivery: DeliveryPromiseDto | null;
+};
+
+/** One of the customer's orders still on its way, for the home screen's countdown capsule. */
+export type MyActiveDeliveryDto = {
+  id: string;
+  orderNumber: string;
+  status: OrderStatus;
+  delivery: DeliveryPromiseDto;
 };
 
 /**
