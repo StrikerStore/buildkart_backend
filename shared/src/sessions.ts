@@ -46,8 +46,36 @@ export const storefrontVisitSchema = z.object({
     .transform((value) => value.slice(0, 500))
     .optional()
     .catch(undefined),
+  /**
+   * The delivery area the shopper chose, read by `/api/t` from the `bk_area`
+   * cookie — never from the page. The city when the cookie names one; else the
+   * pincode, which the API turns into a city from the serviceable areas.
+   */
+  city: z.string().max(200).optional().catch(undefined),
+  pincode: z
+    .string()
+    .regex(/^\d{6}$/)
+    .optional()
+    .catch(undefined),
 });
 export type StorefrontVisitInput = z.infer<typeof storefrontVisitSchema>;
+
+/**
+ * One spelling per city, so "indore", " Indore " and "INDORE" are one row in a
+ * report. Whitespace collapsed, each word capitalised, capped at the column's
+ * 100 characters. Null for nothing usable.
+ *
+ * Shared by the session beacon and the order reports, so a session's city and
+ * an order's delivery city meet under the same name.
+ */
+export function normalizeCity(raw: string | null | undefined): string | null {
+  const text = (raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text
+    .toLowerCase()
+    .replace(/(^|[\s-])(\p{L})/gu, (_match, lead: string, letter: string) => lead + letter.toUpperCase())
+    .slice(0, 100);
+}
 
 /*
  * Crawlers, link unfurlers, uptime checks and headless browsers. They run

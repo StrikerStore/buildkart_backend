@@ -1269,6 +1269,9 @@ model StorefrontSession {
   campaign    String? @db.VarChar(150)
   /// MOBILE, TABLET or DESKTOP, from the user agent.
   device      String  @db.VarChar(10)
+  /// The delivery city the shopper chose on the storefront, normalised by
+  /// `normalizeCity`. Null until they choose one; the latest choice wins.
+  city        String? @db.VarChar(100)
   isReturning Boolean @default(false)
 
   pageViews       Int     @default(0)
@@ -1282,13 +1285,16 @@ model StorefrontSession {
   @@index([startedAt])
 }
 
-/// Sessions summarised per store day, channel and device — what the Analytics
-/// page reads. Rebuilt for the last three days every hour, so a session that
-/// converts the next morning still lands in the day it started.
+/// Sessions summarised per store day, channel, device and city — what the
+/// Analytics page reads. Rebuilt for the last three days every hour, so a
+/// session that converts the next morning still lands in the day it started.
 model AnalyticsDaily {
   day     DateTime @db.Date
   channel String   @db.VarChar(20)
   device  String   @db.VarChar(10)
+  /// Empty for sessions with no city — and for every day summarised before
+  /// cities were recorded. Part of the key, so it cannot be null.
+  city    String   @default("") @db.VarChar(100)
 
   sessions          Int @default(0)
   returningSessions Int @default(0)
@@ -1299,7 +1305,7 @@ model AnalyticsDaily {
 
   updatedAt DateTime @updatedAt
 
-  @@id([day, channel, device])
+  @@id([day, channel, device, city])
 }
 
 /// Ad spend and delivery per ad per day, pulled from Meta's Insights API by

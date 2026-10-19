@@ -17,6 +17,7 @@ import {
   deriveChannel,
   deviceFromUserAgent,
   isBotUserAgent,
+  normalizeCity,
   storeDayKey,
   storefrontVisitSchema,
   touchSource,
@@ -42,6 +43,21 @@ function storeDay(at: Date): Date {
   return new Date(`${storeDayKey(at)}T00:00:00.000Z`);
 }
 
+/**
+ * The city of the delivery area the shopper chose: the cookie's own city when
+ * it has one, else the city the shop lists for its pincode. Null when no area
+ * was chosen, or the pincode is not one the shop lists.
+ */
+async function visitCity(visit: { city?: string; pincode?: string }): Promise<string | null> {
+  const named = normalizeCity(visit.city);
+  if (named || !visit.pincode) return named;
+  const area = await prisma.serviceablePincode.findUnique({
+    where: { pincode: visit.pincode },
+    select: { city: true },
+  });
+  return normalizeCity(area?.city);
+}
+
 export async function recordStorefrontVisit(
   actor: Actor,
   input: unknown,
@@ -54,12 +70,16 @@ export async function recordStorefrontVisit(
   const now = new Date();
   const customerId = actor.kind === 'customer' ? actor.customerId : undefined;
   const flag = FLAG_FOR_EVENT[visit.event];
+  const city = await visitCity(visit);
 
   const update = {
     lastSeenAt: now,
     ...(visit.event === 'page_view' ? { pageViews: { increment: 1 } } : {}),
     ...(flag ? { [flag]: true } : {}),
     ...(customerId ? { customerId } : {}),
+    // The latest choice wins: a shopper who picks an area mid-visit is buying
+    // for that one. Never cleared — no area on this event is not a new answer.
+    ...(city ? { city } : {}),
   };
 
   // The common case: the session exists. Matched on the visitor too, so a
@@ -90,6 +110,7 @@ export async function recordStorefrontVisit(
         medium: visit.touch?.medium ?? null,
         campaign: visit.touch?.campaign ?? null,
         device: deviceFromUserAgent(visit.userAgent),
+        city,
         isReturning: Boolean(seenBefore),
         pageViews: visit.event === 'page_view' ? 1 : 0,
         viewedProduct: visit.event === 'product_view',
@@ -118,6 +139,7 @@ type RollupRow = {
   day: Date;
   channel: string;
   device: string;
+  city: string;
   sessions: Counted;
   returningSessions: Counted;
   productSessions: Counted;
@@ -144,6 +166,7 @@ export async function rollupAnalyticsDaily(days = ROLLUP_DAYS): Promise<{ days: 
       \`day\`,
       \`channel\`,
       \`device\`,
+      COALESCE(\`city\`, '') AS city,
       COUNT(*) AS sessions,
       SUM(\`isReturning\`) AS returningSessions,
       SUM(\`viewedProduct\` OR \`addedToCart\` OR \`reachedCheckout\` OR \`orderId\` IS NOT NULL) AS productSessions,
@@ -152,7 +175,7 @@ export async function rollupAnalyticsDaily(days = ROLLUP_DAYS): Promise<{ days: 
       SUM(\`orderId\` IS NOT NULL) AS convertedSessions
     FROM \`StorefrontSession\`
     WHERE \`day\` >= ${from}
-    GROUP BY \`day\`, \`channel\`, \`device\`
+    GROUP BY \`day\`, \`channel\`, \`device\`, COALESCE(\`city\`, '')
   `;
 
   const n = (value: Counted) => Number(String(value ?? 0));
@@ -160,6 +183,7 @@ export async function rollupAnalyticsDaily(days = ROLLUP_DAYS): Promise<{ days: 
     day: row.day,
     channel: row.channel,
     device: row.device,
+    city: row.city,
     sessions: n(row.sessions),
     returningSessions: n(row.returningSessions),
     productSessions: n(row.productSessions),

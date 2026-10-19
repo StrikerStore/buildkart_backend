@@ -412,6 +412,18 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 
 ---
 
+## Later additions: cities and month-on-month retention ✅ built
+
+> **Contract 0.27.0.**
+> - **Session city:** the delivery area the shopper chose in the location picker. `/api/t` reads the `bk_area` cookie and sends its city, or just its pincode, which `recordStorefrontVisit` names from `ServiceablePincode`. It is stored on `StorefrontSession.city` through `normalizeCity` (`shared/src/sessions.ts`); the latest choice in a session wins. No IP lookup: on Indian mobile networks an IP usually places the shopper in the carrier's hub city.
+> - **Summary:** `AnalyticsDaily` has `city` as a fourth key column (empty when none), so city counts outlive the 90 days raw sessions are kept. Sessions from before migration `20261020000000_session_city` have no city.
+> - **Order city:** the city on the frozen delivery address, through the same `normalizeCity`.
+> - **Acquisition → Cities:** sessions, cart sessions, conversion, orders, new customers and revenue per city, every channel (`buildCityRows`, unit-tested). Top 50 named cities, then "Not chosen".
+> - **Meta ads → By city:** the same, paid social only. **No spend per city:** Meta's Insights API breaks delivery down by `region` (state) at the finest.
+> - **Customers → Month-on-month retention:** for each of the last 12 months, of the customers who ordered the month before, the share who ordered again (`buildMonthlyRetention`, unit-tested). The current month is marked as still running.
+
+---
+
 ## Order of work
 
 | # | Phase | Repos | Depends on | Size |

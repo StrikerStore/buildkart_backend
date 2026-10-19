@@ -8,11 +8,18 @@
  * Orders are the shop's own and use the Home dashboard's rule — everything not
  * cancelled — so the pages agree with it and with each other. Money is summed
  * in paise. Nothing here writes.
+ *
+ * Cities: a session's is the delivery area the shopper chose on the storefront
+ * (`StorefrontSession.city`, summarised into `AnalyticsDaily`); an order's is
+ * the city on its frozen delivery address. Both go through `normalizeCity`, so
+ * they meet under one name.
  */
 import { prisma } from '@buildkart/database';
 import {
   ACQUISITION_CHANNEL_LABELS,
   fromPaise,
+  normalizeCity,
+  parseAddressSnapshot,
   parseSetting,
   resolveAnalyticsPeriod,
   storeDayKey,
@@ -24,10 +31,12 @@ import {
   type AnalyticsPeriod,
   type AnalyticsPeriodDto,
   type AnalyticsQuery,
+  type CityPerformanceDto,
   type CustomerReportDto,
   type MarketingReportDto,
   type ProductPerformanceDto,
   type ProductReportDto,
+  type Window,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { paiseOf } from '../marketing/meta-capi.ts';
@@ -107,6 +116,93 @@ function credited(row: AttributionRow) {
       };
 }
 
+// ---------------------------------------------------------------------------
+// Cities
+// ---------------------------------------------------------------------------
+
+/** Most named cities a table lists; delivery addresses have a long tail of one-offs. */
+const CITY_ROWS = 50;
+
+export type CitySessions = {
+  city: string;
+  sessions: number;
+  cartSessions: number;
+  convertedSessions: number;
+};
+export type CityOrder = { city: string | null; paise: number; isNew: boolean };
+
+/**
+ * Session counts and orders joined into one row per city, busiest first.
+ *
+ * The summary's empty city and an order with no city are one "not known" row,
+ * and it always comes last however large it is: it is not a place, and early on
+ * it will be most sessions — everyone who has not chosen an area yet.
+ */
+export function buildCityRows(
+  sessions: CitySessions[],
+  orders: CityOrder[],
+  limit = CITY_ROWS,
+): CityPerformanceDto[] {
+  type Acc = Omit<CityPerformanceDto, 'conversionRate' | 'revenue'> & { paise: number };
+  const rows = new Map<string, Acc>();
+  const row = (raw: string | null) => {
+    const city = normalizeCity(raw);
+    const key = city ?? '';
+    let entry = rows.get(key);
+    if (!entry) {
+      entry = { city, sessions: 0, cartSessions: 0, convertedSessions: 0, orders: 0, paise: 0, newCustomers: 0 };
+      rows.set(key, entry);
+    }
+    return entry;
+  };
+
+  for (const group of sessions) {
+    const entry = row(group.city);
+    entry.sessions += group.sessions;
+    entry.cartSessions += group.cartSessions;
+    entry.convertedSessions += group.convertedSessions;
+  }
+  for (const order of orders) {
+    const entry = row(order.city);
+    entry.orders += 1;
+    entry.paise += order.paise;
+    if (order.isNew) entry.newCustomers += 1;
+  }
+
+  const named = [...rows.values()]
+    .filter((entry) => entry.city !== null)
+    .sort(
+      (a, b) =>
+        b.sessions - a.sessions || b.orders - a.orders || (a.city ?? '').localeCompare(b.city ?? ''),
+    )
+    .slice(0, limit);
+  const unknown = rows.get('');
+
+  return [...named, ...(unknown ? [unknown] : [])].map(({ paise, ...entry }) => ({
+    ...entry,
+    conversionRate: ratio(entry.convertedSessions, entry.sessions),
+    revenue: money(paise),
+  }));
+}
+
+/** Sessions per city from the daily summary, optionally for one channel. */
+async function citySessions(window: Window, channel?: string): Promise<CitySessions[]> {
+  const groups = await prisma.analyticsDaily.groupBy({
+    by: ['city'],
+    where: { day: dayBounds(window), ...(channel ? { channel } : {}) },
+    _sum: { sessions: true, cartSessions: true, convertedSessions: true },
+  });
+  return groups.map((group) => ({
+    city: group.city,
+    sessions: group._sum.sessions ?? 0,
+    cartSessions: group._sum.cartSessions ?? 0,
+    convertedSessions: group._sum.convertedSessions ?? 0,
+  }));
+}
+
+/** The delivery city an order went to, as written on it. */
+const orderCity = (addressSnapshot: unknown) => parseAddressSnapshot(addressSnapshot).city || null;
+
 /**
  * Whether each order is its customer's first ever. One grouped read over all
  * time for just the customers involved.
@@ -134,7 +230,7 @@ export async function loadAcquisition(actor: Actor, query: AnalyticsQuery): Prom
   const { window } = period;
   const days = dayBounds(window);
 
-  const [sessionGroups, convertedGroups, landingGroups, orders] = await Promise.all([
+  const [sessionGroups, convertedGroups, landingGroups, orders, cities] = await Promise.all([
     prisma.storefrontSession.groupBy({
       by: ['channel', 'source', 'medium'],
       where: { day: days },
@@ -154,11 +250,20 @@ export async function loadAcquisition(actor: Actor, query: AnalyticsQuery): Prom
     }),
     prisma.order.findMany({
       where: { ...SOLD, placedAt: { gte: window.from, lt: window.to } },
-      select: { customerId: true, placedAt: true, grandTotal: true, attribution: { select: ATTRIBUTION_SELECT } },
+      select: {
+        customerId: true,
+        placedAt: true,
+        grandTotal: true,
+        addressSnapshot: true,
+        attribution: { select: ATTRIBUTION_SELECT },
+      },
     }),
+    citySessions(window),
   ]);
 
   const firsts = await firstOrderTimes([...new Set(orders.map((order) => order.customerId))]);
+  const isFirst = (order: { customerId: string; placedAt: Date }) =>
+    firsts.get(order.customerId)?.first === order.placedAt.getTime();
 
   const rows = new Map<string, AcquisitionRowDto & { paise: number }>();
   const row = (channel: string, source: string | null, medium: string | null) => {
@@ -192,7 +297,7 @@ export async function loadAcquisition(actor: Actor, query: AnalyticsQuery): Prom
     const entry = row(order.attribution?.channel ?? 'UNTRACKED', touch?.source ?? null, touch?.medium ?? null);
     entry.orders += 1;
     entry.paise += paiseOf(order.grandTotal);
-    if (firsts.get(order.customerId)?.first === order.placedAt.getTime()) entry.newCustomers += 1;
+    if (isFirst(order)) entry.newCustomers += 1;
   }
 
   const convertedByPath = new Map(
@@ -228,6 +333,14 @@ export async function loadAcquisition(actor: Actor, query: AnalyticsQuery): Prom
       };
     }),
     sessionsComplete: window.from.getTime() >= Date.now() - SESSION_RETENTION_DAYS * DAY_MS,
+    cities: buildCityRows(
+      cities,
+      orders.map((order) => ({
+        city: orderCity(order.addressSnapshot),
+        paise: paiseOf(order.grandTotal),
+        isNew: isFirst(order),
+      })),
+    ),
   };
 }
 
@@ -307,7 +420,7 @@ export async function loadMarketingReport(actor: Actor, query: AnalyticsQuery): 
   const period = resolveAnalyticsPeriod(query);
   const { window } = period;
 
-  const [spendRows, paidOrders, settingsRows] = await Promise.all([
+  const [spendRows, paidOrders, settingsRows, paidCitySessions] = await Promise.all([
     prisma.adSpendDaily.findMany({ where: { platform: 'META', day: dayBounds(window) } }),
     prisma.order.findMany({
       where: {
@@ -315,10 +428,18 @@ export async function loadMarketingReport(actor: Actor, query: AnalyticsQuery): 
         placedAt: { gte: window.from, lt: window.to },
         attribution: { channel: 'PAID_SOCIAL' },
       },
-      select: { placedAt: true, grandTotal: true, attribution: { select: ATTRIBUTION_SELECT } },
+      select: {
+        customerId: true,
+        placedAt: true,
+        grandTotal: true,
+        addressSnapshot: true,
+        attribution: { select: ATTRIBUTION_SELECT },
+      },
     }),
     prisma.setting.findMany({ where: { key: { in: ['marketing.meta', 'marketing.metaInsightsSync'] } } }),
+    citySessions(window, 'PAID_SOCIAL'),
   ]);
+  const paidFirsts = await firstOrderTimes([...new Set(paidOrders.map((order) => order.customerId))]);
 
   const campaigns = new Map<string, NodeAcc>();
   const total = newNode('total');
@@ -410,6 +531,14 @@ export async function loadMarketingReport(actor: Actor, query: AnalyticsQuery): 
       .map((node) => toDto(node, spendRows.length ? `Tag "${node.id}" (no spend found)` : node.id))
       .sort((a, b) => Number(b.spend) - Number(a.spend) || b.orders - a.orders),
     untaggedOrders: untagged,
+    cities: buildCityRows(
+      paidCitySessions,
+      paidOrders.map((order) => ({
+        city: orderCity(order.addressSnapshot),
+        paise: paiseOf(order.grandTotal),
+        isNew: paidFirsts.get(order.customerId)?.first === order.placedAt.getTime(),
+      })),
+    ),
   };
 }
 
@@ -529,6 +658,45 @@ export function buildCohorts(
   return cohorts;
 }
 
+/**
+ * Month-on-month retention, one row per month from `startMonth` to `nowMonth`:
+ * of the customers who ordered in the month before, the share who ordered
+ * again in this one. `activity` is each customer's months with an order, and
+ * must reach back to the month before `startMonth`.
+ *
+ * A month with nobody the month before has no rate rather than zero — there
+ * was no one to keep.
+ */
+export function buildMonthlyRetention(
+  activity: Iterable<Set<number>>,
+  startMonth: number,
+  nowMonth: number,
+): CustomerReportDto['monthlyRetention'] {
+  const customers = [...activity];
+  const rows: CustomerReportDto['monthlyRetention'] = [];
+  for (let month = startMonth; month <= nowMonth; month += 1) {
+    let active = 0;
+    let previous = 0;
+    let retained = 0;
+    for (const months of customers) {
+      const now = months.has(month);
+      const before = months.has(month - 1);
+      if (now) active += 1;
+      if (before) previous += 1;
+      if (now && before) retained += 1;
+    }
+    rows.push({
+      month: monthFromIndex(month),
+      customers: active,
+      previousCustomers: previous,
+      retained,
+      rate: ratio(retained, previous),
+      partial: month === nowMonth,
+    });
+  }
+  return rows;
+}
+
 export async function loadCustomerReport(actor: Actor, query: AnalyticsQuery): Promise<CustomerReportDto> {
   assertPermission(actor, 'orders:read');
   const period = resolveAnalyticsPeriod(query);
@@ -537,8 +705,10 @@ export async function loadCustomerReport(actor: Actor, query: AnalyticsQuery): P
   const nowMonth = monthIndex(monthKey(new Date()));
   const cohortStartMonth = nowMonth - (COHORT_MONTHS - 1);
   const cohortStart = new Date(`${monthFromIndex(cohortStartMonth)}-01T00:00:00+05:30`);
+  // One month earlier: the first month's retention needs the month before it.
+  const retentionStart = new Date(`${monthFromIndex(cohortStartMonth - 1)}-01T00:00:00+05:30`);
 
-  const [inWindow, allFirsts, attributedFirsts] = await Promise.all([
+  const [inWindow, allFirsts, attributedFirsts, recentOrders] = await Promise.all([
     prisma.order.findMany({
       where: { ...SOLD, placedAt: { gte: window.from, lt: window.to } },
       select: { customerId: true, placedAt: true, grandTotal: true },
@@ -555,6 +725,11 @@ export async function loadCustomerReport(actor: Actor, query: AnalyticsQuery): P
     prisma.order.findMany({
       where: { ...SOLD, attribution: { isNot: null } },
       select: { customerId: true, placedAt: true, attribution: { select: { channel: true } } },
+    }),
+    // Everyone's orders over the retention months, for month-on-month.
+    prisma.order.findMany({
+      where: { ...SOLD, placedAt: { gte: retentionStart } },
+      select: { customerId: true, placedAt: true },
     }),
   ]);
 
@@ -612,6 +787,15 @@ export async function loadCustomerReport(actor: Actor, query: AnalyticsQuery): P
     COHORT_MONTHS,
   );
 
+  // --- month on month ------------------------------------------------------
+  const monthsOf = new Map<string, Set<number>>();
+  for (const order of recentOrders) {
+    const months = monthsOf.get(order.customerId) ?? new Set<number>();
+    months.add(monthIndex(monthKey(order.placedAt)));
+    monthsOf.set(order.customerId, months);
+  }
+  const monthlyRetention = buildMonthlyRetention(monthsOf.values(), cohortStartMonth, nowMonth);
+
   // --- value by first channel ------------------------------------------------
   const firstChannel = new Map<string, string>();
   for (const order of attributedFirsts) {
@@ -639,6 +823,7 @@ export async function loadCustomerReport(actor: Actor, query: AnalyticsQuery): P
     returningRevenue: money(returningPaise),
     repeatRate: ratio(repeaters, customers.size),
     cohorts,
+    monthlyRetention,
     ltvByChannel: [...byChannel.entries()]
       .map(([channel, entry]) => ({
         channel,

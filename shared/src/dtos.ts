@@ -2852,9 +2852,31 @@ export type AcquisitionRowDto = {
 };
 
 // from core/src/read/analytics-reports.ts
+/**
+ * Sessions and orders for one city.
+ *
+ * A session's city is the delivery area the shopper chose on the storefront,
+ * an order's is the city it was delivered to — both "the city they are buying
+ * for". Null is sessions with no area chosen, and orders without a city.
+ */
+export type CityPerformanceDto = {
+  city: string | null;
+  sessions: number;
+  /** Sessions that added to cart (or got further). */
+  cartSessions: number;
+  convertedSessions: number;
+  conversionRate: number | null;
+  orders: number;
+  revenue: string;
+  newCustomers: number;
+};
+
+// from core/src/read/analytics-reports.ts
 export type AcquisitionDto = {
   period: AnalyticsPeriodDto;
   rows: AcquisitionRowDto[];
+  /** Every channel, by city. Sessions are counted from the day cities began being recorded. */
+  cities: CityPerformanceDto[];
   landingPages: Array<{
     path: string;
     sessions: number;
@@ -2899,6 +2921,11 @@ export type MarketingReportDto = {
   /** Campaign → ad set → ad. */
   campaigns: AdNodeDto[];
   untaggedOrders: number;
+  /**
+   * Paid social only, by city. No spend: Meta reports delivery by state at the
+   * finest, so spend cannot be split by city.
+   */
+  cities: CityPerformanceDto[];
 };
 
 // from core/src/read/analytics-reports.ts
@@ -2934,6 +2961,24 @@ export type CustomerReportDto = {
   repeatRate: number | null;
   /** Monthly cohorts by first order: share of each cohort ordering N months later. */
   cohorts: Array<{ month: string; size: number; retention: Array<number | null> }>;
+  /**
+   * Month-on-month retention for the last twelve months, oldest first: of the
+   * customers who ordered in the month before, the share who ordered again in
+   * this one. Not affected by the period filter.
+   */
+  monthlyRetention: Array<{
+    /** "YYYY-MM" in store time. */
+    month: string;
+    /** Customers with an order in this month. */
+    customers: number;
+    /** Customers with an order in the month before. */
+    previousCustomers: number;
+    /** Of those, the ones who ordered again in this month. */
+    retained: number;
+    rate: number | null;
+    /** The current month, still running — its rate can only rise. */
+    partial: boolean;
+  }>;
   /** Customers grouped by where their first order came from (attributed orders only). */
   ltvByChannel: Array<{
     channel: string;
