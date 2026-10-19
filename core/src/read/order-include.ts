@@ -33,6 +33,20 @@ export const orderDetailInclude = {
       discountShare: true,
       taxableAmount: true,
       taxAmount: true,
+      orderedQuantity: true,
+    },
+  },
+  shipments: {
+    orderBy: { number: 'asc' },
+    select: {
+      id: true,
+      number: true,
+      status: true,
+      expectedDeliveryAt: true,
+      deliveredAt: true,
+      cancelledAt: true,
+      note: true,
+      items: { select: { orderItemId: true, quantity: true, receivedQuantity: true } },
     },
   },
   statusEvents: {
@@ -63,6 +77,7 @@ export const orderDetailInclude = {
       instrumentDetail: true,
       note: true,
       occurredAt: true,
+      shipmentId: true,
       recordedBy: { select: { name: true } },
     },
   },

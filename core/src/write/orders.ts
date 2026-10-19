@@ -19,7 +19,6 @@ import {
   advanceOrderStatusSchema,
   cancelOrderSchema,
   canTransition,
-  cashbackReleaseFrom,
   deletePaymentTransactionSchema,
   derivePaymentStatus,
   formatINR,
@@ -31,7 +30,7 @@ import {
   PAYMENT_GATEWAY_LABELS,
   recordPaymentSchema,
   restoresStock,
-  settlesPaymentOnDelivery,
+  setOrdersArchivedSchema,
   toPaise,
   totalPayments,
   type ActionResult,
@@ -46,11 +45,10 @@ import { notifyOrder } from '../notify/dispatch.ts';
 import { decimalToString } from '../dto.ts';
 import {
   debitWallet,
-  loadWalletRules,
   refreshWalletBalance,
   reverseOrderRedemption,
 } from './wallet.ts';
-import { releaseOrderCashback } from './wallet-jobs.ts';
+import { moveThroughLoads, recallBeforeCancel, ShipmentRefusal } from './shipments.ts';
 
 /**
  * Recomputes a customer's denormalised order counters.
@@ -208,79 +206,41 @@ async function moveOrderStatus(
     );
   }
 
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    select: {
-      id: true,
-      orderNumber: true,
-      status: true,
-      paymentMethod: true,
-      paymentStatus: true,
-      customerId: true,
-      grandTotal: true,
-      placedAt: true,
-      transactions: { select: { type: true, status: true, amount: true } },
-    },
-  });
-  if (!order) return actionError('That order no longer exists.');
-
-  if (delivered.at && delivered.at < order.placedAt) {
-    return actionError('It cannot have been delivered before it was placed.', {
-      deliveredAt: 'Pick a time after the order was placed',
+  /*
+   * Sending out, delivering and calling back are about loads: they go through
+   * the deliveries, which settle the cash, start the cashback clock and send
+   * the WhatsApp updates, and the order's status follows from them.
+   */
+  if (
+    toStatus === 'OUT_FOR_DELIVERY' ||
+    toStatus === 'DELIVERED' ||
+    (expectedStatus === 'OUT_FOR_DELIVERY' && toStatus === 'PACKED')
+  ) {
+    return moveThroughLoads(actor, {
+      orderId,
+      expectedStatus,
+      toStatus,
+      expectedAt: expected.at,
+      deliveredAt: delivered.at,
+      note: note ?? null,
     });
   }
 
-  // Settle cash on delivery at the doorstep: DELIVERED *is* the payment event
-  // for COD. Prepaid, failed and refunded orders are left exactly as they are.
-  const settlesCod = settlesPaymentOnDelivery(order.paymentMethod, order.paymentStatus, toStatus);
-
-  /*
-   * What the rider actually collects is whatever is still owed, not the order
-   * total — a customer who part-paid online and takes the rest in cash hands
-   * over the balance, and recording the full amount would invent money.
-   */
-  const owed = totalPayments(
-    order.transactions.map((entry) => ({
-      type: entry.type,
-      status: entry.status,
-      amount: entry.amount.toString(),
-    })),
-    order.grandTotal.toString(),
-  ).outstanding;
-  const collectsCash = settlesCod && owed !== '0.00';
-
-  const now = new Date();
-  // Delivery starts the cashback clock; the hold comes from today's rules.
-  const cashbackReleaseAt =
-    toStatus === 'DELIVERED' ? cashbackReleaseFrom(now, await loadWalletRules()) : null;
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, orderNumber: true },
+  });
+  if (!order) return actionError('That order no longer exists.');
 
   const changed = await prisma.$transaction(async (tx) => {
     const result = await tx.order.updateMany({
       where: { id: orderId, status: expectedStatus },
-      data: {
-        status: toStatus,
-        // Any move settles the question auto-confirm was waiting on.
-        autoConfirmAt: null,
-        ...(toStatus === 'DELIVERED' ? { deliveredAt: delivered.at ?? now } : {}),
-        ...(toStatus === 'OUT_FOR_DELIVERY' ? { expectedDeliveryAt: expected.at } : {}),
-      },
+      // Any move settles the question auto-confirm was waiting on.
+      data: { status: toStatus, autoConfirmAt: null },
     });
 
     // Zero means the compare-and-swap lost: someone moved this order first.
     if (result.count === 0) return false;
-
-    /*
-     * Cashback still waiting follows the delivery: it gets a release time when
-     * the order is delivered, and loses it again if the order is stepped back
-     * from Delivered — a delivery marked by mistake must not pay out a day
-     * later. Cashback already credited is left alone.
-     */
-    if (toStatus === 'DELIVERED' || expectedStatus === 'DELIVERED') {
-      await tx.order.updateMany({
-        where: { id: orderId, cashbackStatus: 'PENDING' },
-        data: { cashbackReleaseAt },
-      });
-    }
 
     await tx.orderStatusEvent.create({
       data: {
@@ -291,29 +251,6 @@ async function moveOrderStatus(
         changedByAdminId: adminId,
       },
     });
-
-    /*
-     * The cash goes through the ledger like any other payment rather than
-     * flipping the status word directly. That keeps one rule with no
-     * exceptions: the status is always derived from money that was recorded,
-     * so it can never claim more than the ledger can account for.
-     */
-    if (collectsCash) {
-      await tx.paymentTransaction.create({
-        data: {
-          orderId,
-          type: 'PAYMENT',
-          status: 'SUCCESS',
-          gateway: 'CASH',
-          instrument: 'CASH',
-          amount: owed,
-          note: 'Collected on delivery',
-          recordedByAdminId: adminId,
-        },
-      });
-      await refreshOrderPaymentState(tx, orderId);
-    }
-
     return true;
   });
 
@@ -326,24 +263,11 @@ async function moveOrderStatus(
     return actionError(`This order is already ${label}. Refresh to see where it is now.`);
   }
 
-  // With no hold configured, cashback is due the moment the order is delivered.
-  if (cashbackReleaseAt && cashbackReleaseAt <= new Date()) {
-    await releaseOrderCashback(orderId);
-  }
-
   await recordAudit(actor, {
     action: 'order.status',
     entityType: 'Order',
     entityId: orderId,
-    diff: {
-      orderNumber: order.orderNumber,
-      from: expectedStatus,
-      to: toStatus,
-      note,
-      ...(expected.at ? { expectedDeliveryAt: expected.at.toISOString() } : {}),
-      ...(delivered.at ? { deliveredAt: delivered.at.toISOString() } : {}),
-      ...(collectsCash ? { collectedCash: owed, reason: 'COD settled on delivery' } : {}),
-    },
+    diff: { orderNumber: order.orderNumber, from: expectedStatus, to: toStatus, note },
   });
 
   // Once per order per moment: stepping back and forward again does not resend.
@@ -354,14 +278,13 @@ async function moveOrderStatus(
 }
 
 /**
- * The statuses a customer hears about. PACKED is the shop's business, not
- * theirs; PLACED is announced when the order is written; CANCELLED has its own
- * path, with a reason.
+ * The statuses a customer hears about from here. PACKED is the shop's
+ * business, not theirs; PLACED is announced when the order is written;
+ * CANCELLED has its own path, with a reason. Out for delivery and delivered are
+ * announced per load, by the deliveries (`write/shipments.ts`).
  */
 const STATUS_NOTIFICATIONS: Partial<Record<OrderStatus, NotificationEvent>> = {
   CONFIRMED: 'order.confirmed',
-  OUT_FOR_DELIVERY: 'delivery.outForDelivery',
-  DELIVERED: 'order.delivered',
 };
 
 /** How long a storefront order waits for the shop before confirming itself. */
@@ -427,7 +350,9 @@ export async function cancelOrder(
     return actionError(
       expectedStatus === 'DELIVERED'
         ? 'A delivered order cannot be cancelled. Record a return instead.'
-        : 'This order is already cancelled.',
+        : expectedStatus === 'PARTIALLY_DELIVERED'
+          ? 'Part of this order has been delivered. Close it short instead of cancelling.'
+          : 'This order is already cancelled.',
     );
   }
 
@@ -445,7 +370,16 @@ export async function cancelOrder(
   });
   if (!order) return actionError('That order no longer exists.');
 
-  const outcome = await prisma.$transaction(async (tx) => {
+  let outcome;
+  try {
+    outcome = await prisma.$transaction(async (tx) => {
+    /*
+     * A customer refusing at the door cancels with the load still out: it is
+     * called back in the same breath. Once any load has arrived those goods
+     * were sold, and the order is closed short instead — this refuses.
+     */
+    const recalled = await recallBeforeCancel(tx, orderId);
+
     const result = await tx.order.updateMany({
       where: { id: orderId, status: expectedStatus },
       data: { status: 'CANCELLED', cancelReason: reason },
@@ -496,8 +430,12 @@ export async function cancelOrder(
       adminId,
     });
 
-    return { restocked, ...wallet };
+    return { restocked, recalled, ...wallet };
   });
+  } catch (error) {
+    if (error instanceof ShipmentRefusal) return actionError(error.message);
+    throw error;
+  }
 
   if (!outcome) {
     return actionError('This order has already moved on. Refresh to see where it is now.');
@@ -512,6 +450,7 @@ export async function cancelOrder(
       from: expectedStatus,
       reason,
       restocked: outcome.restocked,
+      ...(outcome.recalled > 0 ? { deliveriesCalledBack: outcome.recalled } : {}),
       walletReturned: outcome.walletReturned,
       cashbackVoided: outcome.cashbackVoided,
       items: order.items.map((item) => ({
@@ -524,6 +463,61 @@ export async function cancelOrder(
   notifyOrder('order.cancelled', orderId, { cancelReason: reason ?? '' });
 
   return actionOk({ restocked: outcome.restocked });
+}
+
+/**
+ * Puts finished orders away from the main list, or brings them back.
+ *
+ * Only a delivered or cancelled order can be archived — an order still being
+ * worked must stay where the shop is looking. Nothing else about it changes:
+ * reports, the customer's own view and the invoice carry on as before. Orders
+ * that do not qualify are skipped and counted rather than failing the batch.
+ */
+export async function setOrdersArchived(
+  actor: Actor,
+  input: unknown,
+): Promise<ActionResult<{ changed: number; skipped: number }>> {
+  assertPermission(actor, 'orders:write');
+
+  const parsed = setOrdersArchivedSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+  const { archived } = parsed.data;
+  const orderIds = [...new Set(parsed.data.orderIds)];
+
+  const eligible = await prisma.order.findMany({
+    where: archived
+      ? { id: { in: orderIds }, status: { in: ['DELIVERED', 'CANCELLED'] }, archivedAt: null }
+      : { id: { in: orderIds }, archivedAt: { not: null } },
+    select: { id: true, orderNumber: true },
+  });
+  if (eligible.length === 0) {
+    return actionError(
+      archived
+        ? 'Only delivered or cancelled orders can be archived.'
+        : 'None of those orders are archived.',
+    );
+  }
+
+  const ids = eligible.map((order) => order.id);
+  // The status is re-checked in the write, so an order reopened a moment ago
+  // is not archived on the strength of a stale read.
+  const result = await prisma.order.updateMany({
+    where: archived
+      ? { id: { in: ids }, status: { in: ['DELIVERED', 'CANCELLED'] }, archivedAt: null }
+      : { id: { in: ids }, archivedAt: { not: null } },
+    data: { archivedAt: archived ? new Date() : null },
+  });
+
+  for (const order of eligible) {
+    await recordAudit(actor, {
+      action: archived ? 'order.archive' : 'order.unarchive',
+      entityType: 'Order',
+      entityId: order.id,
+      diff: { orderNumber: order.orderNumber },
+    });
+  }
+
+  return actionOk({ changed: result.count, skipped: orderIds.length - result.count });
 }
 
 /** The private note on an order — visible to staff, never to the customer. */

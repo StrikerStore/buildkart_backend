@@ -24,6 +24,7 @@
 import { prisma, Prisma } from '@buildkart/database';
 import {
   PAYMENT_METHOD_LABELS,
+  lineProgress,
   formatAmount,
   formatDeliveryAddress,
   formatItemList,
@@ -351,7 +352,10 @@ async function loadOrderValues(orderId: string, event: NotificationEvent, locale
       expectedDeliveryAt: true,
       deliveredAt: true,
       customer: { select: RECIPIENT_SELECT },
-      items: { select: { variantSnapshot: true, quantity: true }, orderBy: { id: 'asc' } },
+      items: {
+        select: { id: true, variantSnapshot: true, quantity: true },
+        orderBy: { id: 'asc' },
+      },
     },
   });
   if (!order) return null;
@@ -361,6 +365,7 @@ async function loadOrderValues(orderId: string, event: NotificationEvent, locale
     const snapshot = parseVariantSnapshot(item.variantSnapshot);
     const hindi = language === 'hi' && snapshot.nameHi;
     return {
+      id: item.id,
       name: (hindi ? snapshot.nameHi : snapshot.nameEn) ?? snapshot.nameEn,
       options: snapshot.optionValues,
       quantity: item.quantity,
@@ -369,6 +374,7 @@ async function loadOrderValues(orderId: string, event: NotificationEvent, locale
 
   return {
     order,
+    items,
     values: {
       ...(await commonTokens(order.customer)),
       orderNumber: order.orderNumber,
@@ -382,6 +388,74 @@ async function loadOrderValues(orderId: string, event: NotificationEvent, locale
       orderUrl: messageLink(`/account/orders/${order.id}`, event),
     } as Record<string, string>,
   };
+}
+
+/**
+ * A message about one load of an order: out for delivery, or arrived with more
+ * still to come.
+ *
+ * The order's tokens, with the item list, count and times narrowed to this
+ * load, its number, and what is still to send. Once per load — a second load
+ * going out is news, where the same load stepped back and sent again is not.
+ */
+export function notifyShipment(event: NotificationEvent, shipmentId: string): void {
+  notifyInBackground(
+    (async (): Promise<NotifyInput | null> => {
+      const shipment = await prisma.orderShipment.findUnique({
+        where: { id: shipmentId },
+        select: {
+          orderId: true,
+          number: true,
+          expectedDeliveryAt: true,
+          deliveredAt: true,
+          items: { select: { orderItemId: true, quantity: true, receivedQuantity: true } },
+        },
+      });
+      if (!shipment) return null;
+
+      const loaded = await loadOrderValues(shipment.orderId, event);
+      if (!loaded) return null;
+
+      const loads = await prisma.orderShipment.findMany({
+        where: { orderId: shipment.orderId },
+        select: {
+          id: true,
+          status: true,
+          items: { select: { orderItemId: true, quantity: true, receivedQuantity: true } },
+        },
+      });
+      const progress = lineProgress(loaded.items, loads);
+      const byId = new Map(loaded.items.map((item) => [item.id, item]));
+
+      const thisLoad = shipment.items.flatMap((item) => {
+        const line = byId.get(item.orderItemId);
+        const quantity = item.receivedQuantity ?? item.quantity;
+        return line && quantity > 0 ? [{ ...line, quantity }] : [];
+      });
+      const pending = loaded.items.flatMap((item) => {
+        const left = progress.get(item.id)?.remaining ?? 0;
+        return left > 0 ? [{ ...item, quantity: left }] : [];
+      });
+
+      return {
+        event,
+        recipient: toRecipient(loaded.order.customer),
+        orderId: shipment.orderId,
+        values: {
+          ...loaded.values,
+          itemCount: String(thisLoad.length),
+          itemList: formatItemList(thisLoad),
+          pendingItemList: formatItemList(pending),
+          deliveryNumber: String(shipment.number),
+          expectedDelivery: shipment.expectedDeliveryAt
+            ? formatStoreDateTime(shipment.expectedDeliveryAt)
+            : '',
+          deliveredOn: shipment.deliveredAt ? formatStoreDateTime(shipment.deliveredAt) : '',
+        },
+        dedupeKey: `${event}:${shipment.orderId}:${shipmentId}`,
+      };
+    })(),
+  );
 }
 
 /** The order in the admin, or empty while ADMIN_URL is not set. */

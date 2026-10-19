@@ -17,6 +17,7 @@ import { prisma, type Prisma } from '@buildkart/database';
 import {
   describePaidWith,
   fromPaise,
+  lineProgress,
   toPaise,
   parseAddressSnapshot,
   parseTaxBreakdown,
@@ -25,6 +26,7 @@ import {
   type MyInvoiceDto,
   type MyOrderDetailDto,
   type MyOrderListItemDto,
+  type OrderStatus,
 } from '@buildkart/shared';
 import { ForbiddenError, type Actor } from '../actor.ts';
 import { orderDeliveryPromise } from './delivery-promise.ts';
@@ -194,12 +196,25 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       expectedDeliveryAt: true,
       autoConfirmAt: true,
       buyerGstin: true,
+      closedShortAt: true,
+      closedShortReason: true,
+      shipments: {
+        orderBy: { number: 'asc' },
+        select: {
+          number: true,
+          status: true,
+          expectedDeliveryAt: true,
+          deliveredAt: true,
+          items: { select: { orderItemId: true, quantity: true, receivedQuantity: true } },
+        },
+      },
       items: {
         orderBy: { id: 'asc' },
         select: {
           id: true,
           variantSnapshot: true,
           quantity: true,
+          orderedQuantity: true,
           unitPrice: true,
           lineTotal: true,
           product: {
@@ -301,6 +316,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
         unitPrice: decimalToString(item.unitPrice),
         lineTotal: decimalToString(item.lineTotal),
         imageKey: item.product?.images[0]?.media.r2Key ?? null,
+        orderedQuantity: item.orderedQuantity,
       };
     }),
     /** The visual timeline PLAN.md §6.8 asks for. */
@@ -309,7 +325,72 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
       at: dateToIso(event.createdAt),
     })),
     delivery,
+    ...myShipments(order),
+    closedShort: order.closedShortAt
+      ? { at: dateToIso(order.closedShortAt), reason: order.closedShortReason }
+      : null,
   };
+}
+
+/**
+ * The loads of the customer's order, and what is still to come.
+ *
+ * Called-back loads are left out — the customer never saw them leave. "Still
+ * to come" is only for an order already sent in loads and not yet finished;
+ * before the first load goes, the whole order is still to come and says so
+ * without a list.
+ */
+function myShipments(order: {
+  status: OrderStatus;
+  items: Array<{ id: string; quantity: number; variantSnapshot: unknown }>;
+  shipments: Array<{
+    number: number;
+    status: 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+    expectedDeliveryAt: Date | null;
+    deliveredAt: Date | null;
+    items: Array<{ orderItemId: string; quantity: number; receivedQuantity: number | null }>;
+  }>;
+}): Pick<MyOrderDetailDto, 'shipments' | 'stillToCome'> {
+  const names = new Map(
+    order.items.map((item) => {
+      const snapshot = parseVariantSnapshot(item.variantSnapshot);
+      return [
+        item.id,
+        {
+          nameEn: snapshot.nameEn,
+          nameHi: snapshot.nameHi ?? null,
+          unitLabelEn: snapshot.unitLabelEn ?? null,
+          unitLabelHi: snapshot.unitLabelHi ?? null,
+        },
+      ];
+    }),
+  );
+  const loads = order.shipments.filter((shipment) => shipment.status !== 'CANCELLED');
+
+  const shipments = loads.map((shipment) => ({
+    number: shipment.number,
+    status: shipment.status,
+    expectedDeliveryAt: dateToIso(shipment.expectedDeliveryAt),
+    deliveredAt: dateToIso(shipment.deliveredAt),
+    items: shipment.items.flatMap((item) => {
+      const name = names.get(item.orderItemId);
+      return name
+        ? [{ ...name, quantity: item.quantity, receivedQuantity: item.receivedQuantity }]
+        : [];
+    }),
+  }));
+
+  const inPlay = loads.length > 0 && order.status !== 'DELIVERED' && order.status !== 'CANCELLED';
+  const progress = lineProgress(order.items, order.shipments);
+  const stillToCome = inPlay
+    ? order.items.flatMap((item) => {
+        const left = progress.get(item.id)?.remaining ?? 0;
+        const name = names.get(item.id);
+        return left > 0 && name ? [{ ...name, quantity: left }] : [];
+      })
+    : [];
+
+  return { shipments, stillToCome };
 }
 
 /**
@@ -335,6 +416,7 @@ export async function reorderLines(
       items: {
         select: {
           quantity: true,
+          orderedQuantity: true,
           variantId: true,
           variant: {
             select: {
@@ -358,7 +440,8 @@ export async function reorderLines(
    */
   return order.items.flatMap((item) =>
     item.variantId && item.variant?.isActive && item.variant.product.status === 'ACTIVE'
-      ? [{ variantId: item.variantId, quantity: item.quantity }]
+      ? // What the customer asked for, even if the order was closed short.
+        [{ variantId: item.variantId, quantity: item.orderedQuantity ?? item.quantity }]
       : [],
   );
 }
@@ -436,6 +519,8 @@ async function loadInvoice(
       taxIntraState: true,
       taxBreakdown: true,
       items: {
+        // A line closed short to nothing was never supplied, so it is not invoiced.
+        where: { quantity: { gt: 0 } },
         orderBy: { id: 'asc' },
         select: {
           id: true,

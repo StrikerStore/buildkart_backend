@@ -97,7 +97,11 @@ export async function loadDashboard(actor: Actor, range: AnalyticsRange): Promis
         select: { grandTotal: true, amountPaid: true },
       }),
       prisma.order.count({
-        where: { status: { in: ['PLACED', 'CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY'] } },
+        where: {
+          status: {
+            in: ['PLACED', 'CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'PARTIALLY_DELIVERED'],
+          },
+        },
       }),
     ]);
 

@@ -123,6 +123,8 @@ export const orderListQuerySchema = z.object({
   range: z.enum(['all', 'today', '7d', '30d']).default('all'),
   sort: z.enum(['newest', 'oldest', 'totalHigh', 'totalLow']).default('newest'),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
+  /** The working list, or orders put away. Archived orders are in one, never both. */
+  view: z.enum(['ACTIVE', 'ARCHIVED']).default('ACTIVE'),
 });
 export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
 
@@ -186,6 +188,83 @@ export const cancelOrderSchema = z.object({
   restock: z.boolean().default(true),
 });
 export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+
+// ---------------------------------------------------------------------------
+// Deliveries — an order sent in loads
+// ---------------------------------------------------------------------------
+
+const quantityLine = z.object({
+  orderItemId: z.string().min(1).max(64),
+  quantity: z.coerce.number().int().min(0).max(100_000),
+});
+
+/** A load going out: what is in it, and when the customer should expect it. */
+export const createShipmentSchema = z.object({
+  orderId: z.string().min(1).max(64),
+  /** A `datetime-local` value in store time, quoted to the customer. */
+  expectedDeliveryAt: z.string().trim().min(1, 'Say when the customer should expect it').max(40),
+  /** Zero quantities are dropped; at least one line must be in the load. */
+  items: z.array(quantityLine).min(1).max(100),
+  note: z.string().trim().max(255).optional(),
+});
+export type CreateShipmentInput = z.infer<typeof createShipmentSchema>;
+
+/**
+ * A load arrived. `items` carries what was *received* per line, which may be
+ * less than was sent; anything short goes back to "still to send". Omitted
+ * lines arrived in full.
+ */
+export const deliverShipmentSchema = z.object({
+  shipmentId: z.string().min(1).max(64),
+  /** When it was handed over, in store time. Absent means now. */
+  deliveredAt: z.string().trim().max(40).optional(),
+  items: z
+    .array(z.object({ orderItemId: z.string().min(1).max(64), receivedQuantity: z.coerce.number().int().min(0).max(100_000) }))
+    .max(100)
+    .default([]),
+  /**
+   * Cash the driver collected, for a cash-on-delivery order. Absent means the
+   * amount the challan asked for.
+   */
+  cashCollected: z
+    .string()
+    .trim()
+    .regex(MONEY_PATTERN, 'Enter an amount like 1250 or 1250.50')
+    .optional(),
+});
+export type DeliverShipmentInput = z.infer<typeof deliverShipmentSchema>;
+
+export const cancelShipmentSchema = z.object({
+  shipmentId: z.string().min(1).max(64),
+  reason: z.string().trim().max(255).optional(),
+});
+export type CancelShipmentInput = z.infer<typeof cancelShipmentSchema>;
+
+/** Reasons offered for ending an order with what arrived. */
+export const CLOSE_SHORT_REASONS = [
+  'Out of stock',
+  'Customer does not want the rest',
+  'Damaged in transit',
+] as const;
+
+/**
+ * Ending a partly delivered order with what arrived. The rest goes back to
+ * stock (unless it was never there to begin with) and the order is billed for
+ * what was delivered.
+ */
+export const closeShortSchema = z.object({
+  orderId: z.string().min(1).max(64),
+  reason: z.string().trim().min(1, 'Say why the rest is not coming').max(255),
+  restock: z.boolean().default(true),
+});
+export type CloseShortInput = z.infer<typeof closeShortSchema>;
+
+/** Archive or bring back several orders at once. */
+export const setOrdersArchivedSchema = z.object({
+  orderIds: z.array(z.string().min(1).max(64)).min(1).max(100),
+  archived: z.boolean(),
+});
+export type SetOrdersArchivedInput = z.infer<typeof setOrdersArchivedSchema>;
 
 export const orderNoteSchema = z.object({
   orderId: z.string().min(1).max(64),

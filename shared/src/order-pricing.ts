@@ -158,6 +158,61 @@ export type PricingOptions = {
 export class PricingError extends Error {}
 
 /**
+ * The GST on one line, from what the line costs after its discount share.
+ *
+ * Basis points keep the multiplication integral: net times 10^4 stays well
+ * inside MAX_SAFE_INTEGER, where a percent as a float would not. An inclusive
+ * line already contains its tax (net = base × (10000 + rate) / 10000); an
+ * exclusive one has it added on top.
+ *
+ * Exported so re-pricing a line later — closing an order short — taxes it
+ * exactly as placing it did.
+ */
+export function lineTax(
+  netPaise: number,
+  percent: number,
+  inclusive: boolean,
+): { rateBp: number; basePaise: number; taxPaise: number } {
+  const rateBp = Math.round(percent * 100);
+  if (rateBp > 0 && inclusive) {
+    const taxPaise = Math.round((netPaise * rateBp) / (10_000 + rateBp));
+    return { rateBp, basePaise: netPaise - taxPaise, taxPaise };
+  }
+  if (rateBp > 0) {
+    return { rateBp, basePaise: netPaise, taxPaise: Math.round((netPaise * rateBp) / 10_000) };
+  }
+  return { rateBp, basePaise: netPaise, taxPaise: 0 };
+}
+
+/**
+ * The invoice's GST summary, per rate, from the lines' own figures.
+ *
+ * Sums the same per-line integers rather than recomputing tax on a grouped
+ * total. Recomputing would drift a paisa per group, and an invoice whose GST
+ * summary does not add up to its own tax line is exactly the discrepancy
+ * someone spends an afternoon chasing.
+ */
+export function taxBreakdownOf(
+  lines: ReadonlyArray<{ taxPercent: number; taxableAmount: string; taxAmount: string }>,
+): TaxBreakdownRow[] {
+  const grouped = new Map<number, { taxableAmount: number; taxAmount: number }>();
+  for (const line of lines) {
+    if (line.taxPercent <= 0) continue;
+    const row = grouped.get(line.taxPercent) ?? { taxableAmount: 0, taxAmount: 0 };
+    row.taxableAmount += toPaise(line.taxableAmount);
+    row.taxAmount += toPaise(line.taxAmount);
+    grouped.set(line.taxPercent, row);
+  }
+  return [...grouped.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([percent, row]) => ({
+      percent,
+      taxableAmount: fromPaise(row.taxableAmount),
+      taxAmount: fromPaise(row.taxAmount),
+    }));
+}
+
+/**
  * Allocates a cart-level discount across lines, in proportion to what each is
  * worth, so the shares sum to the discount **exactly**.
  *
@@ -413,21 +468,8 @@ export function priceOrder(
 
     const exempt = line.entry.taxable === false;
     const percent = exempt ? 0 : (line.entry.taxPercent ?? 0);
-    // Basis points keep the multiplication integral: net times 10^4 stays well
-    // inside MAX_SAFE_INTEGER, where a percent as a float would not.
-    const rateBp = Math.round(percent * 100);
     const inclusive = line.entry.taxInclusive ?? true;
-
-    let taxPaise = 0;
-    let basePaise = net;
-
-    if (rateBp > 0 && inclusive) {
-      // The line already contains the tax: net = base * (10000 + rate) / 10000.
-      taxPaise = Math.round((net * rateBp) / (10_000 + rateBp));
-      basePaise = net - taxPaise;
-    } else if (rateBp > 0) {
-      taxPaise = Math.round((net * rateBp) / 10_000);
-    }
+    const { rateBp, basePaise, taxPaise } = lineTax(net, percent, inclusive);
 
     return {
       variantId: line.variantId,
@@ -453,28 +495,7 @@ export function priceOrder(
     0,
   );
 
-  /*
-   * The breakdown sums the same per-line integers rather than recomputing tax
-   * on a grouped total. Recomputing would drift a paisa per group, and an
-   * invoice whose GST summary does not add up to its own tax line is exactly
-   * the discrepancy someone spends an afternoon chasing.
-   */
-  const grouped = new Map<number, { taxableAmount: number; taxAmount: number }>();
-  for (const line of lines) {
-    if (line.taxPercent <= 0) continue;
-    const row = grouped.get(line.taxPercent) ?? { taxableAmount: 0, taxAmount: 0 };
-    row.taxableAmount += toPaise(line.taxableAmount);
-    row.taxAmount += toPaise(line.taxAmount);
-    grouped.set(line.taxPercent, row);
-  }
-
-  const taxBreakdown: TaxBreakdownRow[] = [...grouped.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([percent, row]) => ({
-      percent,
-      taxableAmount: fromPaise(row.taxableAmount),
-      taxAmount: fromPaise(row.taxAmount),
-    }));
+  const taxBreakdown = taxBreakdownOf(lines);
 
   const afterDiscount = subtractMoney(subtotal, discountTotal);
 

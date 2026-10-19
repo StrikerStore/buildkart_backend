@@ -29,8 +29,14 @@ test('search reaches the payment ledger, not just the order', () => {
   ]);
 });
 
-test('an ALL selection is not a filter', () => {
-  assert.deepEqual(buildOrderFilters(q(), null), {});
+test('an ALL selection is not a filter — beyond keeping archived orders out', () => {
+  assert.deepEqual(buildOrderFilters(q(), null), { archivedAt: null });
+});
+
+test('the archived view shows only archived orders', () => {
+  assert.deepEqual(buildOrderFilters(q({ view: 'ARCHIVED' }), null), {
+    archivedAt: { not: null },
+  });
 });
 
 test('payment filters stack, and a range becomes a lower bound', () => {
@@ -40,6 +46,7 @@ test('payment filters stack, and a range becomes a lower bound', () => {
     since,
   );
   assert.deepEqual(filters, {
+    archivedAt: null,
     paymentMethod: 'COD',
     paymentStatus: 'PENDING',
     paymentGateway: 'RAZORPAY',
@@ -66,7 +73,13 @@ test('every sort resolves to an order, with a stable fallback', () => {
 });
 
 test('open means waiting on someone — not delivered, not cancelled', () => {
-  assert.deepEqual(OPEN_STATUSES, ['PLACED', 'CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY']);
+  assert.deepEqual(OPEN_STATUSES, [
+    'PLACED',
+    'CONFIRMED',
+    'PACKED',
+    'OUT_FOR_DELIVERY',
+    'PARTIALLY_DELIVERED',
+  ]);
   assert.ok(!OPEN_STATUSES.includes('DELIVERED'));
   assert.ok(!OPEN_STATUSES.includes('CANCELLED'));
 });

@@ -38,6 +38,7 @@ import type {
   PaymentTransactionStatus,
   PaymentTransactionType,
   PickerOptions,
+  ShipmentStatus,
   ProductStatusValue,
   BulkTierBasis,
   TagSlugRule,
@@ -217,6 +218,8 @@ export type OrderListItemDto = {
   city: string;
   pincode: string;
   placedAt: string;
+  /** Set when the order has been put away out of the main list. */
+  archivedAt: string | null;
 };
 
 // from core/src/dto.ts
@@ -235,6 +238,48 @@ export type OrderItemDto = {
   discountShare: string;
   taxableAmount: string;
   taxAmount: string;
+  /** What was ordered, when the order was closed short and `quantity` is what arrived. */
+  orderedQuantity: number | null;
+};
+
+// from core/src/dto.ts
+/** One load of an order. */
+export type OrderShipmentDto = {
+  id: string;
+  number: number;
+  /** "BK-1042/2", as its challan prints it. */
+  label: string;
+  status: ShipmentStatus;
+  expectedDeliveryAt: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+  note: string | null;
+  items: Array<{
+    orderItemId: string;
+    nameEn: string;
+    nameHi: string | null;
+    detail: string | null;
+    unitLabelEn: string | null;
+    quantity: number;
+    receivedQuantity: number | null;
+  }>;
+  /** Cash recorded against this load in the payment ledger. */
+  cashCollected: string;
+  /**
+   * For a load still on the road on a cash-on-delivery order: what the driver
+   * should collect if it all arrives. Null otherwise.
+   */
+  toCollect: string | null;
+};
+
+// from core/src/dto.ts
+/** How far one order line has got across its loads. */
+export type LineFulfillmentDto = {
+  orderItemId: string;
+  ordered: number;
+  onRoad: number;
+  delivered: number;
+  remaining: number;
 };
 
 // from core/src/dto.ts
@@ -263,6 +308,8 @@ export type PaymentTransactionDto = {
   note: string | null;
   occurredAt: string;
   recordedByName: string | null;
+  /** The load this cash was collected on, for an order sent in loads. */
+  shipmentId: string | null;
 };
 
 // from core/src/dto.ts
@@ -310,6 +357,14 @@ export type OrderDetailDto = {
   expectedDeliveryAt: string | null;
   /** What the customer has been promised; null before confirmation or once done. */
   delivery: DeliveryPromiseDto | null;
+  /** Its loads, oldest first. Empty until the first one goes out. */
+  shipments: OrderShipmentDto[];
+  /** Per line: sent, on the road, arrived, still to send. */
+  fulfillment: LineFulfillmentDto[];
+  /** Set when it was ended with what arrived; the lines are billed for that. */
+  closedShortAt: string | null;
+  closedShortReason: string | null;
+  archivedAt: string | null;
   customer: {
     id: string;
     name: string | null;
@@ -2244,6 +2299,24 @@ export type MyOrderItemDto = {
   unitPrice: string;
   lineTotal: string;
   imageKey: string | null;
+  /** What was ordered, when the order was closed short and `quantity` is what arrived. */
+  orderedQuantity: number | null;
+};
+
+/** One load of the customer's order, as they see it. */
+export type MyOrderShipmentDto = {
+  number: number;
+  status: ShipmentStatus;
+  expectedDeliveryAt: string | null;
+  deliveredAt: string | null;
+  items: Array<{
+    nameEn: string;
+    nameHi: string | null;
+    unitLabelEn: string | null;
+    unitLabelHi: string | null;
+    quantity: number;
+    receivedQuantity: number | null;
+  }>;
 };
 
 export type MyOrderDetailDto = {
@@ -2302,6 +2375,18 @@ export type MyOrderDetailDto = {
    * or cancelled.
    */
   delivery: DeliveryPromiseDto | null;
+  /** Its loads, oldest first, cancelled ones left out. */
+  shipments: MyOrderShipmentDto[];
+  /** What has not gone out yet, for an order sent in loads. */
+  stillToCome: Array<{
+    nameEn: string;
+    nameHi: string | null;
+    unitLabelEn: string | null;
+    unitLabelHi: string | null;
+    quantity: number;
+  }>;
+  /** Set when the shop ended it with what arrived. */
+  closedShort: { at: string; reason: string | null } | null;
 };
 
 /**

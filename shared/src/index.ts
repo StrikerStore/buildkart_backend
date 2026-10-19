@@ -28,6 +28,7 @@ export * from './support.ts';
 export * from './secrets.ts';
 export * from './audit-actions.ts';
 export * from './order-pricing.ts';
+export * from './fulfillment.ts';
 export * from './delivery-pricing.ts';
 export * from './discounts.ts';
 export * from './wallet.ts';

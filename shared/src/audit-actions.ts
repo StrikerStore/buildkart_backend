@@ -80,6 +80,12 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'order.payment': 'Recorded a payment',
   'order.refund': 'Recorded a refund',
   'order.payment.delete': 'Removed a payment record',
+  'order.shipment.create': 'Sent a delivery out',
+  'order.shipment.deliver': 'Marked a delivery delivered',
+  'order.shipment.cancel': 'Called back a delivery',
+  'order.closeShort': 'Closed an order short',
+  'order.archive': 'Archived an order',
+  'order.unarchive': 'Brought an order back from the archive',
 
   // Customers
   'customer.update': 'Updated a customer',

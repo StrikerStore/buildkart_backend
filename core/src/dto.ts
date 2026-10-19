@@ -1,11 +1,21 @@
 import type { Prisma } from '@buildkart/database';
 import {
+  cashToCollect,
+  deriveOrderStatus,
+  fromPaise,
+  lineProgress,
   matchesTagRules,
   normalizeMoney,
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
+  shipmentLabel,
+  toPaise,
+  totalPayments,
   type CashbackStatus,
+  type FulfillmentLine,
+  type OrderShipmentDto,
+  type ShipmentStatus,
   type OrderStatus,
   type PaymentGateway,
   type PaymentInstrument,
@@ -320,6 +330,7 @@ type OrderListRow = {
   grandTotal: DecimalLike;
   addressSnapshot: unknown;
   placedAt: Date;
+  archivedAt: Date | null;
   customer: { name: string | null; phone: string };
   _count?: { items?: number };
 };
@@ -345,6 +356,7 @@ export function toOrderListItemDto(row: OrderListRow): OrderListItemDto {
     city: address.city,
     pincode: address.pincode,
     placedAt: dateToIso(row.placedAt),
+    archivedAt: dateToIso(row.archivedAt),
   };
 }
 
@@ -401,6 +413,9 @@ type OrderDetailRow = {
   placedAt: Date;
   deliveredAt: Date | null;
   expectedDeliveryAt: Date | null;
+  closedShortAt: Date | null;
+  closedShortReason: string | null;
+  archivedAt: Date | null;
   customer: {
     id: string;
     name: string | null;
@@ -409,6 +424,16 @@ type OrderDetailRow = {
     totalOrders: number;
     isBlocked: boolean;
   };
+  shipments: Array<{
+    id: string;
+    number: number;
+    status: ShipmentStatus;
+    expectedDeliveryAt: Date | null;
+    deliveredAt: Date | null;
+    cancelledAt: Date | null;
+    note: string | null;
+    items: Array<{ orderItemId: string; quantity: number; receivedQuantity: number | null }>;
+  }>;
   items: Array<{
     id: string;
     productId: string | null;
@@ -423,6 +448,7 @@ type OrderDetailRow = {
     discountShare: DecimalLike;
     taxableAmount: DecimalLike;
     taxAmount: DecimalLike;
+    orderedQuantity: number | null;
   }>;
   statusEvents: Array<{
     id: string;
@@ -445,11 +471,103 @@ type OrderDetailRow = {
     instrumentDetail: unknown;
     note: string | null;
     occurredAt: Date;
+    shipmentId: string | null;
     recordedBy: { name: string } | null;
   }>;
 };
 
+/**
+ * The loads of an order, with what each collected and — for one still on the
+ * road on a cash-on-delivery order — what it should collect if it all arrives.
+ */
+function toShipmentDtos(row: OrderDetailRow): OrderShipmentDto[] {
+  const lines: FulfillmentLine[] = row.items.map((item) => ({
+    id: item.id,
+    quantity: item.quantity,
+    unitPrice: decimalToString(item.unitPrice),
+    lineTotal: decimalToString(item.lineTotal),
+    discountShare: decimalToString(item.discountShare),
+    taxPercent: Number(item.taxPercent),
+    taxInclusive: item.taxInclusive,
+    taxableAmount: decimalToString(item.taxableAmount),
+    taxAmount: decimalToString(item.taxAmount),
+  }));
+  const byId = new Map(row.items.map((item) => [item.id, item]));
+  const ledger = totalPayments(
+    row.transactions.map((entry) => ({
+      type: entry.type,
+      status: entry.status,
+      amount: decimalToString(entry.amount),
+    })),
+    decimalToString(row.grandTotal),
+  );
+  const netPaid = fromPaise(toPaise(ledger.paid) - toPaise(ledger.refunded));
+
+  return row.shipments.map((shipment) => {
+    let toCollect: string | null = null;
+    if (row.paymentMethod === 'COD' && shipment.status === 'OUT_FOR_DELIVERY') {
+      // As if this load arrives in full next.
+      const after = row.shipments.map((entry) =>
+        entry.id === shipment.id
+          ? {
+              ...entry,
+              status: 'DELIVERED' as const,
+              items: entry.items.map((item) => ({ ...item, receivedQuantity: item.quantity })),
+            }
+          : entry,
+      );
+      const progress = lineProgress(row.items, after);
+      toCollect = cashToCollect({
+        grandTotal: decimalToString(row.grandTotal),
+        deliveryCharge: decimalToString(row.deliveryCharge),
+        unloadingCharge: decimalToString(row.unloadingCharge),
+        lines,
+        deliveredAfter: new Map([...progress].map(([id, entry]) => [id, entry.delivered])),
+        completing: deriveOrderStatus(row.items, after) === 'DELIVERED',
+        outstanding: ledger.outstanding,
+        netPaid,
+      });
+    }
+
+    const cash = row.transactions
+      .filter(
+        (entry) =>
+          entry.shipmentId === shipment.id && entry.type === 'PAYMENT' && entry.status === 'SUCCESS',
+      )
+      .reduce((sum, entry) => sum + toPaise(decimalToString(entry.amount)), 0);
+
+    return {
+      id: shipment.id,
+      number: shipment.number,
+      label: shipmentLabel(row.orderNumber, shipment.number),
+      status: shipment.status,
+      expectedDeliveryAt: dateToIso(shipment.expectedDeliveryAt),
+      deliveredAt: dateToIso(shipment.deliveredAt),
+      cancelledAt: dateToIso(shipment.cancelledAt),
+      note: shipment.note,
+      items: shipment.items.map((item) => {
+        const snapshot = parseVariantSnapshot(byId.get(item.orderItemId)?.variantSnapshot);
+        return {
+          orderItemId: item.orderItemId,
+          nameEn: snapshot.nameEn,
+          nameHi: snapshot.nameHi ?? null,
+          detail: snapshot.optionValues.length > 0 ? snapshot.optionValues.join(' / ') : null,
+          unitLabelEn: snapshot.unitLabelEn ?? null,
+          quantity: item.quantity,
+          receivedQuantity: item.receivedQuantity,
+        };
+      }),
+      cashCollected: fromPaise(cash),
+      toCollect,
+    };
+  });
+}
+
 export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
+  // An order delivered before loads were recorded has none, and all of it arrived.
+  const progress = lineProgress(row.items, row.shipments, {
+    allDelivered: row.status === 'DELIVERED' && row.shipments.length === 0,
+  });
   return {
     id: row.id,
     orderNumber: row.orderNumber,
@@ -478,6 +596,7 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
       note: entry.note,
       occurredAt: dateToIso(entry.occurredAt),
       recordedByName: entry.recordedBy?.name ?? null,
+      shipmentId: entry.shipmentId,
     })),
     subtotal: decimalToString(row.subtotal),
     discountTotal: decimalToString(row.discountTotal),
@@ -506,6 +625,11 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
     expectedDeliveryAt: dateToIso(row.expectedDeliveryAt),
     // Needs the store's rules and the area's, so `getOrderDetail` fills it in.
     delivery: null,
+    shipments: toShipmentDtos(row),
+    fulfillment: row.items.map((item) => ({ orderItemId: item.id, ...progress.get(item.id)! })),
+    closedShortAt: dateToIso(row.closedShortAt),
+    closedShortReason: row.closedShortReason,
+    archivedAt: dateToIso(row.archivedAt),
     customer: row.customer,
     items: row.items.map((item) => ({
       id: item.id,
@@ -521,6 +645,7 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
       discountShare: decimalToString(item.discountShare),
       taxableAmount: decimalToString(item.taxableAmount),
       taxAmount: decimalToString(item.taxAmount),
+      orderedQuantity: item.orderedQuantity,
     })),
     events: row.statusEvents.map((event) => ({
       id: event.id,

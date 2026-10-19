@@ -14,6 +14,12 @@ export const ORDER_STATUSES = [
   'OUT_FOR_DELIVERY',
   'DELIVERED',
   'CANCELLED',
+  /*
+   * Some of it has arrived, nothing is on the road, the rest is still to send.
+   * Last because the database enum is appended to, never reordered. Never set
+   * by hand: an order's deliveries put it here (`deriveOrderStatus`).
+   */
+  'PARTIALLY_DELIVERED',
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
@@ -33,6 +39,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   OUT_FOR_DELIVERY: 'Out for delivery',
   DELIVERED: 'Delivered',
   CANCELLED: 'Cancelled',
+  PARTIALLY_DELIVERED: 'Partly delivered',
 };
 
 /** The verb on the button that moves an order *into* each status. */
@@ -43,6 +50,8 @@ export const ORDER_STATUS_ACTION_LABELS: Record<OrderStatus, string> = {
   OUT_FOR_DELIVERY: 'Send out for delivery',
   DELIVERED: 'Mark as delivered',
   CANCELLED: 'Cancel order',
+  // No button moves an order here; its deliveries do.
+  PARTIALLY_DELIVERED: 'Mark as partly delivered',
 };
 
 export type OrderTone = 'INFO' | 'ATTENTION' | 'SUCCESS' | 'CRITICAL' | 'NEUTRAL';
@@ -54,6 +63,7 @@ export const ORDER_STATUS_TONES: Record<OrderStatus, OrderTone> = {
   OUT_FOR_DELIVERY: 'ATTENTION',
   DELIVERED: 'SUCCESS',
   CANCELLED: 'CRITICAL',
+  PARTIALLY_DELIVERED: 'ATTENTION',
 };
 
 /** PAYU is appended rather than slotted in — see the note on PAYMENT_GATEWAYS. */
@@ -96,12 +106,21 @@ export function isTerminal(status: OrderStatus): boolean {
   return status === 'DELIVERED' || status === 'CANCELLED';
 }
 
+/**
+ * Whether the order can still be cancelled as a whole.
+ *
+ * Not once any of it has been delivered: goods that arrived were sold, and
+ * cancelling would unwind their revenue, the wallet and the cashback with them.
+ * A partly delivered order is ended with what arrived — "Close short".
+ */
 export function canCancel(status: OrderStatus): boolean {
-  return !isTerminal(status);
+  return !isTerminal(status) && status !== 'PARTIALLY_DELIVERED';
 }
 
 /** The next status on the happy path, or null at the end of it. */
 export function nextStatus(status: OrderStatus): OrderStatus | null {
+  // Part of it is in; the next step is sending the rest.
+  if (status === 'PARTIALLY_DELIVERED') return 'OUT_FOR_DELIVERY';
   const index = (ORDER_FLOW as readonly OrderStatus[]).indexOf(status);
   if (index === -1 || index === ORDER_FLOW.length - 1) return null;
   return ORDER_FLOW[index + 1]!;
@@ -129,7 +148,7 @@ export function allowedTransitions(status: OrderStatus): OrderStatus[] {
   if (forward) out.push(forward);
   const back = previousStatus(status);
   if (back) out.push(back);
-  out.push('CANCELLED');
+  if (canCancel(status)) out.push('CANCELLED');
   return out;
 }
 
@@ -170,7 +189,9 @@ export function settlesPaymentOnDelivery(
  */
 export function flowProgress(status: OrderStatus): number | null {
   if (status === 'CANCELLED') return null;
-  const index = (ORDER_FLOW as readonly OrderStatus[]).indexOf(status);
+  // Between the road and the doorstep: drawn at the out-for-delivery step.
+  const step = status === 'PARTIALLY_DELIVERED' ? 'OUT_FOR_DELIVERY' : status;
+  const index = (ORDER_FLOW as readonly OrderStatus[]).indexOf(step);
   if (index === -1) return null;
   return index / (ORDER_FLOW.length - 1);
 }

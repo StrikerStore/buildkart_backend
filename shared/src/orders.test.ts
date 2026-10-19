@@ -162,3 +162,15 @@ test('walking the whole flow forward is legal at every step', () => {
   }
   assert.deepEqual(walked, [...ORDER_FLOW]);
 });
+
+test('a partly delivered order goes forward to send the rest, and nowhere else', () => {
+  assert.deepEqual(allowedTransitions('PARTIALLY_DELIVERED'), ['OUT_FOR_DELIVERY']);
+  // Part of it was sold: it is closed short, never cancelled.
+  assert.equal(canCancel('PARTIALLY_DELIVERED'), false);
+  assert.equal(canTransition('PARTIALLY_DELIVERED', 'CANCELLED'), false);
+  // Its deliveries put it here; no button does.
+  for (const from of ORDER_STATUSES) {
+    assert.equal(canTransition(from, 'PARTIALLY_DELIVERED'), false, `${from} -> partly delivered`);
+  }
+  assert.equal(flowProgress('PARTIALLY_DELIVERED'), flowProgress('OUT_FOR_DELIVERY'));
+});

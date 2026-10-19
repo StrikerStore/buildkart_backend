@@ -11,6 +11,11 @@ import {
   adjustWallet,
   advanceOrderStatus,
   cancelOrder,
+  cancelShipment,
+  closeOrderShort,
+  createShipment,
+  deliverShipment,
+  setOrdersArchived,
   createOrder,
   deletePaymentTransaction,
   getCustomerDetail,
@@ -56,6 +61,25 @@ export const ordersRouter = router({
     .input(payload)
     .mutation(({ ctx, input }) => advanceOrderStatus(ctx.actor, input)),
   cancel: adminProcedure.input(payload).mutation(({ ctx, input }) => cancelOrder(ctx.actor, input)),
+
+  // --- deliveries: an order sent in loads --------------------------------
+  createShipment: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => createShipment(ctx.actor, input)),
+  deliverShipment: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => deliverShipment(ctx.actor, input)),
+  cancelShipment: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => cancelShipment(ctx.actor, input)),
+  closeShort: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => closeOrderShort(ctx.actor, input)),
+
+  /** Put finished orders away from the main list, or bring them back. */
+  setArchived: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => setOrdersArchived(ctx.actor, input)),
   saveNote: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveOrderNote(ctx.actor, input)),

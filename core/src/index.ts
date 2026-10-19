@@ -107,6 +107,7 @@ export * from './write/order-number.ts';
 export * from './write/customers.ts';
 export * from './write/notifications.ts';
 export * from './write/orders.ts';
+export * from './write/shipments.ts';
 export * from './write/payment-settings.ts';
 export * from './write/product-bulk.ts';
 export * from './write/products.ts';

@@ -27,7 +27,13 @@ export type { OrderListResultDto };
 export { orderDetailInclude };
 
 /** Waiting on someone: neither delivered nor cancelled. */
-export const OPEN_STATUSES: OrderStatus[] = ['PLACED', 'CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY'];
+export const OPEN_STATUSES: OrderStatus[] = [
+  'PLACED',
+  'CONFIRMED',
+  'PACKED',
+  'OUT_FOR_DELIVERY',
+  'PARTIALLY_DELIVERED',
+];
 
 
 
@@ -80,6 +86,9 @@ export function buildOrderFilters(
   since: Date | null,
 ): Prisma.OrderWhereInput {
   return {
+    // Archived orders live in their own view, so the working list — and its
+    // tab counts — are only what is still in play.
+    archivedAt: query.view === 'ARCHIVED' ? { not: null } : null,
     ...(query.paymentMethod !== 'ALL' ? { paymentMethod: query.paymentMethod } : {}),
     ...(query.paymentStatus !== 'ALL' ? { paymentStatus: query.paymentStatus } : {}),
     ...(query.gateway !== 'ALL' ? { paymentGateway: query.gateway } : {}),
@@ -99,6 +108,7 @@ const LIST_SELECT = {
   grandTotal: true,
   addressSnapshot: true,
   placedAt: true,
+  archivedAt: true,
   customer: { select: { name: true, phone: true } },
   _count: { select: { items: true } },
 } satisfies Prisma.OrderSelect;

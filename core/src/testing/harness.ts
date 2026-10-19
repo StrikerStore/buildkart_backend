@@ -69,6 +69,8 @@ export async function resetDatabase() {
     'PriceHistory',
     'OrderStatusEvent',
     'PaymentTransaction',
+    'OrderShipmentItem',
+    'OrderShipment',
     'OrderItem',
     'DiscountRedemption',
     'Order',
