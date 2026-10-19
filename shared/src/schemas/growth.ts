@@ -152,8 +152,6 @@ export const pincodeSchema = z.object({
   areaNameEn: z.string().trim().min(1, 'Give the area a name').max(191),
   areaNameHi: optionalText(191),
   city: z.string().trim().min(1, 'City is needed').max(100),
-  deliveryCharge: money,
-  freeDeliveryAbove: optionalMoney,
   promiseHours: z.coerce.number().int().min(1).max(72).default(4),
   /** "18:00" — orders after this deliver next morning, stated up front. */
   cutoffTime: z
@@ -591,7 +589,8 @@ export const commerceSettingsSchema = z
 export type CommerceSettingsInput = z.infer<typeof commerceSettingsSchema>;
 
 /**
- * The distance-pricing rules, as the admin form posts them.
+ * The delivery-charge rules — distance pricing and the flat rate it falls back
+ * to — as the admin form posts them.
  *
  * A mirror of the `delivery.distancePricing` setting rather than a reuse of it:
  * the registry schema describes a *stored* value, where every field defaults
@@ -619,6 +618,8 @@ export const distancePricingSchema = z
     smallOrderFee: money,
     smallOrderIncludedKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
     maxCharge: optionalMoney,
+    flatCharge: money,
+    flatFreeAbove: optionalMoney,
   })
   .superRefine((value, ctx) => {
     if (Number(value.highValueThreshold) <= Number(value.standardThreshold)) {

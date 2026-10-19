@@ -31,8 +31,11 @@ import { notifyPhone } from '../notify/dispatch.ts';
  *
  * The pincode is the identity, so changing it on an existing row is really
  * "this area is now a different area" — allowed, but checked for a collision
- * first, because two rows for one pincode would make the charge ambiguous and
+ * first, because two rows for one pincode would make the promise ambiguous and
  * a caller would silently pick one.
+ *
+ * What delivery costs is not set here: that is the shop's flat rate, on the
+ * Delivery charges screen.
  */
 export async function savePincode(
   actor: Actor,
@@ -57,8 +60,6 @@ export async function savePincode(
     areaNameEn: data.areaNameEn,
     areaNameHi: data.areaNameHi ?? null,
     city: data.city,
-    deliveryCharge: data.deliveryCharge,
-    freeDeliveryAbove: data.freeDeliveryAbove ?? null,
     promiseHours: data.promiseHours,
     cutoffTime: data.cutoffTime ?? null,
     isActive: data.isActive,

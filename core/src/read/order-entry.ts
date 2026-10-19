@@ -19,6 +19,7 @@ import {
 import { assertPermission, type Actor } from '../actor.ts';
 import { variantLabel } from '../variant-label.ts';
 import { TIER_SELECT, toTierDtos } from '../tiers.ts';
+import { loadFlatRate } from './delivery-rate.ts';
 import type { CustomerLookupResult, PincodeQuote, VariantSearchResult } from '@buildkart/shared';
 export type { CustomerLookupResult, PincodeQuote, VariantSearchResult };
 
@@ -184,7 +185,10 @@ export async function lookupPincode(
     return actionError('Enter a 6-digit pincode.');
   }
 
-  const area = await prisma.serviceablePincode.findUnique({ where: { pincode } });
+  const [area, rate] = await Promise.all([
+    prisma.serviceablePincode.findUnique({ where: { pincode } }),
+    loadFlatRate(),
+  ]);
   if (!area || !area.isActive) {
     return actionOk({ serviced: false, areaName: null, deliveryCharge: '0.00', freeAbove: null });
   }
@@ -192,7 +196,7 @@ export async function lookupPincode(
   return actionOk({
     serviced: true,
     areaName: area.areaNameEn,
-    deliveryCharge: area.deliveryCharge.toString(),
-    freeAbove: area.freeDeliveryAbove?.toString() ?? null,
+    deliveryCharge: rate.charge,
+    freeAbove: rate.freeAbove,
   });
 }

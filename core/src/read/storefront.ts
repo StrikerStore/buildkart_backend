@@ -61,6 +61,7 @@ import { TIER_SELECT, bestTier, toTierDtos } from '../tiers.ts';
 import { categoryTreeMembershipWhere } from '../membership.ts';
 import { countsFor } from '../category-rule-sets.ts';
 import { getSettings } from './settings.ts';
+import { loadFlatRate } from './delivery-rate.ts';
 
 // ---------------------------------------------------------------------------
 // Visibility
@@ -1451,25 +1452,28 @@ async function resolveSection(
  * often.
  */
 export async function listServiceableAreas(): Promise<StorefrontAreaDto[]> {
-  const rows = await prisma.serviceablePincode.findMany({
-    where: { isActive: true },
-    orderBy: [{ position: 'asc' }, { city: 'asc' }, { areaNameEn: 'asc' }],
-    select: {
-      pincode: true,
-      areaNameEn: true,
-      city: true,
-      deliveryCharge: true,
-      freeDeliveryAbove: true,
-      promiseHours: true,
-    },
-  });
+  const [rows, rate] = await Promise.all([
+    prisma.serviceablePincode.findMany({
+      where: { isActive: true },
+      orderBy: [{ position: 'asc' }, { city: 'asc' }, { areaNameEn: 'asc' }],
+      select: {
+        pincode: true,
+        areaNameEn: true,
+        city: true,
+        promiseHours: true,
+      },
+    }),
+    loadFlatRate(),
+  ]);
 
+  // The charge is the shop's one flat rate, repeated per area so the shape
+  // the storefront already reads did not have to change.
   return rows.map((row) => ({
     pincode: row.pincode,
     areaName: row.areaNameEn,
     city: row.city,
-    deliveryCharge: decimalToString(row.deliveryCharge),
-    freeAbove: decimalToString(row.freeDeliveryAbove),
+    deliveryCharge: rate.charge,
+    freeAbove: rate.freeAbove,
     promiseHours: row.promiseHours,
   }));
 }

@@ -92,6 +92,8 @@ export async function getSettings(): Promise<SettingsDto> {
       smallOrderFee: distance.smallOrderFee,
       smallOrderIncludedKm: distance.smallOrderIncludedKm,
       maxCharge: distance.maxCharge,
+      flatCharge: distance.flatCharge,
+      flatFreeAbove: distance.flatFreeAbove,
     },
     wallet: toWalletRulesDto(parseSetting('rewards.wallet', byKey.get('rewards.wallet'))),
     unloading: toUnloadingDto(parseSetting('delivery.unloading', byKey.get('delivery.unloading'))),

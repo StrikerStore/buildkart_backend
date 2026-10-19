@@ -563,8 +563,6 @@ export type PincodeDto = {
   areaNameEn: string;
   areaNameHi: string | null;
   city: string;
-  deliveryCharge: string;
-  freeDeliveryAbove: string | null;
   promiseHours: number;
   cutoffTime: string | null;
   isActive: boolean;
@@ -945,6 +943,9 @@ export type DistancePricingDto = {
   smallOrderFee: string;
   smallOrderIncludedKm: number;
   maxCharge: string | null;
+  /** The flat rate — charging by distance off, or unable to price the cart. */
+  flatCharge: string;
+  flatFreeAbove: string | null;
 };
 
 // from core/src/read/stock.ts
@@ -1972,9 +1973,10 @@ export type CartDeliveryDto = {
   freeAbove: string | null;
   promiseHours: number | null;
   /**
-   * How `charge` was arrived at. `PINCODE` is the flat per-area rate this cart
-   * has always used; `DISTANCE` means it was worked out from how far the goods
-   * travel, and `legs` then says from where.
+   * How `charge` was arrived at. `PINCODE` is the shop's flat rate — named for
+   * when it was set per area, and kept so no client has to change; `DISTANCE`
+   * means it was worked out from how far the goods travel, and `legs` then says
+   * from where.
    */
   mode: 'PINCODE' | 'DISTANCE';
   /**

@@ -556,13 +556,19 @@ export const SETTING_SCHEMAS = {
     .default({ hours: 4, startTime: '10:00', cutoffTime: '18:00', nextMorningBy: '12:00' }),
 
   /**
-   * Charging by distance from the warehouse that holds the goods, rather than
-   * by a flat rate per pincode.
+   * What delivery costs: by distance from the warehouse that holds the goods,
+   * or a flat rate.
    *
-   * `enabled` is off by default and means exactly one thing: fall back to
-   * `ServiceablePincode.deliveryCharge`, which is what the shop already runs
-   * on. It stays off until the warehouses are entered, so the feature can ship
-   * before the data does.
+   * `enabled` is off by default and means exactly one thing: fall back to the
+   * flat rate (`flatCharge`, free above `flatFreeAbove`). It stays off until
+   * the warehouses are entered, so the feature can ship before the data does.
+   * The flat rate is also what a cart the distance rule cannot price pays — no
+   * pin dropped, or a line no warehouse stocks.
+   *
+   * The flat rate is one figure for the whole shop. It used to be a pair of
+   * columns on every `ServiceablePincode`, which left a pincode screen and this
+   * one both claiming to set the charge; the pincode now only says *whether*
+   * the shop delivers there.
    *
    * `roadFactor` turns a straight line into something like a road. A real
    * driving distance would mean a paid Distance Matrix call on every cart
@@ -586,6 +592,10 @@ export const SETTING_SCHEMAS = {
       smallOrderIncludedKm: z.number().min(0).max(500).default(10),
       /** Null is uncapped. Applies to the summed total, not to one leg. */
       maxCharge: money.nullable().default(null),
+      /** The flat rate's charge, for every serviced area alike. */
+      flatCharge: money.default('0.00'),
+      /** Null is never free. Judged on the discounted subtotal, before tax. */
+      flatFreeAbove: money.nullable().default(null),
     })
     .default({
       enabled: false,
@@ -599,6 +609,8 @@ export const SETTING_SCHEMAS = {
       smallOrderFee: '50.00',
       smallOrderIncludedKm: 10,
       maxCharge: null,
+      flatCharge: '0.00',
+      flatFreeAbove: null,
     })
     /*
      * Spending more must never cost more to deliver. Without this an admin can

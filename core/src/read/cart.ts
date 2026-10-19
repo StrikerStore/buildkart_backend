@@ -45,6 +45,7 @@ import {
   type PriceCartInput,
 } from '@buildkart/shared';
 import { decimalToString } from '../dto.ts';
+import { flatRateFrom } from './delivery-rate.ts';
 import { findStockingWarehouses } from './warehouses.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 
@@ -124,7 +125,7 @@ function variantLabel(variant: CartVariant): string | null {
 }
 
 /**
- * What a quote says delivery costs, or the area's flat rate when it declined to
+ * What a quote says delivery costs, or the shop's flat rate when it declined to
  * answer. Null when there is no area at all — an unchosen pincode.
  */
 function chargeFrom(
@@ -150,6 +151,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     'delivery.distancePricing',
     byKey.get('delivery.distancePricing'),
   );
+  const flatRate = flatRateFrom(distanceConfig);
   const walletRules = parseSetting('rewards.wallet', byKey.get('rewards.wallet'));
   const unloadingSetting = parseSetting('delivery.unloading', byKey.get('delivery.unloading'));
   /*
@@ -193,8 +195,8 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
         areaName: area?.isActive ? area.areaNameEn : null,
         city: area?.isActive ? area.city : null,
         serviced: Boolean(area?.isActive),
-        charge: area?.isActive ? decimalToString(area.deliveryCharge) : '0.00',
-        freeAbove: area?.isActive ? decimalToString(area.freeDeliveryAbove) : null,
+        charge: area?.isActive ? flatRate.charge : '0.00',
+        freeAbove: area?.isActive ? flatRate.freeAbove : null,
         promiseHours: area?.isActive ? area.promiseHours : null,
         // Overwritten below once the cart is known to hold something. An empty
         // or undeliverable cart keeps the flat rate, which costs nothing.
@@ -351,7 +353,8 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
         charge: leg.charge,
       }));
       // The free radius is inside the tiers now, so there is no threshold left
-      // to promise — and showing the area's would be promising the wrong thing.
+      // to promise — and showing the flat rate's would be promising the wrong
+      // thing.
       delivery.freeAbove = null;
     }
   }

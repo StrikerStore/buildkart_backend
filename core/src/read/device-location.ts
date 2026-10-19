@@ -12,7 +12,7 @@
  */
 import { prisma } from '@buildkart/database';
 import type { DeviceLocationDto } from '@buildkart/shared';
-import { decimalToString } from '../dto.ts';
+import { loadFlatRate } from './delivery-rate.ts';
 import { reverseGeocode } from './geocode.ts';
 
 /**
@@ -78,6 +78,7 @@ export async function resolveDeviceLocation(input: {
   });
 
   if (area?.isActive) {
+    const rate = await loadFlatRate();
     return {
       ...base,
       resolved: true,
@@ -89,8 +90,8 @@ export async function resolveDeviceLocation(input: {
         // is not.
         areaName: area.areaNameEn,
         city: area.city,
-        deliveryCharge: decimalToString(area.deliveryCharge),
-        freeAbove: decimalToString(area.freeDeliveryAbove),
+        deliveryCharge: rate.charge,
+        freeAbove: rate.freeAbove,
         promiseHours: area.promiseHours,
       },
       nearby: [],

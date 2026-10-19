@@ -1,9 +1,9 @@
 /**
  * What delivery costs, worked out from how far the goods have to travel.
  *
- * The older rule — a flat charge per pincode, on `ServiceablePincode` — asks
- * only *which area*, so a customer two kilometres from the godown and one
- * twenty-five kilometres away in the same pincode pay the same. This module
+ * The older rule — one flat rate for the shop — asks nothing about distance,
+ * so a customer two kilometres from the godown and one twenty-five kilometres
+ * away pay the same. This module
  * asks *how far*: each line is served from the nearest warehouse that stocks
  * it, and the charge follows the distance.
  *
@@ -12,7 +12,7 @@
  * **It never decides serviceability.** Whether the shop delivers somewhere at
  * all is still the pincode gate. This only prices a delivery that is already
  * agreed to. A quote that cannot be computed returns `PINCODE`, and the caller
- * falls back to the flat charge — it never returns "no".
+ * falls back to the flat rate — it never returns "no".
  *
  * **It does no I/O.** The caller hands it the warehouses that stock each
  * variant; finding them is a database question and lives in core. That is what
@@ -66,9 +66,9 @@ export type DeliveryLeg = {
 };
 
 /**
- * Why a quote fell back to the flat per-pincode charge. Carried rather than
- * collapsed to a boolean because "no warehouse stocks this" and "the customer
- * never dropped a pin" want different fixes, and only the reason says which.
+ * Why a quote fell back to the flat rate. Carried rather than collapsed to a
+ * boolean because "no warehouse stocks this" and "the customer never dropped a
+ * pin" want different fixes, and only the reason says which.
  */
 export type PincodeFallbackReason =
   | 'DISABLED'
@@ -231,9 +231,9 @@ function nearest(
  * the shop absorbing the second.
  *
  * The fallback is deliberately all-or-nothing. A cart half-priced by distance
- * and half by the flat pincode rate is not a number anyone could explain to the
+ * and half by the flat rate is not a number anyone could explain to the
  * customer who is paying it, so one unroutable line sends the whole quote back
- * to the pincode charge.
+ * to the flat rate.
  */
 export function quoteDelivery(args: {
   destination: GeoPoint | null;

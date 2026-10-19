@@ -13,16 +13,19 @@ const TODAY = new Date();
 const daysAgo = (n: number) => new Date(TODAY.getTime() - n * 86_400_000);
 const daysAhead = (n: number) => new Date(TODAY.getTime() + n * 86_400_000);
 
-/** Real Indore pincodes, with charges that vary the way they actually would. */
+/** Real Indore pincodes, with promises that vary the way they actually would. */
 const AREAS = [
-  { pincode: '452001', areaNameEn: 'Nehru Nagar & Bhawarkua', areaNameHi: 'नेहरू नगर', deliveryCharge: '0.00', freeDeliveryAbove: null, promiseHours: 4, cutoffTime: '18:00' },
-  { pincode: '452010', areaNameEn: 'Vijay Nagar & Scheme 78', areaNameHi: 'विजय नगर', deliveryCharge: '150.00', freeDeliveryAbove: '5000.00', promiseHours: 4, cutoffTime: '18:00' },
-  { pincode: '452015', areaNameEn: 'Sanwer Road Industrial', areaNameHi: 'सांवेर रोड', deliveryCharge: '200.00', freeDeliveryAbove: '8000.00', promiseHours: 6, cutoffTime: '16:00' },
-  { pincode: '452016', areaNameEn: 'Lasudia & MR-10', areaNameHi: 'लसूड़िया', deliveryCharge: '150.00', freeDeliveryAbove: '5000.00', promiseHours: 4, cutoffTime: '18:00' },
-  { pincode: '452018', areaNameEn: 'Old Palasia', areaNameHi: 'पुरानी पलासिया', deliveryCharge: '100.00', freeDeliveryAbove: '4000.00', promiseHours: 4, cutoffTime: '18:00' },
+  { pincode: '452001', areaNameEn: 'Nehru Nagar & Bhawarkua', areaNameHi: 'नेहरू नगर', promiseHours: 4, cutoffTime: '18:00' },
+  { pincode: '452010', areaNameEn: 'Vijay Nagar & Scheme 78', areaNameHi: 'विजय नगर', promiseHours: 4, cutoffTime: '18:00' },
+  { pincode: '452015', areaNameEn: 'Sanwer Road Industrial', areaNameHi: 'सांवेर रोड', promiseHours: 6, cutoffTime: '16:00' },
+  { pincode: '452016', areaNameEn: 'Lasudia & MR-10', areaNameHi: 'लसूड़िया', promiseHours: 4, cutoffTime: '18:00' },
+  { pincode: '452018', areaNameEn: 'Old Palasia', areaNameHi: 'पुरानी पलासिया', promiseHours: 4, cutoffTime: '18:00' },
   // Deliberately paused, so the "listed but paused" state has something behind it.
-  { pincode: '453331', areaNameEn: 'Rau & Bypass', areaNameHi: 'राऊ', deliveryCharge: '300.00', freeDeliveryAbove: '10000.00', promiseHours: 8, cutoffTime: '15:00', isActive: false },
+  { pincode: '453331', areaNameEn: 'Rau & Bypass', areaNameHi: 'राऊ', promiseHours: 8, cutoffTime: '15:00', isActive: false },
 ];
+
+/** What every area pays while charging by distance is off. */
+const FLAT_RATE = { flatCharge: '150.00', flatFreeAbove: '5000.00' };
 
 /** Pincodes people asked for, including one that has since opened. */
 const REQUESTS = [
@@ -48,8 +51,6 @@ export async function seedGrowth(): Promise<{
         areaNameEn: area.areaNameEn,
         areaNameHi: area.areaNameHi,
         city: 'Indore',
-        deliveryCharge: area.deliveryCharge,
-        freeDeliveryAbove: area.freeDeliveryAbove,
         promiseHours: area.promiseHours,
         cutoffTime: area.cutoffTime,
         isActive: area.isActive ?? true,
@@ -57,6 +58,16 @@ export async function seedGrowth(): Promise<{
       },
     });
   }
+
+  // Merged into whatever distance rules are already stored, never replacing them.
+  const pricing = await prisma.setting.findUnique({ where: { key: 'delivery.distancePricing' } });
+  const stored =
+    pricing && typeof pricing.value === 'object' && !Array.isArray(pricing.value) ? pricing.value : {};
+  await prisma.setting.upsert({
+    where: { key: 'delivery.distancePricing' },
+    create: { key: 'delivery.distancePricing', value: FLAT_RATE },
+    update: { value: { ...stored, ...FLAT_RATE } as never },
+  });
 
   let requestCount = 0;
   for (const group of REQUESTS) {

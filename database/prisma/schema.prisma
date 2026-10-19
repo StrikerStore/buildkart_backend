@@ -1731,6 +1731,9 @@ model ServiceablePincode {
   areaNameHi String? @db.VarChar(191)
   city       String  @db.VarChar(100)
 
+  /// No longer read or written. The charge is the shop's flat rate on the
+  /// `delivery.distancePricing` setting (see 20261019000000_flat_delivery_rate);
+  /// these keep the old per-area figures until a later migration drops them.
   deliveryCharge    Decimal  @default(0) @db.Decimal(10, 2)
   freeDeliveryAbove Decimal? @db.Decimal(10, 2)
 

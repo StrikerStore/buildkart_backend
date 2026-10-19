@@ -109,7 +109,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'delivery.warehouse.update': 'Updated a warehouse',
   'delivery.warehouse.delete': 'Removed a warehouse',
   'delivery.warehouse.stock': 'Updated what a warehouse stocks',
-  'delivery.distancePricing': 'Updated the distance delivery charges',
+  'delivery.distancePricing': 'Updated the delivery charges',
 
   // Content
   'banner.create': 'Created a banner',

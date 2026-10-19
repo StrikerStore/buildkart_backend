@@ -182,7 +182,8 @@ export async function saveWarehouseStock(
 }
 
 /**
- * Saves the distance-pricing rules.
+ * Saves the delivery-charge rules: distance pricing, and the flat rate it falls
+ * back to.
  *
  * Gated on `delivery:write` rather than `settings:write`, although it writes a
  * `Setting` row: it is the Delivery screen's form, and the permission a person
@@ -216,6 +217,8 @@ export async function saveDistancePricing(
     smallOrderFee: data.smallOrderFee,
     smallOrderIncludedKm: data.smallOrderIncludedKm,
     maxCharge: data.maxCharge ?? null,
+    flatCharge: data.flatCharge,
+    flatFreeAbove: data.flatFreeAbove ?? null,
   };
 
   await prisma.setting.upsert({

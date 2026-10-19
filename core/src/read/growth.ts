@@ -35,8 +35,6 @@ export async function listPincodes(actor: Actor): Promise<PincodeDto[]> {
     areaNameEn: area.areaNameEn,
     areaNameHi: area.areaNameHi,
     city: area.city,
-    deliveryCharge: decimalToString(area.deliveryCharge),
-    freeDeliveryAbove: decimalToString(area.freeDeliveryAbove),
     promiseHours: area.promiseHours,
     cutoffTime: area.cutoffTime,
     isActive: area.isActive,

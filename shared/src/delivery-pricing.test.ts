@@ -8,6 +8,7 @@ import {
   type DistancePricingConfig,
   type WarehouseCandidate,
 } from './delivery-pricing.ts';
+import { parseSetting } from './settings.ts';
 
 /** The shipped defaults, which are also the worked examples in the brief. */
 const CONFIG: DistancePricingConfig = {
@@ -247,7 +248,7 @@ test('the cap applies to the summed total, not to one leg', () => {
 // Falling back
 // ---------------------------------------------------------------------------
 
-test('the flag off means the pincode rule, untouched', () => {
+test('the flag off means the flat rate, untouched', () => {
   const quote = quoteDelivery({
     destination: HOME,
     lines: [{ variantId: 'cement' }],
@@ -258,7 +259,7 @@ test('the flag off means the pincode rule, untouched', () => {
   assert.deepEqual(quote, { mode: 'PINCODE', reason: 'DISABLED' });
 });
 
-test('no pin dropped means the pincode rule', () => {
+test('no pin dropped means the flat rate', () => {
   const quote = quoteDelivery({
     destination: null,
     lines: [{ variantId: 'cement' }],
@@ -269,7 +270,7 @@ test('no pin dropped means the pincode rule', () => {
   assert.deepEqual(quote, { mode: 'PINCODE', reason: 'NO_COORDINATES' });
 });
 
-test('no warehouses at all means the pincode rule', () => {
+test('no warehouses at all means the flat rate', () => {
   const quote = quoteDelivery({
     destination: HOME,
     lines: [{ variantId: 'cement' }],
@@ -284,7 +285,7 @@ test('no warehouses at all means the pincode rule', () => {
  * All-or-nothing: a cart half-priced by distance and half by the flat rate is
  * not a number anyone could explain to the customer paying it.
  */
-test('one unroutable line sends the whole cart back to the pincode rule', () => {
+test('one unroutable line sends the whole cart back to the flat rate', () => {
   const quote = quoteDelivery({
     destination: HOME,
     lines: [{ variantId: 'cement' }, { variantId: 'sand' }],
@@ -307,4 +308,33 @@ test('an empty cart costs nothing to deliver', () => {
   if (quote.mode !== 'DISTANCE') return;
   assert.equal(quote.deliveryCharge, '0.00');
   assert.deepEqual(quote.legs, []);
+});
+
+// ---------------------------------------------------------------------------
+// The stored setting
+// ---------------------------------------------------------------------------
+
+/*
+ * The flat rate rides on the same setting as the distance rules. The migration
+ * that moved it off the pincode writes a row holding only the flat rate when
+ * none existed, and merges it into one that did — both must still read whole.
+ */
+test('a row holding only the flat rate reads with every distance default', () => {
+  const value = parseSetting('delivery.distancePricing', {
+    flatCharge: '150.00',
+    flatFreeAbove: '5000.00',
+  });
+  assert.deepEqual(value, {
+    ...CONFIG,
+    enabled: false,
+    flatCharge: '150.00',
+    flatFreeAbove: '5000.00',
+  });
+});
+
+test('a row saved before the flat rate existed reads as free, keeping its distance rules', () => {
+  const value = parseSetting('delivery.distancePricing', { ...CONFIG, perBlockCharge: '75.00' });
+  assert.equal(value.perBlockCharge, '75.00');
+  assert.equal(value.flatCharge, '0.00');
+  assert.equal(value.flatFreeAbove, null);
 });

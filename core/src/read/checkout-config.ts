@@ -28,6 +28,7 @@ import type {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { decimalToString } from '../dto.ts';
+import { loadFlatRate } from './delivery-rate.ts';
 import { getCheckoutMethods, getCheckoutOptions, getPartialCodRules } from './payment-settings.ts';
 import { isSecretsKeyConfigured } from '../secrets.ts';
 export type { CheckoutConfigDto, CheckoutFieldDto, CheckoutLocationDto, StorefrontCheckoutDto };
@@ -214,7 +215,10 @@ export async function checkPincodeServiceable(pincode: string): Promise<{
 
   if (!/^\d{6}$/.test(pincode)) return blank;
 
-  const area = await prisma.serviceablePincode.findUnique({ where: { pincode } });
+  const [area, rate] = await Promise.all([
+    prisma.serviceablePincode.findUnique({ where: { pincode } }),
+    loadFlatRate(),
+  ]);
   if (!area || !area.isActive) return blank;
 
   return {
@@ -222,8 +226,8 @@ export async function checkPincodeServiceable(pincode: string): Promise<{
     serviced: true,
     areaName: area.areaNameEn,
     city: area.city,
-    deliveryCharge: decimalToString(area.deliveryCharge),
-    freeAbove: decimalToString(area.freeDeliveryAbove),
+    deliveryCharge: rate.charge,
+    freeAbove: rate.freeAbove,
     promiseHours: area.promiseHours,
   };
 }

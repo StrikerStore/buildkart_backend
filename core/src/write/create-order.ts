@@ -39,6 +39,7 @@ import { recordAudit } from '../audit.ts';
 import { notifyOrder, notifyShopOfOrder } from '../notify/dispatch.ts';
 import { afterOrderWritten } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
+import { loadFlatRate } from '../read/delivery-rate.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { AUTO_CONFIRM_AFTER_MS } from './orders.ts';
 import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
@@ -201,9 +202,13 @@ export async function writeOrder(
   }
 
   // --- price it ------------------------------------------------------------
-  const [storeProfileSetting, area, unloadingSetting] = await Promise.all([
+  const [storeProfileSetting, area, flatRate, unloadingSetting] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'store.profile' } }),
-    prisma.serviceablePincode.findUnique({ where: { pincode: data.address.pincode } }),
+    prisma.serviceablePincode.findUnique({
+      where: { pincode: data.address.pincode },
+      select: { id: true },
+    }),
+    loadFlatRate(),
     data.unloading
       ? prisma.setting.findUnique({ where: { key: 'delivery.unloading' } })
       : Promise.resolve(null),
@@ -233,11 +238,12 @@ export async function writeOrder(
         taxable: variant.taxable,
       })),
       {
-        // An explicit charge wins; otherwise the area's own rate is used.
-        deliveryCharge: data.deliveryCharge ?? area?.deliveryCharge.toString() ?? '0.00',
+        // An explicit charge wins; otherwise a listed area pays the shop's flat
+        // rate, and an unlisted one — a delivery agreed off the map — nothing.
+        deliveryCharge: data.deliveryCharge ?? (area ? flatRate.charge : '0.00'),
         discountTotal: data.discountTotal,
         freeDeliveryAbove:
-          data.deliveryCharge === undefined ? (area?.freeDeliveryAbove?.toString() ?? null) : null,
+          data.deliveryCharge === undefined && area ? flatRate.freeAbove : null,
         unloadingCharge,
       },
     );
