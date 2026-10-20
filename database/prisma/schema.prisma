@@ -50,6 +50,19 @@ model AdminUser {
   /// invalidates live cookies immediately without a server-side session table.
   sessionVersion Int @default(1)
 
+  /// Two-step sign-in (RFC 6238). The authenticator secret, sealed with
+  /// SETTINGS_ENCRYPTION_KEY under the context `admin.totp:<id>`; null until
+  /// set up. `totpPendingEnc` is one being set up — on a first enrolment, or a
+  /// move to a new phone — which replaces it only once a code from it is typed.
+  totpSecretEnc  String?   @db.Text
+  totpPendingEnc String?   @db.Text
+  totpEnabledAt  DateTime?
+  /// The 30-second step of the last code accepted. A code at or before it is
+  /// refused, so one watched being typed cannot be used again.
+  totpLastStep   Int?
+  /// SHA-256 of each unused recovery code. Spending one removes it.
+  totpRecoveryHashes Json?
+
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -140,7 +153,8 @@ model CustomerOtp {
 
   /// The lookup: newest live code for a phone.
   @@index([phone, createdAt])
-  /// The nightly sweep of expired rows.
+  /// Expiry lookups. Rows themselves are deleted after a year by
+  /// `/cron/privacy` (the Rules' one-year log retention).
   @@index([expiresAt])
 }
 
@@ -916,6 +930,18 @@ model Customer {
   /// The Privacy Notice version they last signed in under.
   noticeVersion  String?   @db.VarChar(16)
 
+  /// Who may use the customer's rights if they die or cannot act (DPDP Act
+  /// §14). Set by the customer on their privacy page; all null when none.
+  nomineeName      String?   @db.VarChar(191)
+  nomineeRelation  String?   @db.VarChar(64)
+  nomineePhone     String?   @db.VarChar(20)
+  nomineeUpdatedAt DateTime?
+
+  /// Set when the account was erased (DPDP Act §12). The row stays — orders
+  /// and invoices hang off it — but the person is gone from it: the phone is a
+  /// placeholder, the name and contact details are cleared, and it is blocked.
+  erasedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1047,6 +1073,10 @@ model Order {
   deliveryLegs Json?
 
   customerNote String? @db.Text
+
+  /// Set when the order outlived tax law's record-keeping and its personal
+  /// details were cleared (the totals and the place, never the person).
+  piiErasedAt DateTime?
   internalNote String? @db.Text
   cancelReason String? @db.Text
 
@@ -1916,6 +1946,45 @@ model ConsentRecord {
   @@index([phone])
 }
 
+/// A request from a person about their own data — to correct it, erase it,
+/// see it, or a complaint — and the shop's answer (DPDP Act §§11-14). The
+/// Rules give the shop 90 days (rule 14(3)); `dueAt` is that deadline.
+///
+/// No foreign key to `Customer`, on purpose: a request from someone without an
+/// account (a pincode requester, an order's receiver) is recorded by phone, and
+/// the record of a deletion must survive the deletion.
+model PrivacyRequest {
+  id         String  @id @default(cuid())
+  customerId String? @db.VarChar(191)
+  phone      String  @db.VarChar(20)
+
+  /// See `PRIVACY_REQUEST_TYPES` in shared/src/privacy.ts.
+  type    String @db.VarChar(32)
+  /// OPEN, IN_PROGRESS, DONE, REJECTED or CANCELLED.
+  status  String @default("OPEN") @db.VarChar(16)
+  details String @db.Text
+
+  /// ACCOUNT — filed by the customer; ADMIN — recorded by the shop.
+  source  String  @db.VarChar(16)
+  /// How a recorded request arrived: "Email", "Phone call".
+  channel String? @db.VarChar(100)
+
+  /// What was done, in words the customer can be shown.
+  resolution   String?   @db.Text
+  /// When a confirmed account deletion runs, after its cooling-off week.
+  scheduledFor DateTime?
+  dueAt        DateTime
+  resolvedAt  DateTime?
+  handledById String?   @db.VarChar(191)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, dueAt])
+  @@index([customerId, createdAt])
+  @@index([phone])
+}
+
 model Banner {
   id      String  @id @default(cuid())
   titleEn String? @db.VarChar(191)
@@ -2765,4 +2834,44 @@ enum CashbackStatus {
   PENDING
   CREDITED
   VOIDED
+}
+
+/// A personal data breach and what was done about it (DPDP Rules 2025, rule
+/// 7): what is sent to each affected person, the two intimations to the Data
+/// Protection Board, and the shop's own notes. Kept as the record that the
+/// duties were met — the retention job does not touch it.
+model PrivacyIncident {
+  id     String @id @default(cuid())
+  title  String @db.VarChar(191)
+  /// OPEN or CLOSED.
+  status String @default("OPEN") @db.VarChar(16)
+
+  /// The fields below are what the notice to customers says — one WhatsApp
+  /// template parameter each. See `incidentSchema` in shared/src/privacy.ts.
+  whatHappened  String @db.Text
+  whenHappened  String @db.VarChar(191)
+  dataAffected  String @db.Text
+  likelyImpact  String @db.Text
+  measuresTaken String @db.Text
+  customerSteps String @db.Text
+
+  /// When the shop became aware of it: the Board's 72-hour clock starts here.
+  detectedAt      DateTime
+  boardNotifiedAt DateTime?
+  boardReportAt   DateTime?
+  boardReference  String?   @db.VarChar(191)
+  notes           String?   @db.Text
+
+  /// Who the last send went to (`IncidentAudience`), when the first began, and
+  /// how many notices WhatsApp accepted in all. The count is kept here because
+  /// the message log itself is deleted after a year.
+  audience             Json?
+  principalsNotifiedAt DateTime?
+  notifiedCount        Int       @default(0)
+
+  createdById String?  @db.VarChar(191)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
 }

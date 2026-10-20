@@ -8,6 +8,7 @@ import { marketingRouter } from './marketing.ts';
 import { analyticsRouter } from './analytics.ts';
 import { notificationsRouter } from './notifications.ts';
 import { paymentsRouter } from './payments.ts';
+import { privacyRouter } from './privacy.ts';
 import { storefrontRouter } from './storefront.ts';
 import { supportRouter } from './support.ts';
 
@@ -29,6 +30,7 @@ export const appRouter = router({
   analytics: analyticsRouter,
   notifications: notificationsRouter,
   payments: paymentsRouter,
+  privacy: privacyRouter,
   /*
    * The shop's own reads. Separate from `catalog` on purpose: that one is
    * admin-gated and returns drafts and stock thresholds, this one returns only

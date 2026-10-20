@@ -13,6 +13,7 @@
  */
 import { prisma } from '@buildkart/database';
 import { isAdmin, type Actor } from './actor.ts';
+import { notifyShopSecurityAlert } from './notify/dispatch.ts';
 
 export type AuditEntry = {
   action: string;
@@ -62,5 +63,98 @@ export async function writeAuditRow(
     });
   } catch (error) {
     console.error('[audit] failed to record entry', entry.action, error);
+    alertAuditFailure(entry.action, error);
   }
+}
+
+/**
+ * A change log that has stopped writing is a safeguard that has quietly
+ * failed (DPDP Rules 2025, rule 6), so the shop is told — once an hour at
+ * most, however many writes fail in it.
+ */
+const HOUR_MS = 60 * 60 * 1000;
+let lastAuditAlertAt = 0;
+
+/** An error as one short line, for a WhatsApp alert that cannot hold a stack. */
+export function firstLine(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return (text.split(/\r?\n/)[0] ?? '').slice(0, 200);
+}
+
+function alertAuditFailure(action: string, error: unknown): void {
+  const now = Date.now();
+  if (now - lastAuditAlertAt < HOUR_MS) return;
+  lastAuditAlertAt = now;
+  const reason = firstLine(error);
+  notifyShopSecurityAlert({
+    title: 'Change log not recording',
+    detail: `Could not write "${action}" to the admin change log: ${reason}`,
+    path: '/changelog',
+    dedupeKey: `audit:${Math.floor(now / HOUR_MS)}`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Who opened what
+// ---------------------------------------------------------------------------
+
+/** The records holding someone's personal data whose opening is logged. */
+export type AccessKind = 'customer' | 'order' | 'support';
+
+const ACCESS_ENTITY: Record<AccessKind, string> = {
+  customer: 'Customer',
+  order: 'Order',
+  support: 'SupportTicket',
+};
+
+/** Recently logged views, so a page that polls costs no query at all. */
+const recentAccess = new Map<string, number>();
+
+function rememberAccess(key: string, at: number): void {
+  recentAccess.set(key, at);
+  if (recentAccess.size <= 5000) return;
+  for (const [entry, seenAt] of recentAccess) {
+    if (at - seenAt >= HOUR_MS) recentAccess.delete(entry);
+  }
+  if (recentAccess.size > 5000) recentAccess.clear();
+}
+
+/**
+ * Notes that an admin opened a customer's record, an order or a support
+ * conversation — the access log the DPDP Rules ask for (rule 6(1)(c)–(e)), so
+ * a look nobody had a reason for can be found afterwards. Kept a year
+ * (`RETENTION.accessLogDays`), then deleted by `/cron/privacy`.
+ *
+ * Once per admin, record and hour: the support screen polls, the order screen
+ * re-renders after every action, and "opened it 40 times" says no more than
+ * "opened it". An in-process memory catches the repeats without a query; the
+ * database check behind it catches them across a restart.
+ *
+ * Fire and forget, like `recordAudit`: a log that fails must not stop the
+ * owner seeing the order.
+ */
+export function recordAccess(actor: Actor, kind: AccessKind, entityId: string): void {
+  if (!isAdmin(actor)) return;
+  const now = Date.now();
+  const key = `${actor.adminId}:${kind}:${entityId}`;
+  const seenAt = recentAccess.get(key);
+  if (seenAt !== undefined && now - seenAt < HOUR_MS) return;
+  rememberAccess(key, now);
+
+  const action = `pii.view.${kind}`;
+  const entityType = ACCESS_ENTITY[kind];
+  void (async () => {
+    const already = await prisma.adminAuditLog.findFirst({
+      where: {
+        entityType,
+        entityId,
+        adminUserId: actor.adminId,
+        action,
+        createdAt: { gte: new Date(now - HOUR_MS) },
+      },
+      select: { id: true },
+    });
+    if (already) return;
+    await writeAuditRow({ adminUserId: actor.adminId, ip: actor.ip ?? null }, { action, entityType, entityId });
+  })().catch((error: unknown) => console.error('[audit] could not log access', action, error));
 }

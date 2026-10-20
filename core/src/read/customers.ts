@@ -12,6 +12,7 @@ import {
   type CustomerListQuery,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
+import { recordAccess } from '../audit.ts';
 import { coordinateToString, dateToIso, decimalToString } from '../dto.ts';
 import type { CustomerAddressDto, CustomerDetailDto, CustomerListItemDto, CustomerListResultDto, CustomerOrderDto } from '@buildkart/shared';
 export type { CustomerAddressDto, CustomerDetailDto, CustomerListItemDto, CustomerListResultDto, CustomerOrderDto };
@@ -162,6 +163,7 @@ export async function getCustomerDetail(
   });
 
   if (!customer) return null;
+  recordAccess(actor, 'customer', customer.id);
 
   return {
     id: customer.id,
@@ -177,6 +179,7 @@ export async function getCustomerDetail(
     analyticsConsent: customer.analyticsConsent,
     adsConsent: customer.adsConsent,
     ageConfirmedAt: customer.ageConfirmedAt ? dateToIso(customer.ageConfirmedAt) : null,
+    erasedAt: customer.erasedAt ? dateToIso(customer.erasedAt) : null,
     totalOrders: customer.totalOrders,
     totalSpend: decimalToString(customer.totalSpend),
     walletBalance: decimalToString(customer.walletBalance),

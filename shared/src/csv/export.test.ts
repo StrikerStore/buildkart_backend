@@ -352,7 +352,7 @@ test('a second round trip changes nothing', () => {
  * break on at least three of them; proper CSV quoting does not.
  */
 const FAQS_HTML =
-  '<h3>Is this OPC or PPC?</h3>\n<p>OPC 53 grade, \"structural\" work; use PPC for plaster | not this.</p>';
+  '<h3>Is this OPC or PPC?</h3>\n<p>OPC 53 grade, "structural" work; use PPC for plaster | not this.</p>';
 
 test('FAQs and return terms ride in BuildKart metafield columns', () => {
   const withFaqs = product({

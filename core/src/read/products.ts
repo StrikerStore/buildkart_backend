@@ -15,7 +15,6 @@ import {
   isRunnableRuleSet,
   matrixKeyToValues,
   normalizeMoney,
-  parseSetting,
   PRODUCT_PAGE_SIZE,
   type ProductListQuery,
   toStoreInputValue,

@@ -126,5 +126,31 @@ test('a valid signature over an unrecognised payload is still refused', async ()
 
 test('the cookie lifetime the caller is told matches the token', async () => {
   const { SESSION_TTL_SECONDS } = await subject();
-  assert.equal(SESSION_TTL_SECONDS, 60 * 60 * 24 * 7);
+  // A day: the admin holds every customer's details, so a lifted cookie
+  // should be dead by tomorrow.
+  assert.equal(SESSION_TTL_SECONDS, 60 * 60 * 24);
+});
+
+/*
+ * The half-finished sign-in. Signed with the same key as a session, so the
+ * audience is all that keeps one from being used as the other — which is
+ * exactly what these check.
+ */
+test('a sign-in challenge is not a session, and a session is not a challenge', async () => {
+  const { createChallengeToken, createSessionToken, verifyChallengeToken, verifySessionToken } = await subject();
+
+  const challenge = await createChallengeToken({ sub: 'admin-1', sv: 3, step: 'totp' });
+  assert.deepEqual(await verifyChallengeToken(challenge, 'totp'), { sub: 'admin-1', sv: 3, step: 'totp' });
+  assert.equal(await verifySessionToken(challenge), null);
+
+  const session = await createSessionToken(claims);
+  assert.equal(await verifyChallengeToken(session, 'totp'), null);
+});
+
+test('a challenge is only good for the step it was issued for', async () => {
+  const { createChallengeToken, verifyChallengeToken } = await subject();
+  const enrol = await createChallengeToken({ sub: 'admin-1', sv: 3, step: 'enrol' });
+  assert.equal(await verifyChallengeToken(enrol, 'totp'), null);
+  assert.ok(await verifyChallengeToken(enrol, 'enrol'));
+  assert.equal(await verifyChallengeToken(undefined, 'enrol'), null);
 });

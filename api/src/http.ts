@@ -29,6 +29,7 @@ import {
   retryQueuedNotifications,
   pullMetaInsights,
   runAnalyticsJobs,
+  runPrivacyJobs,
   runMarketingJobs,
   runWalletJobs,
   EXPORT_PAGE_SIZE,
@@ -153,7 +154,8 @@ export async function handleHttpRoute(
     path === '/cron/notifications' ||
     path === '/cron/marketing' ||
     path === '/cron/analytics' ||
-    path === '/cron/meta-insights'
+    path === '/cron/meta-insights' ||
+    path === '/cron/privacy'
   ) {
     const auth = cronAuthorised(req);
     if (auth === 'unset') return (json(res, 503, { error: 'CRON_SECRET is not set.' }), true);
@@ -173,6 +175,8 @@ export async function handleHttpRoute(
     // and drops raw sessions after 90 days. Hourly.
     // `/cron/meta-insights` re-pulls the last seven days of Meta ad spend.
     // Every six hours: Meta itself updates spend a few times a day.
+    // `/cron/privacy` runs account deletions whose cooling-off week is up and
+    // clears personal data past its retention period. Daily.
     const result =
       path === '/cron/media-gc'
         ? await collectMediaGarbage()
@@ -188,7 +192,9 @@ export async function handleHttpRoute(
                   ? await runAnalyticsJobs()
                   : path === '/cron/meta-insights'
                     ? await pullMetaInsights()
-                    : await publishScheduledProducts();
+                    : path === '/cron/privacy'
+                      ? await runPrivacyJobs()
+                      : await publishScheduledProducts();
     json(res, 200, { ok: true, ...result });
     return true;
   }

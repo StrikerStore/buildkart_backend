@@ -39,7 +39,12 @@ function buildAuditWhere(query: AuditListQuery): Prisma.AdminAuditLogWhereInput 
     ...(query.adminUserId ? { adminUserId: query.adminUserId } : {}),
     // The group is the part before the first dot, so this is a prefix match on
     // the indexed column rather than an IN over every action in the group.
-    ...(query.group ? { action: { startsWith: `${query.group}.` } } : {}),
+    //
+    // Records opened (`pii.view.*`) are a log of looks, not changes, and would
+    // bury the changes under them — so they show only when asked for.
+    ...(query.group
+      ? { action: { startsWith: `${query.group}.` } }
+      : { NOT: { action: { startsWith: 'pii.' } } }),
     ...(query.q ? { entityId: query.q } : {}),
     ...(from || to
       ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } }

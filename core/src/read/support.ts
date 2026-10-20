@@ -23,6 +23,7 @@ import {
   type SupportTopic,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
+import { recordAccess } from '../audit.ts';
 import { dateToIso } from '../dto.ts';
 import { presignDownload } from '../r2.ts';
 import { getCustomerDetail } from './customers.ts';
@@ -339,6 +340,8 @@ export async function getSupportThread(
     },
   });
   if (!ticket) return null;
+  // The thread polls with `afterId`; only opening it counts as a look.
+  if (!query.afterId) recordAccess(actor, 'support', ticket.id);
 
   const messages = await prisma.supportMessage.findMany({
     where: messageWhere(ticket.id, query.afterId),

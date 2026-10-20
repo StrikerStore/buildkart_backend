@@ -67,7 +67,10 @@ const SAFE_SCHEME = /^(https?:|mailto:|tel:|\/|#)/i;
 function isSafeUrl(value: string): boolean {
   // A leading control character or whitespace is how "java\tscript:" gets past
   // a naive prefix check, so strip before testing rather than after.
-  const cleaned = value.replace(new RegExp('[\u0000-\u0020]', 'g'), '').trim();
+  const cleaned = [...value]
+    .filter((char) => char.charCodeAt(0) > 0x20)
+    .join('')
+    .trim();
   return SAFE_SCHEME.test(cleaned);
 }
 

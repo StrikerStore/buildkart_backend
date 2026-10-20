@@ -162,11 +162,14 @@ async function deliver(input: NotifyInput, override: DeliveryOverride): Promise<
   const params = tokens.map((token) => whatsappParam(input.values[token]));
   const to = toWhatsappNumber(input.recipient.phone);
 
+  // A security message (a sign-in code, the answer to a privacy request) was
+  // asked for by its recipient, so turning order updates off does not stop it.
+  const kind = NOTIFICATION_EVENT_KINDS[input.event];
   const skipReason = !to
     ? 'invalid_number'
-    : !input.recipient.optedIn && !input.ignoreOptOut
+    : !input.recipient.optedIn && !input.ignoreOptOut && kind !== 'security'
       ? 'opted_out'
-      : NOTIFICATION_EVENT_KINDS[input.event] === 'marketing' && !input.recipient.marketingOptedIn
+      : kind === 'marketing' && !input.recipient.marketingOptedIn
         ? 'no_marketing_consent'
         : null;
 
@@ -520,6 +523,61 @@ export function notifyShopOfOrder(orderId: string): void {
   })().catch((error: unknown) => console.error('[notify] shop alert', error));
 }
 
+function adminUrl(path: string): string {
+  const base = (process.env.ADMIN_URL ?? '').trim().replace(/\/+$/, '');
+  return base ? `${base}${path}` : '';
+}
+
+/**
+ * Tells the shop something about the admin's own safety: a sign-in being
+ * guessed at, a change log that stopped writing, a privacy job that failed.
+ * One WhatsApp to each alert number, through the "Security alert" campaign.
+ *
+ * `dedupeKey` should carry a time bucket — an hour, a window — so a problem
+ * that keeps happening sends one alert per bucket rather than one per attempt.
+ * Never throws: an alert about a failure must not become a second one.
+ */
+export function notifyShopSecurityAlert(alert: {
+  title: string;
+  detail: string;
+  /** Where in the admin to look, e.g. `/changelog`. */
+  path: string;
+  dedupeKey: string;
+}): void {
+  void (async () => {
+    const row = await prisma.setting.findUnique({ where: { key: 'notifications.whatsapp' } });
+    const phones = parseSetting('notifications.whatsapp', row?.value).alertPhones;
+    if (phones.length === 0) {
+      console.warn(`[security] ${alert.title}: ${alert.detail} (no alert numbers to tell)`);
+      return;
+    }
+
+    const event: NotificationEvent = 'shop.securityAlert';
+    const values: Record<string, string> = {
+      ...(await commonTokens(null)),
+      alertTitle: alert.title,
+      alertDetail: alert.detail,
+      alertTime: formatStoreDateTime(new Date()),
+      adminUrl: adminUrl(alert.path),
+    };
+    for (const phone of phones) {
+      await notify({
+        event,
+        recipient: {
+          customerId: null,
+          name: `${values.storeName ?? 'Shop'} team`,
+          phone,
+          locale: 'en',
+          optedIn: true,
+          marketingOptedIn: false,
+        },
+        values,
+        dedupeKey: `${event}:${alert.dedupeKey}:${phone}`.slice(0, 191),
+      });
+    }
+  })().catch((error: unknown) => console.error('[notify] security alert', error));
+}
+
 /**
  * A message about an online payment that never became an order — a failed
  * attempt, or money given back because the order could not be written. There
@@ -555,6 +613,27 @@ export function notifyPaymentSession(
   );
 }
 
+async function customerInput(
+  event: NotificationEvent,
+  customerId: string,
+  extra: Record<string, string>,
+  dedupeKey: string,
+  links: { paymentSessionId?: string } = {},
+): Promise<NotifyInput | null> {
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: RECIPIENT_SELECT,
+  });
+  if (!customer) return null;
+  return {
+    event,
+    recipient: toRecipient(customer),
+    paymentSessionId: links.paymentSessionId ?? null,
+    values: { ...(await commonTokens(customer)), ...extra },
+    dedupeKey,
+  };
+}
+
 /** A message to a customer that is not about any one order. */
 export function notifyCustomer(
   event: NotificationEvent,
@@ -563,22 +642,27 @@ export function notifyCustomer(
   dedupeKey: string,
   links: { paymentSessionId?: string } = {},
 ): void {
-  notifyInBackground(
-    (async (): Promise<NotifyInput | null> => {
-      const customer = await prisma.customer.findUnique({
-        where: { id: customerId },
-        select: RECIPIENT_SELECT,
-      });
-      if (!customer) return null;
-      return {
-        event,
-        recipient: toRecipient(customer),
-        paymentSessionId: links.paymentSessionId ?? null,
-        values: { ...(await commonTokens(customer)), ...extra },
-        dedupeKey,
-      };
-    })(),
-  );
+  notifyInBackground(customerInput(event, customerId, extra, dedupeKey, links));
+}
+
+/**
+ * The same, awaited — for a caller sending to many people one after another,
+ * which has to pace itself and count what happened rather than fire and
+ * forget thousands of sends at once.
+ */
+export async function notifyCustomerNow(
+  event: NotificationEvent,
+  customerId: string,
+  extra: Record<string, string>,
+  dedupeKey: string,
+): Promise<NotifyOutcome> {
+  try {
+    const input = await customerInput(event, customerId, extra, dedupeKey);
+    return input ? await notify(input) : 'skipped';
+  } catch (error) {
+    console.error(`[notify] ${event} (${dedupeKey})`, error);
+    return 'failed';
+  }
 }
 
 /**
@@ -586,28 +670,62 @@ export function notifyCustomer(
  * Consent is the customer's flag when there is one; a stranger who asked to
  * be told when we reach their area has asked for exactly this message.
  */
+async function phoneInput(
+  event: NotificationEvent,
+  phone: string,
+  extra: Record<string, string>,
+  dedupeKey: string,
+): Promise<NotifyInput> {
+  const customer = await prisma.customer.findUnique({
+    where: { phone },
+    select: RECIPIENT_SELECT,
+  });
+  return {
+    event,
+    recipient: customer
+      ? toRecipient(customer)
+      : { customerId: null, name: null, phone, locale: 'en', optedIn: true, marketingOptedIn: false },
+    values: { ...(await commonTokens(customer)), ...extra },
+    dedupeKey,
+  };
+}
+
 export function notifyPhone(
   event: NotificationEvent,
   phone: string,
   extra: Record<string, string>,
   dedupeKey: string,
 ): void {
-  notifyInBackground(
-    (async (): Promise<NotifyInput> => {
-      const customer = await prisma.customer.findUnique({
-        where: { phone },
-        select: RECIPIENT_SELECT,
-      });
-      return {
-        event,
-        recipient: customer
-          ? toRecipient(customer)
-          : { customerId: null, name: null, phone, locale: 'en', optedIn: true, marketingOptedIn: false },
-        values: { ...(await commonTokens(customer)), ...extra },
-        dedupeKey,
-      };
-    })(),
-  );
+  notifyInBackground(phoneInput(event, phone, extra, dedupeKey));
+}
+
+/** `notifyPhone`, awaited. See `notifyCustomerNow`. */
+export async function notifyPhoneNow(
+  event: NotificationEvent,
+  phone: string,
+  extra: Record<string, string>,
+  dedupeKey: string,
+): Promise<NotifyOutcome> {
+  try {
+    return await notify(await phoneInput(event, phone, extra, dedupeKey));
+  } catch (error) {
+    console.error(`[notify] ${event} (${dedupeKey})`, error);
+    return 'failed';
+  }
+}
+
+/**
+ * Whether a message for this event would actually go out: WhatsApp is on and
+ * configured, and the event has a live template. For a screen about to send
+ * thousands, which should say so before rather than log thousands of nothings.
+ */
+export async function whatsappTemplateReady(event: NotificationEvent): Promise<boolean> {
+  try {
+    if (!(await loadSender())) return false;
+    return (await findTemplate(event, 'en')) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**

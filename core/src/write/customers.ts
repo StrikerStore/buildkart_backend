@@ -20,7 +20,7 @@ import { recordAudit } from '../audit.ts';
 
 /** Edits the details the shop keeps about a customer. */
 export async function updateCustomer(actor: Actor, input: unknown): Promise<ActionResult<void>> {
-  assertPermission(actor, 'customers:read');
+  assertPermission(actor, 'customers:write');
 
   const parsed = updateCustomerSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
@@ -46,7 +46,11 @@ export async function updateCustomer(actor: Actor, input: unknown): Promise<Acti
     action: 'customer.update',
     entityType: 'Customer',
     entityId: customerId,
-    diff: { phone: existing.phone, from: existing, to: { name, email, locale } },
+    // The entity id names the customer; their phone stays out of the log.
+    diff: {
+      from: { name: existing.name, email: existing.email, locale: existing.locale },
+      to: { name, email, locale },
+    },
   });
 
   return actionOk();
@@ -63,7 +67,7 @@ export async function setCustomerBlocked(
   actor: Actor,
   input: unknown,
 ): Promise<ActionResult<void>> {
-  assertPermission(actor, 'customers:read');
+  assertPermission(actor, 'customers:write');
 
   const parsed = setCustomerBlockedSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
@@ -84,7 +88,7 @@ export async function setCustomerBlocked(
     action: isBlocked ? 'customer.block' : 'customer.unblock',
     entityType: 'Customer',
     entityId: customerId,
-    diff: { phone: existing.phone },
+    diff: { isBlocked },
   });
 
   return actionOk();
@@ -98,7 +102,7 @@ export async function setCustomerWhatsappOptIn(
   actor: Actor,
   input: unknown,
 ): Promise<ActionResult<void>> {
-  assertPermission(actor, 'customers:read');
+  assertPermission(actor, 'customers:write');
 
   const parsed = customerWhatsappOptInSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
@@ -122,7 +126,7 @@ export async function setCustomerWhatsappOptIn(
     action: 'customer.whatsappOptIn',
     entityType: 'Customer',
     entityId: customerId,
-    diff: { phone: existing.phone, optIn },
+    diff: { optIn },
   });
 
   return actionOk();

@@ -67,6 +67,16 @@ import {
   getMyPrivacy,
   recordBannerConsent,
   saveMyPrivacy,
+  saveMyEmail,
+  saveMyNominee,
+  getMyDataExport,
+  listMyPrivacyRequests,
+  createMyPrivacyRequest,
+  cancelMyPrivacyRequest,
+  getMyErasure,
+  requestErasureCode,
+  confirmMyErasure,
+  cancelMyErasure,
 } from '@buildkart/core';
 // The query schemas come from `shared`, not `core`: they are part of this
 // API's public input surface, and a client naming one must not have to depend
@@ -450,6 +460,44 @@ export const storefrontRouter = router({
   savePrivacy: customerProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => saveMyPrivacy(ctx.actor, input)),
+
+  // --- the customer's rights (DPDP Act §§11-14) ---------------------------
+
+  saveEmail: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => saveMyEmail(ctx.actor, input)),
+
+  saveNominee: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => saveMyNominee(ctx.actor, input)),
+
+  /** Everything held about them, as JSON. Recorded as an answered access request. */
+  myDataExport: customerProcedure.query(({ ctx }) => getMyDataExport(ctx.actor)),
+
+  myPrivacyRequests: customerProcedure.query(({ ctx }) => listMyPrivacyRequests(ctx.actor)),
+
+  createPrivacyRequest: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => createMyPrivacyRequest(ctx.actor, input)),
+
+  cancelPrivacyRequest: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => cancelMyPrivacyRequest(ctx.actor, input)),
+
+  /*
+   * "Delete my account": a code on WhatsApp, then a week to change their mind.
+   * The client IP comes off the context, as for `requestOtp`, so the code's
+   * rate limit cannot be dodged by naming a different one.
+   */
+  myErasure: customerProcedure.query(({ ctx }) => getMyErasure(ctx.actor)),
+
+  requestErasureCode: customerProcedure.mutation(({ ctx }) => requestErasureCode(ctx.actor, ctx.clientIp)),
+
+  confirmErasure: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => confirmMyErasure(ctx.actor, input)),
+
+  cancelErasure: customerProcedure.mutation(({ ctx }) => cancelMyErasure(ctx.actor)),
 
   myAddresses: customerProcedure.query(({ ctx }) => listMyAddresses(ctx.actor)),
 

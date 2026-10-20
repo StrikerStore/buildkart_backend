@@ -192,9 +192,10 @@ export async function requestOtp(
 
 /**
  * What a code is for. Kept apart so a code sent to confirm a cash-on-delivery
- * order can never sign anybody in, and a sign-in code never places an order.
+ * order can never sign anybody in, a sign-in code never places an order, and
+ * neither can confirm deleting an account.
  */
-export type OtpPurpose = 'LOGIN' | 'COD';
+export type OtpPurpose = 'LOGIN' | 'COD' | 'ERASE';
 
 /**
  * Mints a code for a phone and sends it on WhatsApp, through the same

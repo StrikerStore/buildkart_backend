@@ -628,7 +628,6 @@ export async function writeOrder(
     entityId: created.order.id,
     diff: {
       orderNumber: created.order.orderNumber,
-      phone: data.customer.phone,
       status: data.status,
       grandTotal: pricing.grandTotal,
       taxTotal: pricing.taxTotal,

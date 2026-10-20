@@ -11,6 +11,8 @@ import { prisma, type Prisma } from '@buildkart/database';
 import {
   actionErrorFromZod,
   actionOk,
+  myEmailSchema,
+  nomineeSchema,
   NOTICE_VERSION,
   recordConsentSchema,
   savePrivacySchema,
@@ -121,6 +123,64 @@ export async function saveMyPrivacy(
         ? [{ purpose: 'MARKETING_WHATSAPP' as const, granted: whatsappOffers, source: 'ACCOUNT' as const, customerId }]
         : []),
     ]);
+  });
+
+  return actionOk(await getMyPrivacy(actor));
+}
+
+/**
+ * A customer correcting their email (DPDP Act §12). Blank removes it — there is
+ * nothing here that needs an email to work, so taking it back is allowed.
+ */
+export async function saveMyEmail(actor: Actor, input: unknown): Promise<ActionResult<MyPrivacyDto>> {
+  const customerId = customerIdOf(actor);
+  const parsed = myEmailSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data: { email: parsed.data.email === '' ? null : parsed.data.email },
+  });
+  return actionOk(await getMyPrivacy(actor));
+}
+
+/**
+ * Who may use the customer's rights if they die or cannot act (DPDP Act §14).
+ * All three fields blank removes the nominee. Recorded as a request too, so the
+ * shop's history shows when a nominee was named or changed.
+ */
+export async function saveMyNominee(actor: Actor, input: unknown): Promise<ActionResult<MyPrivacyDto>> {
+  const customerId = customerIdOf(actor);
+  const parsed = nomineeSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+  const { name, relation, phone } = parsed.data;
+  const clearing = name === '';
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    const customer = await tx.customer.update({
+      where: { id: customerId },
+      data: {
+        nomineeName: clearing ? null : name,
+        nomineeRelation: clearing ? null : relation,
+        nomineePhone: clearing ? null : phone,
+        nomineeUpdatedAt: now,
+      },
+      select: { phone: true },
+    });
+    await tx.privacyRequest.create({
+      data: {
+        customerId,
+        phone: customer.phone,
+        type: 'NOMINATION',
+        status: 'DONE',
+        details: clearing ? 'Removed their nominee.' : `Named ${name} (${relation}) as nominee.`,
+        source: 'ACCOUNT',
+        resolution: 'Saved from their account.',
+        dueAt: now,
+        resolvedAt: now,
+      },
+    });
   });
 
   return actionOk(await getMyPrivacy(actor));

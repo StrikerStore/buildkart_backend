@@ -13,6 +13,7 @@ import {
   type OrderStatus,
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
+import { recordAccess } from '../audit.ts';
 import {
   decimalToString,
   toOrderDetailDto,
@@ -180,6 +181,8 @@ export async function getOrderDetail(actor: Actor, id: string): Promise<OrderDet
 
   const row = await prisma.order.findUnique({ where: { id }, include: orderDetailInclude });
   if (!row) return null;
+  // The screen, the invoice and the challan all read through here.
+  recordAccess(actor, 'order', row.id);
 
   const detail = toOrderDetailDto(row);
   return {

@@ -64,6 +64,7 @@ import type {
   VariantSnapshot,
 } from './index.ts';
 import type { CashbackStatus, WalletEntryType } from './wallet.ts';
+import type { IncidentAudience, IncidentStatus, PrivacyRequestStatus, PrivacyRequestType } from './privacy.ts';
 import type { CheckoutOption, OnlineGateway } from './checkout-options.ts';
 import type { PartialCodRules } from './payments.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
@@ -80,8 +81,17 @@ export type AuthenticatedAdmin = {
 };
 
 // from core/src/auth.ts
+/**
+ * What signing in still needs once the password is right: nothing, the code
+ * from the authenticator app, or — for an owner who has never set one up —
+ * setting it up now.
+ */
+export type SecondFactorStep = 'none' | 'totp' | 'enrol';
+
+// from core/src/auth.ts
 export type AuthenticateOutcome =
-  { ok: true; admin: AuthenticatedAdmin } | { ok: false; message: string; rateLimited: boolean };
+  | { ok: true; admin: AuthenticatedAdmin; secondFactor: SecondFactorStep }
+  | { ok: false; message: string; rateLimited: boolean };
 
 // from core/src/auth.ts
 export type CurrentAdmin = {
@@ -99,6 +109,29 @@ export type AdminAccountDto = {
   name: string;
   role: AdminRole;
   lastLoginAt: string | null;
+  twoFactor: AdminTwoFactorDto;
+};
+
+// from core/src/two-factor.ts
+export type AdminTwoFactorDto = {
+  enabled: boolean;
+  enabledAt: string | null;
+  recoveryCodesLeft: number;
+  /** This account's role must have it: it can be moved to a new phone, not turned off. */
+  required: boolean;
+  /** False when the API has no SETTINGS_ENCRYPTION_KEY to keep the secret under. */
+  available: boolean;
+};
+
+// from core/src/two-factor.ts
+/** A new authenticator secret, to show once as a QR code and as text. */
+export type TotpSetupDto = {
+  /** Base32, for typing into an app by hand. */
+  secret: string;
+  /** The `otpauth://` link the QR code carries. */
+  uri: string;
+  /** The account name the app will show. */
+  account: string;
 };
 
 // from core/src/csv/import-pipeline.ts
@@ -607,6 +640,8 @@ export type CustomerDetailDto = {
   adsConsent: boolean | null;
   /** When they last said they are 18 or older. */
   ageConfirmedAt: string | null;
+  /** Set once the account has been erased: the record stays, the person is gone from it. */
+  erasedAt: string | null;
   totalOrders: number;
   totalSpend: string;
   /** Lifetime spend over the order counter. See the note in `getCustomerDetail`. */
@@ -2262,6 +2297,144 @@ export type MyPrivacyDto = {
   analytics: boolean | null;
   marketing: boolean | null;
   ageConfirmedAt: string | null;
+  /** Editable by the customer on their privacy page (DPDP Act §12). */
+  email: string | null;
+  /** Who may use their rights if they cannot (DPDP Act §14). Null: none named. */
+  nominee: { name: string; relation: string; phone: string } | null;
+};
+
+/** Where a customer's own "delete my account" stands. */
+export type MyErasureDto = {
+  /** Set while a confirmed deletion waits out its cooling-off week. */
+  scheduledFor: string | null;
+  /** Why it cannot happen yet — an order still open, money still owed. Empty when it can. */
+  blockers: string[];
+  /** Store credit that goes with the account. */
+  walletBalance: string;
+};
+
+/** A request a customer made about their data, as they see it. */
+export type MyPrivacyRequestDto = {
+  id: string;
+  type: PrivacyRequestType;
+  status: PrivacyRequestStatus;
+  details: string;
+  /** What the shop wrote when closing it. */
+  resolution: string | null;
+  createdAt: string;
+  /** The legal deadline: received plus 90 days. */
+  dueAt: string;
+  resolvedAt: string | null;
+};
+
+/** A row in the admin privacy queue. */
+export type PrivacyRequestRowDto = {
+  id: string;
+  type: PrivacyRequestType;
+  status: PrivacyRequestStatus;
+  phone: string;
+  customerId: string | null;
+  customerName: string | null;
+  /** ACCOUNT — filed by the customer; ADMIN — recorded by the shop. */
+  source: 'ACCOUNT' | 'ADMIN';
+  createdAt: string;
+  dueAt: string;
+};
+
+export type PrivacyRequestListDto = {
+  rows: PrivacyRequestRowDto[];
+  total: number;
+  totalPages: number;
+  /** Waiting on the shop, whatever the filter. */
+  openCount: number;
+  /** Waiting on the shop past the legal deadline. */
+  overdueCount: number;
+  /** The grievance officer's promised reply time, for the "due soon" warning. */
+  responseDays: number;
+  /** When `/cron/privacy` last finished; null if it never has. */
+  lastCleanupAt: string | null;
+};
+
+export type PrivacyRequestDto = PrivacyRequestRowDto & {
+  /** When a scheduled account deletion will run. */
+  scheduledFor: string | null;
+  /** The customer's account has already been erased. */
+  customerErased: boolean;
+  details: string;
+  resolution: string | null;
+  /** How a recorded request arrived: "Email", "Phone call". */
+  channel: string | null;
+  resolvedAt: string | null;
+  handledByName: string | null;
+  updatedAt: string;
+};
+
+/**
+ * Everything the shop holds about one customer, as they download it — the
+ * summary DPDP Act §11 entitles them to: their data, what is done with it, and
+ * who else receives it.
+ */
+export type CustomerDataExportDto = {
+  generatedAt: string;
+  noticeVersion: string;
+  shop: { name: string; grievanceOfficer: { name: string; email: string; phone: string } };
+  profile: {
+    phone: string;
+    name: string | null;
+    email: string | null;
+    gstin: string | null;
+    language: string;
+    createdAt: string;
+    nominee: { name: string; relation: string; phone: string } | null;
+  };
+  choices: {
+    whatsappOrderUpdates: boolean;
+    whatsappOffers: boolean;
+    siteAnalytics: boolean | null;
+    metaAdMeasurement: boolean | null;
+    ageConfirmedAt: string | null;
+  };
+  consentHistory: Array<{ purpose: string; granted: boolean; source: string; noticeVersion: string; at: string }>;
+  addresses: Array<{
+    label: string | null;
+    line1: string;
+    line2: string | null;
+    landmark: string | null;
+    city: string;
+    state: string;
+    pincode: string;
+    latitude: string | null;
+    longitude: string | null;
+    receiverName: string | null;
+    receiverPhone: string | null;
+  }>;
+  orders: Array<{
+    orderNumber: string;
+    placedAt: string;
+    status: string;
+    grandTotal: string;
+    buyerGstin: string | null;
+    deliveryAddress: unknown;
+    note: string | null;
+    items: Array<{ name: string; variant: string | null; quantity: number; unitPrice: string }>;
+    payments: Array<{ method: string; amount: string; reference: string | null; at: string }>;
+  }>;
+  wallet: {
+    balance: string;
+    entries: Array<{ type: string; amount: string; note: string | null; at: string }>;
+  };
+  support: Array<{
+    ticketNumber: string;
+    topic: string;
+    status: string;
+    openedAt: string;
+    messages: Array<{ from: string; body: string; hasPhoto: boolean; at: string }>;
+  }>;
+  whatsappMessages: Array<{ event: string; status: string; at: string }>;
+  privacyRequests: MyPrivacyRequestDto[];
+  /** Visits recorded with analytics consent in the last 90 days — the only ones still held individually. */
+  recentVisitCount: number;
+  processors: Array<{ name: string; purpose: string; receives: string; onlyWithConsent: boolean }>;
 };
 
 export type OtpRequestDto = {
@@ -3127,4 +3300,52 @@ export type CatalogFeedItemDto = {
   inStock: boolean;
   /** Units on hand when stock is tracked, else null. */
   quantity: number | null;
+};
+
+// from core/src/read/privacy-incidents.ts
+export type PrivacyIncidentRowDto = {
+  id: string;
+  title: string;
+  status: IncidentStatus;
+  detectedAt: string;
+  /** Detected plus 72 hours: when the detailed report to the Board is due. */
+  boardReportDueAt: string;
+  boardNotifiedAt: string | null;
+  boardReportAt: string | null;
+  principalsNotifiedAt: string | null;
+  notifiedCount: number;
+  createdAt: string;
+};
+
+// from core/src/read/privacy-incidents.ts
+export type PrivacyIncidentDto = PrivacyIncidentRowDto & {
+  whatHappened: string;
+  whenHappened: string;
+  dataAffected: string;
+  likelyImpact: string;
+  measuresTaken: string;
+  customerSteps: string;
+  boardReference: string;
+  notes: string;
+  /** Who the last send went to. A pasted list is summed up, not sent back whole. */
+  audience:
+    | Exclude<IncidentAudience, { kind: 'PHONES' }>
+    | { kind: 'PHONES'; count: number }
+    | null;
+  /** The notices so far, by what happened to them. */
+  sends: { sent: number; queued: number; failed: number; skipped: number };
+  /** A send is still working through the list. */
+  sending: boolean;
+  /** The grievance officer as the notice will name them; blank until Settings has one. */
+  contact: string;
+  /** The "Data breach notice" WhatsApp template is set up and WhatsApp is on. */
+  templateReady: boolean;
+};
+
+// from core/src/write/privacy-incidents.ts
+export type IncidentAudienceCountDto = {
+  /** Customers with an account who would be sent the notice. */
+  customers: number;
+  /** Pasted numbers that belong to no account — sent to all the same. */
+  withoutAccount: number;
 };

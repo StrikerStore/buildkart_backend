@@ -24,6 +24,17 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.password': 'Changed their password',
   'admin.password.failed': 'Failed a password change',
   'admin.profile': 'Updated their profile',
+  'admin.2fa.enable': 'Turned on two-step sign-in',
+  'admin.2fa.replace': 'Moved two-step sign-in to a new phone',
+  'admin.2fa.disable': 'Turned off two-step sign-in',
+  'admin.2fa.recoveryCodes': 'Made new recovery codes',
+  'admin.2fa.recoveryUsed': 'Signed in with a recovery code',
+
+  // Which records holding someone's personal data an admin opened. Written
+  // once per admin, record and hour; kept a year (DPDP Rules 2025, rule 6).
+  'pii.view.customer': "Opened a customer's record",
+  'pii.view.order': 'Opened an order',
+  'pii.view.support': 'Opened a support conversation',
 
   // Catalog
   'product.create': 'Created a product',
@@ -178,6 +189,15 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'marketing.meta.test': 'Sent a test event to Meta',
 
   'settings.privacy': 'Updated the grievance officer',
+  'privacy.request.record': 'Recorded a privacy request',
+  'privacy.request.update': 'Updated a privacy request',
+  'privacy.export': "Downloaded a customer's data",
+  'privacy.customer.erased': "Erased a customer's account",
+  'privacy.phone.erased': 'Erased the records held for a phone number',
+  'privacy.retention.run': 'Ran the daily privacy clean-up',
+  'privacy.incident.create': 'Recorded a data breach',
+  'privacy.incident.update': 'Updated a data breach record',
+  'privacy.incident.notify': 'Sent a breach notice to customers',
   'settings.store': 'Updated the store details',
   'settings.commerce': 'Updated the order and payment settings',
   'settings.wallet': 'Updated the wallet and cashback rules',
@@ -220,6 +240,9 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   MetafieldDefinition: 'Custom field',
   Order: 'Order',
   PincodeRequest: 'Area request',
+  PrivacyIncident: 'Data breach',
+  PrivacyJob: 'Privacy clean-up',
+  PrivacyRequest: 'Privacy request',
   Product: 'Product',
   ProductVariant: 'Variant',
   ServiceablePincode: 'Delivery area',
@@ -228,6 +251,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   NotificationTemplate: 'Customer message',
   Page: 'Page',
   Setting: 'Setting',
+  SupportTicket: 'Support conversation',
   Tag: 'Tag',
   TaxRate: 'Tax rate',
 };
@@ -264,6 +288,12 @@ export function linkForEntity(entityType: string, entityId: string): string | nu
       return `/metafields/${entityId}`;
     case 'Customer':
       return `/customers/${entityId}`;
+    case 'PrivacyRequest':
+      return `/privacy/${entityId}`;
+    case 'PrivacyIncident':
+      return `/incidents/${entityId}`;
+    case 'SupportTicket':
+      return `/support/${entityId}`;
     case 'Order':
       return `/orders/${entityId}`;
     case 'ImportJob':

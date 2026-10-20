@@ -365,7 +365,7 @@ export async function adjustWallet(
     action: data.direction === 'CREDIT' ? 'wallet.credit' : 'wallet.debit',
     entityType: 'Customer',
     entityId: customer.id,
-    diff: { phone: customer.phone, amount, note: data.note, balance },
+    diff: { amount, note: data.note, balance },
   });
 
   return actionOk({ balance });

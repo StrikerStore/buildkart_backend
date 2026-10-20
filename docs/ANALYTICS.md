@@ -431,7 +431,8 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 > - **No answer is a no.** Without an analytics yes there is no `bk_vid`, `bk_sid` or `bk_attr`, no beacon (and `/api/t` drops events), and `OrderAttribution` keeps no touches or session. Without a marketing yes `fbevents.js` is never requested, nothing is queued for it, `_fbc` is not minted, and no Purchase or CompleteRegistration goes to the Conversions API. `OrderAttribution.adsConsent` is checked in `buildPurchaseEvent`, which covers the first send, retries and the sweep. Counter orders carry the customer account's stored answer.
 > - **Withdrawing** (footer "Privacy choices", or Account → Settings) deletes the matching cookies, including Meta's `_fbp`/`_fbc`.
 > - **Proof:** every answer is an append-only `ConsentRecord`. A signed-in answer is also stored on `Customer.analyticsConsent`/`adsConsent`, and the newer answer wins at sign-in.
-> - **Effect on numbers:** sessions, conversion rate, city and channel reports, and Meta-reported conversions now cover only visitors who said yes. Orders and revenue are unaffected. Compare periods across the change with that in mind.
+> - **Trending signals too** (contract 0.30.0): product views, cart adds and search clicks feed the TRENDING band only with an analytics yes — checked in the website's senders (`app/products/[handle]/actions.ts`, `app/cart/actions.ts`, `/api/search-hit`).
+> - **Effect on numbers:** sessions, conversion rate, city and channel reports, trending, and Meta-reported conversions now cover only visitors who said yes. Orders and revenue are unaffected. Compare periods across the change with that in mind.
 
 ---
 

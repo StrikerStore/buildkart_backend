@@ -22,6 +22,13 @@ export const PERMISSIONS = [
   'orders:cancel',
   'customers:read',
   /*
+   * Editing a customer — their name, notes, a block, their WhatsApp switch.
+   * Split from reading so a role can look a customer up to take an order
+   * without being able to change who they are on file; until it was split,
+   * `customers:read` quietly allowed both.
+   */
+  'customers:write',
+  /*
    * Split from `customers:read` rather than folded into it.
    *
    * Reading a customer record is looking something up; answering a support
@@ -58,6 +65,13 @@ export const PERMISSIONS = [
   'wallet:write',
   'admins:manage',
   'audit:read',
+  /*
+   * Customers' requests about their own data: the queue, the downloads,
+   * erasure, and breach notices. Owner only — it is the whole of a customer's
+   * file at once, and answering for it is the grievance officer's job, not a
+   * shift task.
+   */
+  'privacy:manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -74,6 +88,9 @@ const ROLE_PERMISSIONS: Record<AdminRole, ReadonlySet<Permission>> = {
     'orders:read',
     'orders:write',
     'customers:read',
+    // Kept, because staff could already do this under `customers:read`: the
+    // split is so the owner can take it away, not a change made for them.
+    'customers:write',
     // Answering customers *is* running the shop day to day — a staff member who
     // can change an order's status but cannot tell the customer about it is the
     // wrong shape.

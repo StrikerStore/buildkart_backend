@@ -52,3 +52,35 @@ export const sessionClaimsSchema = z.object({
   sv: z.number().int().min(1),
 });
 export type SessionClaims = z.infer<typeof sessionClaimsSchema>;
+
+// ---------------------------------------------------------------------------
+// Two-step sign-in
+// ---------------------------------------------------------------------------
+
+/** A six-digit code from the authenticator app. */
+export const totpCodeSchema = z.object({
+  code: z
+    .string()
+    .transform((value) => value.replace(/\s+/g, ''))
+    .pipe(z.string().regex(/^\d{6}$/, 'Enter the 6-digit code from the app')),
+});
+export type TotpCodeInput = z.infer<typeof totpCodeSchema>;
+
+/**
+ * The second step of signing in: a code from the app, or one of the recovery
+ * codes. Loose on purpose — which of the two it is, is decided by its shape.
+ */
+export const secondFactorSchema = z.object({
+  code: z.string().trim().min(6, 'Enter the code').max(32, 'That is too long to be a code'),
+});
+export type SecondFactorInput = z.infer<typeof secondFactorSchema>;
+
+/**
+ * The current password again, before changing how this account signs in. A
+ * session someone walked up to, or stole, must not be able to move the second
+ * step onto their own phone.
+ */
+export const reauthenticateSchema = z.object({
+  password: z.string().min(1, 'Enter your password').max(200),
+});
+export type ReauthenticateInput = z.infer<typeof reauthenticateSchema>;

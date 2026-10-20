@@ -121,6 +121,13 @@ test('only migrated domains expose mutations', () => {
     'auth.account',
     'auth.updateProfile',
     'auth.changePassword',
+    'auth.secondFactor',
+    'auth.enrolStart',
+    'auth.enrolFinish',
+    'auth.twoFactorBegin',
+    'auth.twoFactorConfirm',
+    'privacy.incidents',
+    'privacy.sendIncidentNotices',
   ]) {
     assert.ok(names.includes(required), `${required} is missing from the router`);
   }

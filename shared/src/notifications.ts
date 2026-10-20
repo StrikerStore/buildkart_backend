@@ -27,7 +27,10 @@ export const NOTIFICATION_EVENTS = [
   'delivery.areaNowServiced',
   'customer.otp',
   'customer.welcome',
+  'customer.privacyUpdate',
+  'customer.securityNotice',
   'shop.orderPlaced',
+  'shop.securityAlert',
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 
@@ -59,7 +62,13 @@ export const NOTIFICATION_EVENT_KINDS: Record<NotificationEvent, NotificationKin
   'delivery.areaNowServiced': 'transactional',
   'customer.otp': 'security',
   'customer.welcome': 'marketing',
+  // The customer asked; the answer is owed whatever their message settings.
+  'customer.privacyUpdate': 'security',
+  // A breach notice is owed to everyone affected (DPDP Rules 2025, rule 7(1)),
+  // whatever they chose about updates.
+  'customer.securityNotice': 'security',
   'shop.orderPlaced': 'shop',
+  'shop.securityAlert': 'shop',
 };
 
 export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
@@ -76,7 +85,10 @@ export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
   'delivery.areaNowServiced': 'We now deliver to your area',
   'customer.otp': 'Sign-in code',
   'customer.welcome': 'Welcome',
+  'customer.privacyUpdate': 'Privacy request answered',
+  'customer.securityNotice': 'Data breach notice',
   'shop.orderPlaced': 'New order alert',
+  'shop.securityAlert': 'Security alert',
 };
 
 export const NOTIFICATION_EVENT_HINTS: Record<NotificationEvent, string> = {
@@ -94,8 +106,14 @@ export const NOTIFICATION_EVENT_HINTS: Record<NotificationEvent, string> = {
   'delivery.areaNowServiced': 'Answers a pincode request from someone you could not reach before.',
   'customer.otp': 'The sign-in code itself. Never turn this into marketing.',
   'customer.welcome': 'First order, or first sign-in.',
+  'customer.privacyUpdate':
+    'When you close a request about their data — deletion, correction, a complaint. They are owed an answer.',
+  'customer.securityNotice':
+    'Sent from Privacy → Incidents to everyone a breach affected. The law says what it must contain — keep every token in the message.',
   'shop.orderPlaced':
     'To the shop, not the customer: every new order, to each alert number saved with the WhatsApp provider.',
+  'shop.securityAlert':
+    'To the shop: repeated failed admin sign-ins, a change log that stopped writing, or a daily privacy clean-up that failed.',
 };
 
 /**
@@ -253,6 +271,46 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
     { token: 'expiryMinutes', sample: '10' },
   ],
   'customer.welcome': [...COMMON_TOKENS],
+  'customer.privacyUpdate': [
+    ...COMMON_TOKENS,
+    { token: 'requestType', sample: 'Delete my account' },
+    { token: 'requestStatus', sample: 'Done' },
+    {
+      token: 'requestReply',
+      sample: 'Your account and saved addresses have been deleted.',
+      note: 'What you wrote when closing it.',
+    },
+  ],
+  /*
+   * One token for each thing rule 7(1) of the DPDP Rules says the notice must
+   * tell the person: what happened and when, what it means for them, what the
+   * shop has done, what they should do, and who to ask.
+   */
+  'customer.securityNotice': [
+    ...COMMON_TOKENS,
+    {
+      token: 'incidentWhat',
+      sample: 'Someone got into our delivery records and saw names, phone numbers and delivery addresses.',
+    },
+    { token: 'incidentWhen', sample: 'Between 3 and 5 May 2027' },
+    {
+      token: 'incidentImpact',
+      sample: 'You may get calls or messages pretending to be from us.',
+    },
+    {
+      token: 'incidentMeasures',
+      sample: 'We closed the gap the same day, changed every password and told the Data Protection Board.',
+    },
+    {
+      token: 'incidentSteps',
+      sample: 'We will never ask for an OTP or a payment by phone. Do not share one.',
+    },
+    {
+      token: 'incidentContact',
+      sample: 'Priya Sharma, Grievance Officer — privacy@buildkart.co, +91 98260 00000',
+      note: 'From Settings → Grievance officer.',
+    },
+  ],
   'shop.orderPlaced': [
     ...COMMON_TOKENS,
     ...ORDER_TOKENS,
@@ -262,6 +320,20 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
       token: 'adminOrderUrl',
       sample: 'https://admin.buildkart.co/orders/clx123',
       note: 'The order in the admin. Needs ADMIN_URL set on the API server.',
+    },
+  ],
+  'shop.securityAlert': [
+    ...COMMON_TOKENS,
+    { token: 'alertTitle', sample: 'Admin sign-in locked' },
+    {
+      token: 'alertDetail',
+      sample: '5 wrong passwords for owner@buildkart.co from 49.36.12.8 in 15 minutes.',
+    },
+    { token: 'alertTime', sample: '13 Oct 2026, 4:30 pm' },
+    {
+      token: 'adminUrl',
+      sample: 'https://admin.buildkart.co/changelog',
+      note: 'Where to look in the admin. Needs ADMIN_URL set on the API server.',
     },
   ],
 };

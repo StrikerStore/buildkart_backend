@@ -115,7 +115,11 @@ function plainName(name: string | null): string {
   return cleaned || 'Customer';
 }
 
-/** PayU insists on an email; most of this shop's customers have none. */
+/**
+ * PayU insists on an email; most of this shop's customers have none. The
+ * placeholder is built from the customer's id, not their phone, so a phone
+ * number is not handed to PayU dressed up as an email address.
+ */
 function payuEmail(customer: PreparedCustomerOrder['customer']): string {
   if (customer.email) return customer.email;
   let host = 'buildkart.co';
@@ -124,7 +128,7 @@ function payuEmail(customer: PreparedCustomerOrder['customer']): string {
   } catch {
     // Unset or malformed; the default domain is only a placeholder anyway.
   }
-  return `${customer.phone.replace(/\D/g, '')}@${host.replace(/^www\./, '')}`;
+  return `c-${customer.id.toLowerCase()}@${host.replace(/^www\./, '')}`;
 }
 
 /**

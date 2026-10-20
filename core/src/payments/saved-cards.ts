@@ -103,3 +103,33 @@ export async function removeSavedCard(actor: Actor, input: unknown): Promise<Act
   }
   return actionOk();
 }
+
+/**
+ * Removes every card the gateways remember for a customer — part of erasing
+ * their account, so it runs before the gateway account ids are deleted.
+ *
+ * Best effort and never throws: a gateway that is down, or not set up, keeps
+ * what it holds and says so in the log, rather than stopping the erasure.
+ */
+export async function forgetSavedCards(customerId: string): Promise<void> {
+  const account = await razorpayAccount(customerId);
+  if (account) {
+    try {
+      const creds = await razorpayCredentials();
+      for (const token of await listRazorpayTokens(creds, account)) {
+        await deleteRazorpayToken(creds, account, token.id);
+      }
+    } catch (error) {
+      console.error('[privacy] could not remove Razorpay saved cards', error);
+    }
+  }
+  try {
+    const creds = await payuCredentials();
+    for (const card of await listPayuCards(creds, customerId)) {
+      await deletePayuCard(creds, customerId, card.token);
+    }
+  } catch (error) {
+    // Also where PayU simply is not configured.
+    console.error('[privacy] could not remove PayU saved cards', error);
+  }
+}

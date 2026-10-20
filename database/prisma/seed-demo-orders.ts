@@ -324,15 +324,6 @@ export async function seedOrders(): Promise<number> {
     const quantities = chosen.map((_, n) => [10, 2, 25, 5, 1][(index + n) % 5]!);
 
     /*
-     * Bulk pricing unlocks on the cart total, not per line, so the total has to
-     * be worked out at list price before any line can be priced — hence two
-     * passes rather than one.
-     */
-    const listSubtotal = chosen.reduce(
-      (sum, variant, n) => sum + toPaise(variant.price.toString()) * quantities[n]!,
-      0,
-    );
-    /*
      * The real matcher, not a copy of it.
      *
      * This used to reimplement the bulk rule inline — one boolean against a
