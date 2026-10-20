@@ -63,11 +63,25 @@ export async function saveCustomerReview(
     }
   }
 
+  /*
+   * The schema only accepts a ticked "customer agreed" box, so every save is a
+   * fresh confirmation. The first one is kept as the date of agreement.
+   */
+  const existingConsent = data.id
+    ? (
+        await prisma.customerReview.findUnique({
+          where: { id: data.id },
+          select: { publishConsentAt: true },
+        })
+      )?.publishConsentAt
+    : null;
+
   const values = {
     customerName: data.customerName,
     customerPhone: data.customerPhone === '' ? null : data.customerPhone,
     rating: data.rating,
     isActive: data.isActive,
+    publishConsentAt: existingConsent ?? new Date(),
   };
 
   const saved = await prisma.$transaction(async (tx) => {
@@ -129,9 +143,16 @@ export async function setCustomerReviewActive(
 
   const existing = await prisma.customerReview.findUnique({
     where: { id: parsed.data.id },
-    select: { id: true },
+    select: { id: true, publishConsentAt: true },
   });
   if (!existing) return actionError('That review no longer exists.');
+  // Showing it needs the customer's recorded agreement, which the edit form
+  // takes. Hiding one never does.
+  if (parsed.data.isActive && !existing.publishConsentAt) {
+    return actionError(
+      "Record the customer's agreement first: edit the review and tick the consent box.",
+    );
+  }
 
   await prisma.customerReview.update({
     where: { id: parsed.data.id },

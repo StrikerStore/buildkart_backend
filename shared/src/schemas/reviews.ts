@@ -56,5 +56,14 @@ export const customerReviewSchema = z.object({
     .refine((ids) => new Set(ids).size === ids.length, 'The same file is attached twice'),
 
   isActive: z.boolean().default(true),
+
+  /*
+   * The customer agreed to have this review — their name, words and photos —
+   * shown on the site. Required: a review is the customer's personal data, and
+   * publishing it is a use they have to say yes to (DPDP Act §6).
+   */
+  publishConsent: z.literal(true, {
+    message: 'Confirm the customer agreed to have this shown on the site',
+  }),
 });
 export type CustomerReviewInput = z.infer<typeof customerReviewSchema>;

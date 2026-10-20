@@ -36,6 +36,7 @@ export * from './analytics.ts';
 export * from './analytics-period.ts';
 export * from './attribution.ts';
 export * from './sessions.ts';
+export * from './privacy.ts';
 export * from './trending.ts';
 export * from './metafields/index.ts';
 export * from './csv/index.ts';

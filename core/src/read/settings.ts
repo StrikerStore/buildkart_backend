@@ -57,6 +57,7 @@ export async function getSettings(): Promise<SettingsDto> {
 
   return {
     store: parseSetting('store.profile', byKey.get('store.profile')),
+    privacy: parseSetting('privacy.contact', byKey.get('privacy.contact')),
     commerce: {
       orderNumberPrefix: sequence.prefix,
       orderNumberSuffix: sequence.suffix,

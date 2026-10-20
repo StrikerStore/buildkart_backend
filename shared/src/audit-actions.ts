@@ -177,6 +177,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'marketing.meta': 'Changed the Meta Conversions API settings',
   'marketing.meta.test': 'Sent a test event to Meta',
 
+  'settings.privacy': 'Updated the grievance officer',
   'settings.store': 'Updated the store details',
   'settings.commerce': 'Updated the order and payment settings',
   'settings.wallet': 'Updated the wallet and cashback rules',

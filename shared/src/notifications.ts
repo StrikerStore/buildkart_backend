@@ -31,6 +31,37 @@ export const NOTIFICATION_EVENTS = [
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 
+/**
+ * What kind of message each event is, which decides who may receive it.
+ *
+ * - `transactional`: about something the person asked for — an order, a
+ *   payment, an area they asked to hear about. Sent unless they turned
+ *   WhatsApp updates off.
+ * - `marketing`: the shop reaching out unprompted. Sent only to a customer who
+ *   ticked "offers on WhatsApp" — under the DPDP Act that needs a yes, and an
+ *   order is not one.
+ * - `security`: a sign-in code. Sent because it was just asked for.
+ * - `shop`: to the shop's own numbers, never a customer.
+ */
+export type NotificationKind = 'transactional' | 'marketing' | 'security' | 'shop';
+
+export const NOTIFICATION_EVENT_KINDS: Record<NotificationEvent, NotificationKind> = {
+  'order.placed': 'transactional',
+  'order.confirmed': 'transactional',
+  'order.dispatched': 'transactional',
+  'order.delivered': 'transactional',
+  'order.cancelled': 'transactional',
+  'payment.received': 'transactional',
+  'payment.failed': 'transactional',
+  'payment.refunded': 'transactional',
+  'delivery.outForDelivery': 'transactional',
+  'delivery.partDelivered': 'transactional',
+  'delivery.areaNowServiced': 'transactional',
+  'customer.otp': 'security',
+  'customer.welcome': 'marketing',
+  'shop.orderPlaced': 'shop',
+};
+
 export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
   'order.placed': 'Order placed',
   'order.confirmed': 'Order confirmed',

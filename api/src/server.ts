@@ -57,7 +57,22 @@ const handler = createHTTPHandler({
   },
 });
 
+/*
+ * Sent on every response. The API only ever answers with JSON or a CSV, so it
+ * can afford the strictest baseline: nothing it returns should be framed,
+ * sniffed into something executable, or rendered as a page.
+ */
+const SECURITY_HEADERS: Record<string, string> = {
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+};
+
 const server = createServer((req, res) => {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+
   /*
    * Health, cron and downloads are handled outside tRPC — see `http.ts` for
    * why each one has to be. Everything else is a procedure call.

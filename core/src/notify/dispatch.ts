@@ -23,6 +23,7 @@
  */
 import { prisma, Prisma } from '@buildkart/database';
 import {
+  NOTIFICATION_EVENT_KINDS,
   PAYMENT_METHOD_LABELS,
   lineProgress,
   formatAmount,
@@ -52,7 +53,10 @@ export type Recipient = {
   /** As stored: usually the bare ten digits. */
   phone: string;
   locale: string;
+  /** Order, payment and delivery updates. */
   optedIn: boolean;
+  /** Offers — a marketing message goes only to someone who said yes to these. */
+  marketingOptedIn: boolean;
 };
 
 export type NotifyInput = {
@@ -162,7 +166,9 @@ async function deliver(input: NotifyInput, override: DeliveryOverride): Promise<
     ? 'invalid_number'
     : !input.recipient.optedIn && !input.ignoreOptOut
       ? 'opted_out'
-      : null;
+      : NOTIFICATION_EVENT_KINDS[input.event] === 'marketing' && !input.recipient.marketingOptedIn
+        ? 'no_marketing_consent'
+        : null;
 
   let row: { id: string };
   try {
@@ -289,6 +295,7 @@ const RECIPIENT_SELECT = {
   phone: true,
   locale: true,
   whatsappOptIn: true,
+  whatsappMarketing: true,
 } as const;
 
 function toRecipient(customer: {
@@ -297,6 +304,7 @@ function toRecipient(customer: {
   phone: string;
   locale: string;
   whatsappOptIn: boolean;
+  whatsappMarketing: boolean;
 }): Recipient {
   return {
     customerId: customer.id,
@@ -304,6 +312,7 @@ function toRecipient(customer: {
     phone: customer.phone,
     locale: customer.locale,
     optedIn: customer.whatsappOptIn,
+    marketingOptedIn: customer.whatsappMarketing,
   };
 }
 
@@ -501,6 +510,7 @@ export function notifyShopOfOrder(orderId: string): void {
           phone,
           locale: 'en',
           optedIn: true,
+          marketingOptedIn: false,
         },
         orderId,
         values,
@@ -592,7 +602,7 @@ export function notifyPhone(
         event,
         recipient: customer
           ? toRecipient(customer)
-          : { customerId: null, name: null, phone, locale: 'en', optedIn: true },
+          : { customerId: null, name: null, phone, locale: 'en', optedIn: true, marketingOptedIn: false },
         values: { ...(await commonTokens(customer)), ...extra },
         dedupeKey,
       };
@@ -622,11 +632,12 @@ export async function sendWhatsappOtp(
       event: 'customer.otp',
       recipient: customer
         ? toRecipient(customer)
-        : { customerId: null, name: null, phone, locale: 'en', optedIn: true },
+        : { customerId: null, name: null, phone, locale: 'en', optedIn: true, marketingOptedIn: false },
       values: { ...(await commonTokens(customer)), otp: code, expiryMinutes: String(expiryMinutes) },
       buttons: [{ index: 0, text: code }],
-      // Unique per request: every code asked for is its own message.
-      dedupeKey: `customer.otp:${phone}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+      // Unique per request: every code asked for is its own message. No phone
+      // in it — the key is logged and stored, and the row already has the phone.
+      dedupeKey: `customer.otp:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`,
       maskParams: true,
       ignoreOptOut: true,
     });

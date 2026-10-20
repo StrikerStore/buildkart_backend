@@ -61,6 +61,7 @@ import {
   setPagePublished,
   saveHomepageSection,
   saveStoreSettings,
+  savePrivacyContact,
   setBannerActive,
   setHomepageSectionActive,
 } from '@buildkart/core';
@@ -133,6 +134,9 @@ export const contentRouter = router({
   saveStoreSettings: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveStoreSettings(ctx.actor, input)),
+  savePrivacyContact: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => savePrivacyContact(ctx.actor, input)),
   saveCommerceSettings: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveCommerceSettings(ctx.actor, input)),

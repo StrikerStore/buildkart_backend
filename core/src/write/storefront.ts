@@ -16,10 +16,18 @@ import {
   type ActionResult,
 } from '@buildkart/shared';
 import { z } from 'zod';
+import { recordConsents } from './privacy.ts';
 
 const requestSchema = z.object({
   pincode: z.string().trim().regex(/^\d{6}$/, 'Enter a 6-digit pincode'),
   phone: phoneSchema,
+  /*
+   * The person's yes to one message about this area. The form says what the
+   * number is for before they press the button; pressing it is the clear
+   * action the DPDP Act asks for (§6(1)). No yes, no row.
+   */
+  consent: z.literal(true, { message: 'Agree to be told when we deliver here' }),
+  noticeVersion: z.string().trim().max(16).optional(),
 });
 
 /**
@@ -44,7 +52,7 @@ export async function requestPincode(input: unknown): Promise<ActionResult<void>
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
 
-  const { pincode, phone } = parsed.data;
+  const { pincode, phone, noticeVersion } = parsed.data;
   const now = new Date();
 
   /*
@@ -58,10 +66,15 @@ export async function requestPincode(input: unknown): Promise<ActionResult<void>
   });
   if (area?.isActive) return actionOk();
 
-  await prisma.pincodeRequest.upsert({
-    where: { pincode_phone: { pincode, phone } },
-    create: { pincode, phone, firstRequestedAt: now, lastRequestedAt: now },
-    update: { count: { increment: 1 }, lastRequestedAt: now },
+  await prisma.$transaction(async (tx) => {
+    await tx.pincodeRequest.upsert({
+      where: { pincode_phone: { pincode, phone } },
+      create: { pincode, phone, firstRequestedAt: now, lastRequestedAt: now, consentAt: now },
+      update: { count: { increment: 1 }, lastRequestedAt: now, consentAt: now },
+    });
+    await recordConsents(tx, [
+      { purpose: 'NOTIFY_AREA', granted: true, source: 'NOTIFY_FORM', phone, noticeVersion },
+    ]);
   });
 
   return actionOk();

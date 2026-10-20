@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { notifyCustomer, sendWhatsappOtp } from '../notify/dispatch.ts';
 import { reportRegistrationInBackground } from '../marketing/meta-capi.ts';
 import { grantSignupBonus, loadWalletRules } from './wallet.ts';
+import { reconcileSigninConsent, recordConsents } from './privacy.ts';
 
 /** Six digits: what fits in an SMS and what a person can hold in their head. */
 const CODE_LENGTH = 6;
@@ -60,8 +61,24 @@ const verifySchema = z.object({
     .string()
     .trim()
     .regex(new RegExp(`^\\d{${CODE_LENGTH}}$`), `Enter the ${CODE_LENGTH}-digit code`),
-  /** The "updates on WhatsApp" box on the sign-in form. Absent means not shown. */
+  /**
+   * Order, payment and delivery updates on WhatsApp. Only `false` changes
+   * anything — the storefront no longer shows a box for it, because these
+   * updates are part of the order (DPDP Act §7(a)); an older storefront still
+   * sends its box's value.
+   */
   whatsappOptIn: z.boolean().optional(),
+  /**
+   * "I am 18 or older", ticked by the person on the sign-in form. Required by
+   * the current storefront, which will not send a code without it; optional
+   * here only so a sign-in from an older storefront build does not fail
+   * between the two deploys. `false` is refused.
+   */
+  ageConfirmed: z.boolean().optional(),
+  /** The unticked-by-default "offers on WhatsApp" box. Only a tick changes anything. */
+  whatsappMarketing: z.boolean().optional(),
+  /** The Privacy Notice version the sign-in screen showed. */
+  noticeVersion: z.string().trim().max(16).optional(),
   /**
    * The shopper's browser ids, user agent and ad-consent answer, for the
    * server copy of CompleteRegistration. Marketing only; a bad value is
@@ -113,22 +130,32 @@ export type { CustomerIdentityDto, OtpRequestDto };
  * Three outcomes, and the difference matters:
  *
  * - `sent`: delivered to WhatsApp.
- * - `off`: no sender is set up. Logged, and reported as not delivered — which
- *   is what makes `devCode` appear, so the shop can still be used before a
- *   provider is connected.
- * - `failed`: a sender *is* set up and this send did not go out. Never falls
- *   back to `devCode`: handing the code to whoever asked for it is only
- *   tolerable when no real channel exists, and would otherwise let anyone sign
- *   in as any number by making the send fail.
+ * - `off`: no sender is set up. Reported as not delivered.
+ * - `failed`: a sender *is* set up and this send did not go out.
+ *
+ * The code itself is never logged: a log line is read by more people, and
+ * kept for longer, than a code should ever be.
  */
 async function sendOtp(phone: string, code: string): Promise<'sent' | 'off' | 'failed'> {
   const outcome = await sendWhatsappOtp(phone, code, TTL_MINUTES);
   if (outcome === 'sent') return 'sent';
   if (outcome === 'off') {
-    console.info(`[otp] ${phone} -> ${code} (no WhatsApp sign-in template configured; not sent)`);
+    console.info(`[otp] ******${phone.slice(-4)}: no WhatsApp sign-in template configured; not sent`);
     return 'off';
   }
   return 'failed';
+}
+
+/**
+ * Whether a code that could not be sent may be handed back to the browser.
+ *
+ * Opt-in, never a default: handing the code to whoever asked for it lets
+ * anyone sign in as any number, so it happens only on a machine where someone
+ * has deliberately set `OTP_DEV_ECHO=true` — the same stance `trpc.ts` takes
+ * on stack traces, rather than trusting `NODE_ENV` to be right on every deploy.
+ */
+function devEchoAllowed(): boolean {
+  return process.env.OTP_DEV_ECHO === 'true';
 }
 
 /**
@@ -217,6 +244,10 @@ export async function issueOtp(
   if (sent === 'failed') {
     return actionError('We could not send the code on WhatsApp just now. Please try again in a minute.');
   }
+  if (sent === 'off' && !devEchoAllowed()) {
+    // No channel and no developer opt-in: there is no safe way to deliver it.
+    return actionError('Sign-in codes cannot be sent right now. Please call us.');
+  }
 
   return actionOk({
     phone,
@@ -288,8 +319,14 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
   const parsed = verifySchema.safeParse(input);
   if (!parsed.success) return actionErrorFromZod(parsed.error);
 
-  const { phone, code, whatsappOptIn, attribution } = parsed.data;
+  const { phone, code, whatsappOptIn, ageConfirmed, whatsappMarketing, noticeVersion, attribution } =
+    parsed.data;
   const now = new Date();
+
+  // Checked before the code, so a refused sign-in does not spend it.
+  if (ageConfirmed === false) {
+    return actionError('BuildKart accounts are for adults. You need to be 18 or older to sign in.');
+  }
 
   const otp = await prisma.customerOtp.findFirst({
     where: { phone, purpose: 'LOGIN', consumedAt: null, expiresAt: { gt: now } },
@@ -316,25 +353,56 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
   }
 
   /*
+   * What this sign-in says, written onto the account. Ticks only ever add: an
+   * unticked "offers" box on a returning customer's sign-in is not a "no" to
+   * something they agreed to before — their account page is where that is
+   * taken back. The age answer and notice version are the latest given.
+   */
+  const said = {
+    ...(ageConfirmed ? { ageConfirmedAt: now } : {}),
+    ...(noticeVersion ? { noticeVersion } : {}),
+    ...(whatsappMarketing ? { whatsappMarketing: true, whatsappMarketingAt: now } : {}),
+  };
+
+  /*
    * Consumed in the same transaction that resolves the customer, so a code
    * cannot be spent twice by two requests arriving together.
    */
-  const [, customer] = await prisma.$transaction([
-    prisma.customerOtp.update({
+  const { customer, consent } = await prisma.$transaction(async (tx) => {
+    await tx.customerOtp.update({
       where: { id: otp.id },
       data: { consumedAt: now },
-    }),
-    prisma.customer.upsert({
+    });
+    const customer = await tx.customer.upsert({
       where: { phone },
-      // Nothing but the number. A name and an address are collected at
-      // checkout, where the customer has a reason to give them.
-      create: { phone, whatsappOptIn: whatsappOptIn ?? true },
-      // An unticked box opts out; a ticked one does not silently undo a STOP
-      // the customer sent earlier — START, or the shop, turns that back on.
-      update: whatsappOptIn === false ? { whatsappOptIn: false, whatsappOptOutAt: now } : {},
+      // Nothing but the number and what the form said. A name and an address
+      // are collected at checkout, where the customer has a reason to give them.
+      create: { phone, whatsappOptIn: whatsappOptIn ?? true, ...said },
+      // `false` from an older storefront's box opts out; a `true` does not
+      // silently undo a STOP the customer sent earlier — their account page,
+      // or the shop, turns that back on.
+      update: {
+        ...said,
+        ...(whatsappOptIn === false ? { whatsappOptIn: false, whatsappOptOutAt: now } : {}),
+      },
       select: { id: true, phone: true, name: true, isBlocked: true, createdAt: true },
-    }),
-  ]);
+    });
+
+    await recordConsents(tx, [
+      ...(ageConfirmed
+        ? [{ purpose: 'AGE_18_PLUS' as const, granted: true, source: 'SIGNIN' as const, customerId: customer.id, noticeVersion }]
+        : []),
+      ...(whatsappMarketing
+        ? [{ purpose: 'MARKETING_WHATSAPP' as const, granted: true, source: 'SIGNIN' as const, customerId: customer.id, noticeVersion }]
+        : []),
+      ...(whatsappOptIn === false
+        ? [{ purpose: 'ORDER_UPDATES' as const, granted: false, source: 'SIGNIN' as const, customerId: customer.id, noticeVersion }]
+        : []),
+    ]);
+
+    const consent = await reconcileSigninConsent(tx, customer.id, attribution);
+    return { customer, consent };
+  });
 
   if (customer.isBlocked) {
     return actionError('This number cannot be used to sign in. Please call us.');
@@ -368,7 +436,13 @@ export async function verifyOtp(input: unknown): Promise<ActionResult<CustomerId
     reportRegistrationInBackground(customer.id, attribution);
   }
 
-  return actionOk({ id: customer.id, phone: customer.phone, name: customer.name, isNewCustomer });
+  return actionOk({
+    id: customer.id,
+    phone: customer.phone,
+    name: customer.name,
+    isNewCustomer,
+    consent,
+  });
 }
 
 /**

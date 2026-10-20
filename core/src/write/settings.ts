@@ -13,6 +13,7 @@ import {
   actionOk,
   commerceSettingsSchema,
   normalizeMoney,
+  privacyContactSchema,
   storeSettingsSchema,
   walletRulesInputSchema,
   walletRulesSchema,
@@ -65,6 +66,36 @@ export async function saveStoreSettings(actor: Actor, input: unknown): Promise<A
     entityType: 'Setting',
     entityId: 'store.profile',
     diff: { nameEn: data.nameEn, gstin: data.gstin },
+  });
+
+  return actionOk();
+}
+
+/**
+ * The grievance officer the site publishes (DPDP Rules 2025, rule 9).
+ *
+ * Its own key rather than more fields on the store profile: it is a legal role
+ * with its own deadline, and the Privacy Notice fills its tokens from exactly
+ * this row.
+ */
+export async function savePrivacyContact(actor: Actor, input: unknown): Promise<ActionResult<void>> {
+  assertPermission(actor, 'settings:write');
+
+  const parsed = privacyContactSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+
+  await writeSettings([{ key: 'privacy.contact', value: parsed.data }]);
+
+  await recordAudit(actor, {
+    action: 'settings.privacy',
+    entityType: 'Setting',
+    entityId: 'privacy.contact',
+    diff: {
+      name: parsed.data.name,
+      designation: parsed.data.designation,
+      email: parsed.data.email,
+      responseDays: parsed.data.responseDays,
+    },
   });
 
   return actionOk();

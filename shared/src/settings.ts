@@ -193,6 +193,29 @@ export const SETTING_SCHEMAS = {
     }),
 
   /**
+   * The grievance officer: who answers privacy questions and requests, shown
+   * on the help page and filled into the Privacy Notice (DPDP Rules 2025,
+   * rule 9). Public — publishing it is the point. See `privacyContactSchema`.
+   */
+  'privacy.contact': z
+    .object({
+      name: z.string().default(''),
+      designation: z.string().default('Grievance Officer'),
+      email: z.string().default(''),
+      phone: z.string().default(''),
+      address: z.string().default(''),
+      responseDays: z.number().int().min(1).max(90).default(30),
+    })
+    .default({
+      name: '',
+      designation: 'Grievance Officer',
+      email: '',
+      phone: '',
+      address: '',
+      responseDays: 30,
+    }),
+
+  /**
    * Site-wide SEO. A setting rather than a table because there is exactly one
    * of it, and because it is read on every storefront render — one key/value
    * row beats a table with a single mandatory row nobody may delete.
@@ -460,9 +483,10 @@ export const SETTING_SCHEMAS = {
        */
       reportCounterOrders: z.boolean().default(false),
       /**
-       * Ask storefront visitors before the Meta Pixel runs. When on, the pixel
-       * starts revoked and only sends once the shopper accepts, and a shopper
-       * who declines is left out of the server-side events too.
+       * No longer read. The consent banner used to be the owner's choice; under
+       * the DPDP Act it is always shown, and nothing reaches Meta without a
+       * "yes" (see `website/lib/consent-client.ts`). Kept so stored rows still
+       * parse.
        */
       consentBanner: z.boolean().default(false),
     })
@@ -712,6 +736,7 @@ export const SETTING_SCHEMAS = {
  */
 export const SETTINGS_DTO_KEYS = [
   'store.profile',
+  'privacy.contact',
   'order.minimumValue',
   'order.numberSequence',
   'delivery.promise',

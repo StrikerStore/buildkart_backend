@@ -159,6 +159,13 @@ async function buildPurchaseEvent(
     },
   });
   if (!order) return null;
+  /*
+   * Nothing about an order reaches Meta without the customer's yes, recorded
+   * on the order when it was placed — for a counter order, the answer their
+   * account held at the time. This is the one check every path goes through:
+   * the first send, the retry and the sweep.
+   */
+  if (order.attribution?.adsConsent !== true) return null;
   const offline = order.attribution?.channel === 'ADMIN';
   if (offline && !reportCounterOrders) return null;
 
@@ -340,10 +347,10 @@ export function reportOrderPurchaseInBackground(orderId: string): void {
 }
 
 /**
- * Records that an event will **not** be sent, because the shopper declined ad
- * tracking on the consent banner. A row rather than nothing: its unique
- * `eventId` is what stops the sweep in `runMarketingJobs` from reporting the
- * order anyway, and the Marketing screen shows it as skipped.
+ * Records that an event will **not** be sent, because the shopper did not say
+ * yes to ad measurement — declined, or never answered. A row rather than
+ * nothing: the Marketing screen shows it as skipped, and its unique `eventId`
+ * means nothing later sends it.
  */
 async function recordDeclined(eventId: string, eventName: string, orderId: string | null) {
   try {
@@ -353,7 +360,7 @@ async function recordDeclined(eventId: string, eventName: string, orderId: strin
         eventName,
         eventId,
         orderId,
-        payload: { skipped: 'adConsent denied' },
+        payload: { skipped: 'no ad consent' },
         status: 'SKIPPED',
       },
     });
@@ -364,7 +371,7 @@ async function recordDeclined(eventId: string, eventName: string, orderId: strin
 
 /**
  * The marketing half of `writeOrder`, after the commit: where the order came
- * from, then — unless the shopper declined — the Purchase for Meta. Never
+ * from, then — only if the shopper said yes — the Purchase for Meta. Never
  * throws.
  */
 export async function afterOrderWritten(
@@ -376,7 +383,7 @@ export async function afterOrderWritten(
     orderId,
     actor.kind === 'customer' ? { kind: 'customer', attribution } : { kind: 'admin' },
   );
-  if (actor.kind === 'customer' && attribution?.adConsent === 'denied') {
+  if (actor.kind === 'customer' && attribution?.adConsent !== 'granted') {
     await recordDeclined(purchaseEventId(orderId), 'Purchase', orderId);
     return;
   }
@@ -402,7 +409,7 @@ export async function reportRegistration(
   attribution: OrderAttributionInput,
 ): Promise<'sent' | 'failed' | 'off' | 'skipped'> {
   const eventId = registrationEventId(customerId);
-  if (attribution?.adConsent === 'denied') {
+  if (attribution?.adConsent !== 'granted') {
     await recordDeclined(eventId, 'CompleteRegistration', null);
     return 'skipped';
   }
@@ -511,6 +518,7 @@ export async function runMarketingJobs(): Promise<{
   // --- orders with no event ------------------------------------------------
   const recent = await prisma.orderAttribution.findMany({
     where: {
+      adsConsent: true,
       ...(config.reportCounterOrders ? {} : { channel: { not: 'ADMIN' } }),
       createdAt: { gt: new Date(now - 2 * 24 * 60 * 60 * 1000), lt: new Date(now - 2 * 60 * 1000) },
     },
@@ -602,14 +610,30 @@ export async function recordOrderAttribution(
 ): Promise<void> {
   try {
     if (source.kind === 'admin') {
-      await prisma.orderAttribution.create({ data: { orderId, channel: 'ADMIN' } });
+      // A counter order carries the answer the customer's account held, so an
+      // offline Purchase is only ever reported for someone who said yes.
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: { customer: { select: { adsConsent: true } } },
+      });
+      await prisma.orderAttribution.create({
+        data: { orderId, channel: 'ADMIN', adsConsent: order?.customer.adsConsent === true },
+      });
       return;
     }
 
-    const attribution = source.attribution;
-    const first = attribution?.first ?? undefined;
-    const last = attribution?.last ?? undefined;
-    const credited = creditedTouch(attribution);
+    /*
+     * Only what each answer allows. Without analytics consent there is no
+     * touch, session or click id to keep (the storefront does not collect
+     * them either); without ad consent, none of the browser ids, user agent
+     * or address Meta would match on.
+     */
+    const analytics = source.attribution?.analyticsConsent === 'granted';
+    const ads = source.attribution?.adConsent === 'granted';
+    const attribution = analytics || ads ? source.attribution : undefined;
+    const first = analytics ? (attribution?.first ?? undefined) : undefined;
+    const last = analytics ? (attribution?.last ?? undefined) : undefined;
+    const credited = analytics ? creditedTouch(attribution) : undefined;
 
     await prisma.orderAttribution.create({
       data: {
@@ -633,11 +657,13 @@ export async function recordOrderAttribution(
         lastAt: last?.at ?? null,
         fbclid: credited?.fbclid ?? first?.fbclid ?? null,
         gclid: credited?.gclid ?? first?.gclid ?? null,
-        fbp: attribution?.fbp ?? null,
-        fbc: attribution?.fbc ?? null,
-        userAgent: attribution?.userAgent ?? null,
-        ipAddress: attribution?.ipAddress ?? null,
-        sessionId: attribution?.sessionId ?? null,
+        fbp: ads ? (attribution?.fbp ?? null) : null,
+        fbc: ads ? (attribution?.fbc ?? null) : null,
+        userAgent: ads ? (attribution?.userAgent ?? null) : null,
+        ipAddress: ads ? (attribution?.ipAddress ?? null) : null,
+        sessionId: analytics ? (attribution?.sessionId ?? null) : null,
+        analyticsConsent: analytics,
+        adsConsent: ads,
       },
     });
 
@@ -647,7 +673,7 @@ export async function recordOrderAttribution(
      * first; `reachedCheckout` because an order is proof of it, whatever the
      * beacon managed to report.
      */
-    if (attribution?.sessionId) {
+    if (analytics && attribution?.sessionId) {
       await prisma.storefrontSession.updateMany({
         where: { id: attribution.sessionId, orderId: null },
         data: { orderId, reachedCheckout: true },

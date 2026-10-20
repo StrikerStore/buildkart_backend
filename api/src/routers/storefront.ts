@@ -64,6 +64,9 @@ import {
   suggestProducts,
   updateMyProfile,
   verifyOtp,
+  getMyPrivacy,
+  recordBannerConsent,
+  saveMyPrivacy,
 } from '@buildkart/core';
 // The query schemas come from `shared`, not `core`: they are part of this
 // API's public input surface, and a client naming one must not have to depend
@@ -240,6 +243,15 @@ export const storefrontRouter = router({
   recordVisit: publicProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => recordStorefrontVisit(ctx.actor, input)),
+
+  /*
+   * The cookie banner's answer, for the record. Public: the answer has to be
+   * provable whether or not anyone is signed in. Filed under the banner's own
+   * random id, and on the account too when the actor is a customer.
+   */
+  recordConsent: publicProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => recordBannerConsent(ctx.actor, input)),
 
   // --- sign-in ------------------------------------------------------------
 
@@ -431,6 +443,13 @@ export const storefrontRouter = router({
   updateProfile: customerProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => updateMyProfile(ctx.actor, input)),
+
+  /** WhatsApp updates, WhatsApp offers and the synced cookie answers. */
+  myPrivacy: customerProcedure.query(({ ctx }) => getMyPrivacy(ctx.actor)),
+
+  savePrivacy: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => saveMyPrivacy(ctx.actor, input)),
 
   myAddresses: customerProcedure.query(({ ctx }) => listMyAddresses(ctx.actor)),
 

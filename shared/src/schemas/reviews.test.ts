@@ -3,8 +3,21 @@ import assert from 'node:assert/strict';
 import { customerReviewSchema, REVIEW_MEDIA_LIMIT } from './reviews.ts';
 
 function review(overrides: Record<string, unknown> = {}) {
-  return { customerName: 'Ramesh Patel', rating: 5, mediaIds: ['m1'], ...overrides };
+  return {
+    customerName: 'Ramesh Patel',
+    rating: 5,
+    mediaIds: ['m1'],
+    publishConsent: true,
+    ...overrides,
+  };
 }
+
+test('a review cannot be saved without the customer agreeing to have it shown', () => {
+  for (const publishConsent of [false, undefined]) {
+    const result = customerReviewSchema.safeParse(review({ publishConsent }));
+    assert.equal(result.success, false, String(publishConsent));
+  }
+});
 
 test('a review without a phone parses, with the phone left blank', () => {
   const parsed = customerReviewSchema.parse(review());

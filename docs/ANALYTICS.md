@@ -424,6 +424,17 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 
 ---
 
+## Consent under the DPDP Act ✅ built (contract 0.29.0)
+
+> This replaces the optional `consentBanner` of Phase 7, which is no longer read.
+> - **The banner is always shown** (`website/components/analytics/consent-banner.tsx`) and asks for two things separately: **analytics** (the shop's own sessions and attribution) and **marketing** (the Meta Pixel and the Conversions API). Answers live in `bk_consent` as JSON (`parseConsentCookie` in `shared/src/privacy.ts`). The old `granted`/`denied` value reads as unanswered, so those visitors are asked again.
+> - **No answer is a no.** Without an analytics yes there is no `bk_vid`, `bk_sid` or `bk_attr`, no beacon (and `/api/t` drops events), and `OrderAttribution` keeps no touches or session. Without a marketing yes `fbevents.js` is never requested, nothing is queued for it, `_fbc` is not minted, and no Purchase or CompleteRegistration goes to the Conversions API. `OrderAttribution.adsConsent` is checked in `buildPurchaseEvent`, which covers the first send, retries and the sweep. Counter orders carry the customer account's stored answer.
+> - **Withdrawing** (footer "Privacy choices", or Account → Settings) deletes the matching cookies, including Meta's `_fbp`/`_fbc`.
+> - **Proof:** every answer is an append-only `ConsentRecord`. A signed-in answer is also stored on `Customer.analyticsConsent`/`adsConsent`, and the newer answer wins at sign-in.
+> - **Effect on numbers:** sessions, conversion rate, city and channel reports, and Meta-reported conversions now cover only visitors who said yes. Orders and revenue are unaffected. Compare periods across the change with that in mind.
+
+---
+
 ## Order of work
 
 | # | Phase | Repos | Depends on | Size |

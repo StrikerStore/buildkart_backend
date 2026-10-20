@@ -87,10 +87,16 @@ export const orderAttributionSchema = z
     /** The storefront session (`bk_sid`) the order was placed in. */
     sessionId: text(64),
     /**
-     * The shopper's answer to the consent banner, when the shop shows one.
-     * `denied` keeps them out of the server-side events Meta receives.
+     * The shopper's answers on the consent banner. Anything but `granted` —
+     * `denied`, or no answer at all — means no: nothing goes to Meta for
+     * `adConsent`, and no touch, session or browser id is kept for
+     * `analyticsConsent`.
      */
     adConsent: z.enum(['granted', 'denied']).optional().catch(undefined),
+    analyticsConsent: z.enum(['granted', 'denied']).optional().catch(undefined),
+    /** When the answers were given, and the banner's own id for them. */
+    consentAt: z.coerce.date().optional().catch(undefined),
+    consentId: text(64),
   })
   .optional()
   .catch(undefined);

@@ -6,7 +6,6 @@ import { dirname, join } from 'node:path';
 // process.cwd(), which is packages/database when npm runs this script, so the
 // path is pinned to this file's own location instead.
 loadEnv({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'), quiet: true });
-import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../src/client.ts';
@@ -22,31 +21,32 @@ import { DEFAULT_GST_RATES, MENU_HANDLES, MENU_LABELS, allDefaultSettings } from
  * safely, on a live instance.
  */
 
-const packageJson = JSON.parse(
-  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'),
-) as { seedOwner?: { email?: string; password?: string } };
-
-const OWNER_EMAIL = (
-  process.env.SEED_OWNER_EMAIL ??
-  packageJson.seedOwner?.email ??
-  'owner@buildkart.co'
-).toLowerCase();
+/*
+ * The first owner's credentials come from the environment only. They were once
+ * read from package.json as a fallback, which put a real password in git.
+ */
+const OWNER_EMAIL = (process.env.SEED_OWNER_EMAIL ?? 'owner@buildkart.co').toLowerCase();
 const OWNER_NAME = process.env.SEED_OWNER_NAME ?? 'BuildKart Owner';
-const OWNER_PASSWORD =
-  process.env.SEED_OWNER_PASSWORD ?? packageJson.seedOwner?.password ?? null;
+const OWNER_PASSWORD = process.env.SEED_OWNER_PASSWORD ?? null;
 
 async function seedOwner() {
-  const existing = await prisma.adminUser.findUnique({
-    where: { email: OWNER_EMAIL },
-    select: { id: true },
+  /*
+   * Any owner at all, not just one with this email. The seed runs on every
+   * deploy, and checking by email alone would mint a second owner — with a
+   * generated password printed to the deploy log — whenever the configured
+   * email differs from the account that already runs the shop.
+   */
+  const existing = await prisma.adminUser.findFirst({
+    where: { role: 'OWNER' },
+    select: { email: true },
   });
 
   if (existing) {
-    console.log(`  owner ${OWNER_EMAIL} already exists — left untouched`);
+    console.log(`  owner ${existing.email} already exists — left untouched`);
     return;
   }
 
-  // Prefer package.json `seedOwner` / SEED_OWNER_PASSWORD; otherwise generate once.
+  // SEED_OWNER_PASSWORD when set; otherwise generate once.
   const generated = !OWNER_PASSWORD;
   const password = OWNER_PASSWORD ?? randomBytes(12).toString('base64url');
 

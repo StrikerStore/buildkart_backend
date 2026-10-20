@@ -892,12 +892,29 @@ model Customer {
   signupBonusAt DateTime?
 
   /// Whether order, payment and delivery updates may go to this number on
-  /// WhatsApp. On by default — the box is shown ticked at sign-in — and turned
-  /// off by the customer unticking it or by the shop. A STOP reply is handled
-  /// inside AiSensy, which never reports it back. The sign-in code ignores
-  /// this: a customer who asked for a code is owed the code.
+  /// WhatsApp. On by default — they are part of the order the customer placed
+  /// (DPDP Act §7(a)), said plainly at sign-in — and turned off by the customer
+  /// on their account page or by the shop. A STOP reply is handled inside
+  /// AiSensy, which never reports it back. The sign-in code ignores this: a
+  /// customer who asked for a code is owed the code.
   whatsappOptIn    Boolean   @default(true)
   whatsappOptOutAt DateTime?
+
+  /// Offers and new-product messages on WhatsApp. Off unless the customer
+  /// ticked it — only ever their own yes, never the shop's (DPDP Act §6).
+  whatsappMarketing   Boolean   @default(false)
+  whatsappMarketingAt DateTime?
+
+  /// The cookie banner's answers, synced from a device the customer signed in
+  /// on. Null: never answered. The history is in `ConsentRecord`.
+  analyticsConsent Boolean?
+  adsConsent       Boolean?
+  consentUpdatedAt DateTime?
+
+  /// When they last said they are 18 or older, at sign-in.
+  ageConfirmedAt DateTime?
+  /// The Privacy Notice version they last signed in under.
+  noticeVersion  String?   @db.VarChar(16)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1301,6 +1318,13 @@ model OrderAttribution {
   /// The storefront session the order was placed in (`bk_sid`), which is how
   /// a `StorefrontSession` learns it converted.
   sessionId String? @db.VarChar(64)
+
+  /// What the shopper had agreed to when the order was placed. Nothing about
+  /// the order goes to Meta unless `adsConsent` is true; touches, session and
+  /// browser ids are only kept when `analyticsConsent` is. Null on orders from
+  /// before consent was recorded.
+  analyticsConsent Boolean?
+  adsConsent       Boolean?
 
   createdAt DateTime @default(now())
 
@@ -1852,9 +1876,44 @@ model PincodeRequest {
   lastRequestedAt  DateTime @default(now())
   isNotified       Boolean  @default(false)
 
+  /// When the person agreed to be messaged about this area. Null on requests
+  /// from before the form said so.
+  consentAt DateTime?
+
   @@unique([pincode, phone])
   @@index([pincode, lastRequestedAt])
   @@index([isNotified])
+}
+
+/// One answer to one consent question — the proof the DPDP Act asks the shop
+/// to be able to produce (§6(10)): who, what for, yes or no, under which
+/// notice, and where it was given.
+///
+/// Append-only. The current answer lives on `Customer` (or in the device's
+/// `bk_consent` cookie); this is the history behind it. No foreign keys, on
+/// purpose: the record of what someone agreed to must outlive the account it
+/// was given on.
+model ConsentRecord {
+  id         String  @id @default(cuid())
+  /// The account, when the person was signed in or identified.
+  customerId String? @db.VarChar(191)
+  /// The cookie banner's own random id, for answers given before signing in.
+  subjectId  String? @db.VarChar(64)
+  /// For a person with no account — a "tell me when you deliver" request.
+  phone      String? @db.VarChar(20)
+
+  /// See `CONSENT_PURPOSES` in shared/src/privacy.ts.
+  purpose       String  @db.VarChar(32)
+  granted       Boolean
+  noticeVersion String  @db.VarChar(16)
+  /// BANNER, SIGNIN, ACCOUNT, NOTIFY_FORM or ADMIN.
+  source        String  @db.VarChar(16)
+
+  createdAt DateTime @default(now())
+
+  @@index([customerId, purpose, createdAt])
+  @@index([subjectId])
+  @@index([phone])
 }
 
 model Banner {
@@ -1954,6 +2013,11 @@ model CustomerReview {
 
   position Int     @default(0)
   isActive Boolean @default(true)
+
+  /// When the shop recorded the customer's agreement to show this review —
+  /// their name, words and photos — on the site. A review without it cannot
+  /// be switched on.
+  publishConsentAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

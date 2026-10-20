@@ -74,7 +74,9 @@ export async function sendWhatsappTest(
   const outcome = await notify(
     {
       event,
-      recipient: { customerId: null, name: 'Test', phone, locale, optedIn: true },
+      // The admin's own test to a number they typed: every kind of message,
+      // offers included, is what they are asking to see.
+      recipient: { customerId: null, name: 'Test', phone, locale, optedIn: true, marketingOptedIn: true },
       values: samples,
       dedupeKey,
       ...(event === 'customer.otp' ? { buttons: [{ index: 0, text: samples.otp ?? '123456' }] } : {}),

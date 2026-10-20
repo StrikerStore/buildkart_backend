@@ -135,6 +135,27 @@ export async function presignUpload(key: string, contentType: string): Promise<s
   );
 }
 
+const HOUR_MS = 3_600_000;
+
+/**
+ * Presigned GET for an object that must not be public — a support photo.
+ *
+ * Goes through the S3 endpoint with credentials, so it works even once the
+ * public media domain refuses the object's prefix.
+ *
+ * Signed as of the start of the current hour and valid for two, so every read
+ * within the hour hands back the *same* URL: support threads poll, and a fresh
+ * signature on each poll would make every photo download again each time. Any
+ * URL handed out stays good for at least an hour.
+ */
+export async function presignDownload(key: string): Promise<string> {
+  const { bucket } = r2Config();
+  return getSignedUrl(r2Client(), new GetObjectCommand({ Bucket: bucket, Key: key }), {
+    expiresIn: 2 * 3600,
+    signingDate: new Date(Math.floor(Date.now() / HOUR_MS) * HOUR_MS),
+  });
+}
+
 /**
  * Confirms an object really landed, and at the size the client claimed.
  *

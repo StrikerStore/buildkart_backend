@@ -10,7 +10,6 @@
 import { prisma, type Prisma } from '@buildkart/database';
 import {
   isAwaitingReply,
-  mediaUrl,
   SUPPORT_PAGE_SIZE,
   type MyTicketRowDto,
   type SupportCannedReplyDto,
@@ -25,6 +24,7 @@ import {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { dateToIso } from '../dto.ts';
+import { presignDownload } from '../r2.ts';
 import { getCustomerDetail } from './customers.ts';
 import { getOrderDetail } from './orders.ts';
 
@@ -43,20 +43,31 @@ const MESSAGE_SELECT = {
 type MessageRow = Prisma.SupportMessageGetPayload<{ select: typeof MESSAGE_SELECT }>;
 
 /**
- * `attachmentUrl` is resolved here rather than shipped as a bare key.
+ * A short-lived signed link to a support photo — never its public media URL.
  *
- * Building it needs `R2_PUBLIC_BASE_URL` and whether image transformations are
- * enabled on that zone — configuration that lives on this side of the boundary.
- * A width is asked for so a photo taken on a modern phone does not arrive as
- * four megabytes on a chat screen.
+ * These are photos of a customer's site, goods and sometimes their documents,
+ * sent to the shop in confidence. A permanent public link would outlive the
+ * conversation and reach anyone it was forwarded to. Size is kept down at the
+ * source instead: the storefront re-encodes a photo before uploading it.
+ *
+ * Null when storage is not configured, so a thread still reads without it.
  */
-function toMessageDto(row: MessageRow): SupportMessageDto {
+async function attachmentUrl(key: string): Promise<string | null> {
+  try {
+    return await presignDownload(key);
+  } catch (error) {
+    console.error('[support] could not sign an attachment link', error);
+    return null;
+  }
+}
+
+async function toMessageDto(row: MessageRow): Promise<SupportMessageDto> {
   return {
     id: row.id,
     authorRole: row.authorRole,
     authorName: row.authorAdmin?.name ?? null,
     body: row.body,
-    attachmentUrl: row.attachmentR2Key ? mediaUrl(row.attachmentR2Key, { w: 800 }) : null,
+    attachmentUrl: row.attachmentR2Key ? await attachmentUrl(row.attachmentR2Key) : null,
     attachmentWidth: row.attachmentWidth,
     attachmentHeight: row.attachmentHeight,
     createdAt: dateToIso(row.createdAt),
@@ -191,7 +202,7 @@ export async function getMyThread(
     createdAt: dateToIso(ticket.createdAt),
     lastMessageAt: dateToIso(ticket.lastMessageAt),
     lastMessageFrom: ticket.lastMessageFrom,
-    messages: messages.map(toMessageDto),
+    messages: await Promise.all(messages.map(toMessageDto)),
   };
 }
 
@@ -345,7 +356,7 @@ export async function getSupportThread(
     createdAt: dateToIso(ticket.createdAt),
     lastMessageAt: dateToIso(ticket.lastMessageAt),
     lastMessageFrom: ticket.lastMessageFrom,
-    messages: messages.map(toMessageDto),
+    messages: await Promise.all(messages.map(toMessageDto)),
   };
 }
 

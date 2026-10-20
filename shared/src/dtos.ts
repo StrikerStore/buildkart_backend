@@ -483,6 +483,8 @@ export type CustomerReviewDto = {
   media: CustomerReviewMediaDto[];
   position: number;
   isActive: boolean;
+  /** When the shop recorded the customer's agreement to show it. Null: not recorded. */
+  publishConsentAt: string | null;
   createdAt: string;
 };
 
@@ -598,6 +600,13 @@ export type CustomerDetailDto = {
   /** Order, payment and delivery updates on WhatsApp. Off after a STOP reply. */
   whatsappOptIn: boolean;
   whatsappOptOutAt: string | null;
+  /** Offers on WhatsApp — only ever turned on by the customer. */
+  whatsappMarketing: boolean;
+  /** The cookie banner's answers, as last synced from a signed-in device. Null: never answered. */
+  analyticsConsent: boolean | null;
+  adsConsent: boolean | null;
+  /** When they last said they are 18 or older. */
+  ageConfirmedAt: string | null;
   totalOrders: number;
   totalSpend: string;
   /** Lifetime spend over the order counter. See the note in `getCustomerDetail`. */
@@ -936,6 +945,7 @@ export type ProductFormOptionsDto = {
 
 // from core/src/read/settings.ts
 export type StoreProfileDto = SettingValue<'store.profile'>;
+export type PrivacyContactDto = SettingValue<'privacy.contact'>;
 
 // from core/src/read/settings.ts
 export type CommerceSettingsDto = {
@@ -960,6 +970,8 @@ export type CommerceSettingsDto = {
 // from core/src/read/settings.ts
 export type SettingsDto = {
   store: StoreProfileDto;
+  /** The grievance officer, published on the help page and in the Privacy Notice. */
+  privacy: PrivacyContactDto;
   commerce: CommerceSettingsDto;
   /**
    * The distance-delivery rules.
@@ -2232,6 +2244,24 @@ export type CustomerIdentityDto = {
    * one the shop created earlier from a phone order.
    */
   isNewCustomer?: boolean;
+  /**
+   * The cookie-banner answers this account holds, after sign-in reconciled
+   * them with the device's. Returned so the storefront can put the newer
+   * answer back on a device that had an older one. Null: never answered.
+   */
+  consent?: { analytics: boolean; marketing: boolean; at: string } | null;
+};
+
+/** A signed-in customer's own privacy choices, for their account page. */
+export type MyPrivacyDto = {
+  /** Order, payment and delivery updates on WhatsApp. */
+  whatsappUpdates: boolean;
+  /** Offers and new products on WhatsApp. */
+  whatsappOffers: boolean;
+  /** The cookie banner's answers, as last synced. Null: never answered. */
+  analytics: boolean | null;
+  marketing: boolean | null;
+  ageConfirmedAt: string | null;
 };
 
 export type OtpRequestDto = {

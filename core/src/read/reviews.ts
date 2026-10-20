@@ -42,6 +42,7 @@ export async function listCustomerReviews(actor: Actor): Promise<CustomerReviewD
     })),
     position: row.position,
     isActive: row.isActive,
+    publishConsentAt: dateToIso(row.publishConsentAt),
     createdAt: dateToIso(row.createdAt),
   }));
 }
