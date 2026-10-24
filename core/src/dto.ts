@@ -7,6 +7,7 @@ import {
   matchesTagRules,
   normalizeMoney,
   parseAddressSnapshot,
+  parseDeliveryBreakdown,
   parseTaxBreakdown,
   parseVariantSnapshot,
   shipmentLabel,
@@ -393,6 +394,7 @@ type OrderDetailRow = {
   subtotal: DecimalLike;
   discountTotal: DecimalLike;
   deliveryCharge: DecimalLike;
+  deliveryBreakdown: unknown;
   grandTotal: DecimalLike;
   bulkPricingApplied: boolean;
   taxTotal: DecimalLike;
@@ -449,6 +451,9 @@ type OrderDetailRow = {
     taxableAmount: DecimalLike;
     taxAmount: DecimalLike;
     orderedQuantity: number | null;
+    distanceAddition: DecimalLike | null;
+    distanceKm: DecimalLike | null;
+    distanceWarehouseCode: string | null;
   }>;
   statusEvents: Array<{
     id: string;
@@ -601,6 +606,7 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
     subtotal: decimalToString(row.subtotal),
     discountTotal: decimalToString(row.discountTotal),
     deliveryCharge: decimalToString(row.deliveryCharge),
+    deliveryBreakdown: parseDeliveryBreakdown(row.deliveryBreakdown),
     grandTotal: decimalToString(row.grandTotal),
     bulkPricingApplied: row.bulkPricingApplied,
     taxTotal: decimalToString(row.taxTotal),
@@ -646,6 +652,9 @@ export function toOrderDetailDto(row: OrderDetailRow): OrderDetailDto {
       taxableAmount: decimalToString(item.taxableAmount),
       taxAmount: decimalToString(item.taxAmount),
       orderedQuantity: item.orderedQuantity,
+      distanceAddition: decimalToString(item.distanceAddition),
+      distanceKm: item.distanceKm === null ? null : Number(item.distanceKm.toString()),
+      distanceWarehouseCode: item.distanceWarehouseCode,
     })),
     events: row.statusEvents.map((event) => ({
       id: event.id,

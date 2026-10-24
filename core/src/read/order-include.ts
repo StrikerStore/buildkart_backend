@@ -34,6 +34,9 @@ export const orderDetailInclude = {
       taxableAmount: true,
       taxAmount: true,
       orderedQuantity: true,
+      distanceAddition: true,
+      distanceKm: true,
+      distanceWarehouseCode: true,
     },
   },
   shipments: {

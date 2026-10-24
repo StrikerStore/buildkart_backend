@@ -548,3 +548,36 @@ still uses ESLint 9's rule context API and crashes on the pinned ESLint 10.
 `@next/eslint-plugin-next` and `eslint-plugin-react-hooks` are loaded directly
 instead, which is where the value was.
 
+
+## Pricing and delivery
+
+Every product is one of two kinds (`Product.pricingKind`):
+
+- **FLAT** — the same price everywhere. The order pays one delivery charge from the
+  `delivery.charges` setting: the base of the slab the whole cart's total falls in, plus the
+  charge of every distance range the trip passes through (past the last range, its charge
+  repeats per further block of its width), and nothing at or above `freeAbove`.
+- **DISTANCE** — the unit price rises with distance: `distanceBaseAddition` plus
+  `distancePerBlockAddition` for every `distanceBlockKm` started. Delivery for these lines
+  is free; the cart says so on the line.
+
+Distance is straight-line × `roadFactor`, from the nearest warehouse stocking the variant
+(the nearest active one when none lists it). The FLAT lines' delivery is measured to the
+farthest of their warehouses and charged once.
+
+Where it lives:
+
+- `shared/src/delivery-pricing.ts` — the rules, pure and tested: `distanceAdditionFor`,
+  `deliveryFeeFor`, `planDistance`, and the form validation. `order-pricing.ts` folds a
+  line's `distanceAddition` into its price and every rung before anything else, so tiers,
+  tax and totals are unchanged.
+- `core/src/read/delivery-charges.ts` — the I/O: the setting, a product's figures, and
+  warehouse routing.
+- `core/src/read/cart.ts` (`priceCart`) prices the cart from the shopper's pin;
+  `core/src/write/create-order.ts` (`writeOrder`) prices every line again from the
+  address being frozen onto the order, so a caller cannot assert a distance addition.
+  `OrderItem.distance*` and `Order.deliveryBreakdown` record what was charged and why.
+- `core/src/read/storefront.ts` (`distancePricerFor`) prices cards, product pages and
+  suggestions for the shopper's location, passed as an optional `latitude`/`longitude`
+  on every catalogue query. Without one, DISTANCE products show their 0 km price as
+  "from". Price sorting and filtering still read the list price.

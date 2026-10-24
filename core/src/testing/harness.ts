@@ -84,6 +84,8 @@ export async function resetDatabase() {
     'ProductImage',
     'ProductOptionValue',
     'ProductOption',
+    'WarehouseStock',
+    'Warehouse',
     'ProductVariant',
     'Metafield',
     'MetafieldDefinition',
@@ -141,6 +143,8 @@ export async function seedProduct(options: {
   /** Defaults to true, matching the column and the whole catalogue. */
   taxInclusive?: boolean;
   hsnCode?: string;
+  /** A distance-priced product's figures. Absent is FLAT, like the column. */
+  distance?: { baseAddition: string; blockKm: number; perBlockAddition: string };
 }) {
   const prisma = await loadPrisma();
   const product = await prisma.product.create({
@@ -152,6 +156,14 @@ export async function seedProduct(options: {
       taxPercent: options.taxPercent ?? 0,
       taxInclusive: options.taxInclusive ?? true,
       hsnCode: options.hsnCode ?? null,
+      ...(options.distance
+        ? {
+            pricingKind: 'DISTANCE' as const,
+            distanceBaseAddition: options.distance.baseAddition,
+            distanceBlockKm: options.distance.blockKm,
+            distancePerBlockAddition: options.distance.perBlockAddition,
+          }
+        : {}),
       variants: {
         create: {
           matrixKey: '',
@@ -175,6 +187,40 @@ export async function seedProduct(options: {
     include: { variants: true },
   });
   return { product, variant: product.variants[0]! };
+}
+
+/**
+ * A live warehouse at a given *road* distance due north of a point, stocking
+ * the variants named. The road factor is undone and the straight line turned
+ * into degrees of latitude, so `roadKm` is what the pricing will measure.
+ */
+export async function seedWarehouse(options: {
+  code: string;
+  from: { latitude: number; longitude: number };
+  roadKm: number;
+  roadFactor?: number;
+  variantIds?: string[];
+  position?: number;
+}) {
+  const prisma = await loadPrisma();
+  const straightKm = options.roadKm / (options.roadFactor ?? 1.3);
+  return prisma.warehouse.create({
+    data: {
+      code: options.code,
+      name: `Warehouse ${options.code}`,
+      line1: 'Godown',
+      city: 'Indore',
+      state: 'MP',
+      pincode: '452001',
+      latitude: (options.from.latitude + straightKm / 111.195).toFixed(7),
+      longitude: options.from.longitude.toFixed(7),
+      position: options.position ?? 0,
+      isActive: true,
+      stock: {
+        create: (options.variantIds ?? []).map((variantId) => ({ variantId, quantity: 100 })),
+      },
+    },
+  });
 }
 
 /** The settings these tests depend on, at known values. */

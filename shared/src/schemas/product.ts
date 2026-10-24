@@ -3,6 +3,8 @@ import { optionalText } from './common.ts';
 import { optionAxisSchema, variantRowSchema } from './variant.ts';
 import { metafieldValuesSchema } from './metafield.ts';
 import { productTaxFields } from './tax.ts';
+import { MONEY_PATTERN } from '../money.ts';
+import { PRICING_KINDS } from '../delivery-pricing.ts';
 import {
   BULK_TIER_BASES,
   MATRIX_SEPARATOR,
@@ -30,6 +32,41 @@ const nullableId = z
   .max(64)
   .nullish()
   .transform((v) => (v === '' || v === undefined ? null : v));
+
+/** A per-unit addition; blank is nothing. */
+const additionField = z
+  .string()
+  .trim()
+  .transform((v) => (v === '' ? '0.00' : v))
+  .refine((v) => MONEY_PATTERN.test(v), 'Enter an amount like 20 or 20.50')
+  .default('0.00');
+
+/**
+ * How a product's price behaves with distance (see `delivery-pricing.ts`).
+ *
+ * FLAT, the default, is the same price everywhere with delivery charged on the
+ * order. DISTANCE adds `distanceBaseAddition` plus `distancePerBlockAddition`
+ * for every `distanceBlockKm` started to each unit, and delivers free.
+ *
+ * Per product, not per variant — one set of figures the whole matrix shares.
+ * The figures are kept when a product is switched back to FLAT, so switching
+ * again does not mean typing them twice.
+ */
+export const productDeliveryPricingFields = {
+  pricingKind: z.enum(PRICING_KINDS).default('FLAT'),
+  distanceBaseAddition: additionField,
+  distanceBlockKm: z
+    .union([z.string(), z.number()])
+    .transform((v) => (v === '' ? 5 : Number(v)))
+    .refine(
+      (v) => Number.isFinite(v) && v >= 0.5 && v <= 100,
+      'Enter a block between 0.5 and 100 km',
+    )
+    // Decimal(5,2): anything finer would be stored rounded and then disagree.
+    .refine((v) => Math.round(v * 100) === v * 100, 'At most two decimal places')
+    .default(5),
+  distancePerBlockAddition: additionField,
+};
 
 /**
  * One schema covers a product with or without options.
@@ -96,6 +133,8 @@ export const productInputSchema = z
      * matrix for a value identical in every row.
      */
     ...productTaxFields,
+
+    ...productDeliveryPricingFields,
 
     isRateVolatile: z.boolean().default(false),
     /** How this product's bulk ladders are read. One choice for the product. */

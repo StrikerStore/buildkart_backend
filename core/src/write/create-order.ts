@@ -23,13 +23,18 @@ import {
   compareMoney,
   createOrderSchema,
   type CreateOrderInput,
+  type DeliveryBreakdown,
   type PlacedOrderDto,
+  deliveryFeeFor,
   isIntraState,
+  metresToKm,
   parseSetting,
+  planDistance,
   priceOrder,
   PricingError,
   quoteCashback,
   quoteWalletRedemption,
+  subtractMoney,
   type ActionResult,
   type PaymentGateway,
   type PaymentInstrument,
@@ -39,7 +44,13 @@ import { recordAudit } from '../audit.ts';
 import { notifyOrder, notifyShopOfOrder } from '../notify/dispatch.ts';
 import { afterOrderWritten } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
-import { loadFlatRate } from '../read/delivery-rate.ts';
+import {
+  DISTANCE_PRICING_SELECT,
+  loadDeliveryRules,
+  loadRouting,
+  plannedLineOf,
+  pointFrom,
+} from '../read/delivery-charges.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { AUTO_CONFIRM_AFTER_MS } from './orders.ts';
 import { refreshCustomerTotals, refreshOrderPaymentState } from './orders.ts';
@@ -160,6 +171,7 @@ export async function writeOrder(
           taxPercent: true,
           taxInclusive: true,
           hsnCode: true,
+          ...DISTANCE_PRICING_SELECT,
         },
       },
     },
@@ -202,13 +214,13 @@ export async function writeOrder(
   }
 
   // --- price it ------------------------------------------------------------
-  const [storeProfileSetting, area, flatRate, unloadingSetting] = await Promise.all([
+  const [storeProfileSetting, area, rules, unloadingSetting] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'store.profile' } }),
     prisma.serviceablePincode.findUnique({
       where: { pincode: data.address.pincode },
-      select: { id: true },
+      select: { isActive: true },
     }),
-    loadFlatRate(),
+    loadDeliveryRules(),
     data.unloading
       ? prisma.setting.findUnique({ where: { key: 'delivery.unloading' } })
       : Promise.resolve(null),
@@ -224,29 +236,77 @@ export async function writeOrder(
     : null;
   const unloadingCharge = unloading?.enabled ? unloading.price : undefined;
 
+  /*
+   * Distance-priced lines are priced from the pin the goods are going to — the
+   * address being frozen onto this order — and the nearest warehouse stocking
+   * each, exactly as the cart priced them. Recomputed here rather than taken
+   * from the caller, for the reason this file opens with. A counter order has
+   * no pin, so it is priced at 0 km and the operator overrides a far one.
+   */
+  const destination = pointFrom(data.address.latitude, data.address.longitude);
+  const routing = await loadRouting(
+    destination,
+    variants.map((variant) => variant.id),
+  );
+  const plan = planDistance({
+    destination,
+    roadFactor: rules.roadFactor,
+    lines: variants.map((variant) => plannedLineOf(variant.id, variant.product)),
+    stockedBy: routing.stockedBy,
+    fallback: routing.fallback,
+  });
+
+  const catalog = variants.map((variant) => ({
+    variantId: variant.id,
+    price: variant.price.toString(),
+    tiers: toEngineTiers(variant.tiers),
+    // The rate is the product's; the exemption flag is the variant's.
+    taxPercent: Number(variant.product.taxPercent),
+    taxInclusive: variant.product.taxInclusive,
+    taxable: variant.taxable,
+    // Ignored on a line with a hand-set rate: an agreed price is all-in.
+    distanceAddition: plan.lines.get(variant.id)?.addition ?? '0.00',
+  }));
+
   let pricing;
+  let deliveryBreakdown: DeliveryBreakdown | null = null;
   try {
-    pricing = priceOrder(
-      lines,
-      variants.map((variant) => ({
-        variantId: variant.id,
-        price: variant.price.toString(),
-        tiers: toEngineTiers(variant.tiers),
-        // The rate is the product's; the exemption flag is the variant's.
-        taxPercent: Number(variant.product.taxPercent),
-        taxInclusive: variant.product.taxInclusive,
-        taxable: variant.taxable,
-      })),
-      {
-        // An explicit charge wins; otherwise a listed area pays the shop's flat
-        // rate, and an unlisted one — a delivery agreed off the map — nothing.
-        deliveryCharge: data.deliveryCharge ?? (area ? flatRate.charge : '0.00'),
-        discountTotal: data.discountTotal,
-        freeDeliveryAbove:
-          data.deliveryCharge === undefined && area ? flatRate.freeAbove : null,
-        unloadingCharge,
-      },
-    );
+    /*
+     * An explicit charge wins — the storefront's, worked out by the cart from
+     * these same rules, or one a person typed. Otherwise the shop's rules set
+     * it for the flat-priced lines in an area the shop delivers to; anywhere
+     * else — a delivery agreed off the map — pays nothing, which is what the
+     * counter screen previews.
+     */
+    let deliveryCharge = data.deliveryCharge;
+    if (deliveryCharge !== undefined) {
+      deliveryBreakdown = data.deliveryBreakdown ?? null;
+    } else if (area?.isActive && plan.delivery.needed) {
+      const probe = priceOrder(lines, catalog, {});
+      const fee = deliveryFeeFor({
+        cartTotal: subtractMoney(probe.subtotal, data.discountTotal ?? '0.00'),
+        metres: plan.delivery.metres,
+        rules,
+      });
+      deliveryCharge = fee.charge;
+      deliveryBreakdown = {
+        slabBase: fee.slabBase,
+        distanceCharge: fee.distanceCharge,
+        roadKm: metresToKm(plan.delivery.metres),
+        warehouseCode: plan.delivery.warehouse?.code ?? null,
+        freeAbove: rules.freeAbove,
+        free: fee.free,
+        waived: false,
+      };
+    } else {
+      deliveryCharge = '0.00';
+    }
+
+    pricing = priceOrder(lines, catalog, {
+      deliveryCharge,
+      discountTotal: data.discountTotal,
+      unloadingCharge,
+    });
   } catch (error) {
     if (error instanceof PricingError) return actionError(error.message);
     throw error;
@@ -348,15 +408,15 @@ export async function writeOrder(
         taxIntraState: intraState,
         /*
          * Frozen for the same reason as `taxBreakdown`: recomputing this later
-         * from live warehouse rows would answer for today's stock rather than
-         * the day the order was placed.
+         * from live settings and warehouse rows would answer for today rather
+         * than the day the order was placed.
          *
          * Left out rather than set to null when there is nothing to record — a
          * nullable Json column wants a Prisma sentinel, and an omitted field
-         * already creates the row with NULL. A counter sale and a flat-rate
-         * order both land here.
+         * already creates the row with NULL. A counter sale with a typed charge
+         * lands here.
          */
-        ...(data.deliveryLegs ? { deliveryLegs: data.deliveryLegs } : {}),
+        ...(deliveryBreakdown ? { deliveryBreakdown } : {}),
         // Frozen like the address: an invoice is raised under the number the
         // buyer gave that day, not under whatever is on their record now.
         buyerGstin: data.buyerGstin ?? null,
@@ -382,6 +442,11 @@ export async function writeOrder(
         items: {
           create: pricing.lines.map((line) => {
             const variant = byId.get(line.variantId)!;
+            const planned = plan.lines.get(line.variantId);
+            // What the distance added and from where, for a distance-priced
+            // line that was not given an agreed rate.
+            const distancePriced =
+              variant.product.pricingKind === 'DISTANCE' && !line.wasOverridden;
             return {
               productId: variant.product.id,
               variantId: variant.id,
@@ -426,6 +491,9 @@ export async function writeOrder(
               discountShare: line.discountShare,
               taxableAmount: line.taxableAmount,
               taxAmount: line.taxAmount,
+              distanceAddition: distancePriced ? line.distanceAddition : null,
+              distanceKm: distancePriced && planned ? metresToKm(planned.metres) : null,
+              distanceWarehouseCode: distancePriced ? (planned?.warehouse?.code ?? null) : null,
             };
           }),
         },

@@ -24,8 +24,28 @@ const AREAS = [
   { pincode: '453331', areaNameEn: 'Rau & Bypass', areaNameHi: 'राऊ', promiseHours: 8, cutoffTime: '15:00', isActive: false },
 ];
 
-/** What every area pays while charging by distance is off. */
-const FLAT_RATE = { flatCharge: '150.00', flatFreeAbove: '5000.00' };
+/**
+ * The delivery charge for flat-priced products — the owner's own example: a
+ * base by what the cart is worth, plus every distance range the trip passes
+ * through, and free from ₹10,000.
+ */
+const DELIVERY_CHARGES = {
+  roadFactor: 1.3,
+  slabs: [
+    { from: '0.00', base: '300.00' },
+    { from: '1000.00', base: '200.00' },
+    { from: '5000.00', base: '100.00' },
+  ],
+  ranges: [
+    { upToKm: 5, addition: '30.00' },
+    { upToKm: 10, addition: '15.00' },
+    { upToKm: 20, addition: '10.00' },
+  ],
+  freeAbove: '10000.00',
+};
+
+/** Cement is priced by distance: ₹10 a bag at the gate, ₹5 more per 5 km started. */
+const DISTANCE_PRICED_TYPES = ['Cement'];
 
 /** Pincodes people asked for, including one that has since opened. */
 const REQUESTS = [
@@ -59,14 +79,20 @@ export async function seedGrowth(): Promise<{
     });
   }
 
-  // Merged into whatever distance rules are already stored, never replacing them.
-  const pricing = await prisma.setting.findUnique({ where: { key: 'delivery.distancePricing' } });
-  const stored =
-    pricing && typeof pricing.value === 'object' && !Array.isArray(pricing.value) ? pricing.value : {};
   await prisma.setting.upsert({
-    where: { key: 'delivery.distancePricing' },
-    create: { key: 'delivery.distancePricing', value: FLAT_RATE },
-    update: { value: { ...stored, ...FLAT_RATE } as never },
+    where: { key: 'delivery.charges' },
+    create: { key: 'delivery.charges', value: DELIVERY_CHARGES },
+    update: { value: DELIVERY_CHARGES },
+  });
+
+  await prisma.product.updateMany({
+    where: { productType: { in: DISTANCE_PRICED_TYPES } },
+    data: {
+      pricingKind: 'DISTANCE',
+      distanceBaseAddition: '10.00',
+      distanceBlockKm: 5,
+      distancePerBlockAddition: '5.00',
+    },
   });
 
   let requestCount = 0;

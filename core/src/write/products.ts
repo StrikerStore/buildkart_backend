@@ -189,6 +189,11 @@ function productScalars(
     hsnCode: data.hsnCode ?? null,
     isRateVolatile: data.isRateVolatile,
     bulkTierBasis: data.bulkTierBasis,
+    // Kept whatever the kind, so switching back to DISTANCE restores them.
+    pricingKind: data.pricingKind,
+    distanceBaseAddition: data.distanceBaseAddition,
+    distanceBlockKm: data.distanceBlockKm,
+    distancePerBlockAddition: data.distancePerBlockAddition,
     searchKeywords: data.searchKeywords ?? null,
     seoTitle: data.seoTitle ?? null,
     seoDescriptionEn: data.seoDescriptionEn ?? null,

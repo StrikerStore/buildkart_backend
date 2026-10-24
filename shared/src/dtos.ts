@@ -69,6 +69,8 @@ import type { CheckoutOption, OnlineGateway } from './checkout-options.ts';
 import type { PartialCodRules } from './payments.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
 import type { ImportIssue, ParsedProduct } from './csv/index.ts';
+import type { DistanceChargePart, PricingKind } from './delivery-pricing.ts';
+import type { DeliveryBreakdown } from './schemas/order.ts';
 
 // from core/src/auth.ts
 /** Everything a session needs to be issued for this admin. */
@@ -273,6 +275,14 @@ export type OrderItemDto = {
   taxAmount: string;
   /** What was ordered, when the order was closed short and `quantity` is what arrived. */
   orderedQuantity: number | null;
+  /**
+   * For a distance-priced line: the per-unit addition inside `unitPrice`, how
+   * far it travelled and from which warehouse. Null on a flat-priced line, an
+   * overridden one, and every order placed before distance pricing.
+   */
+  distanceAddition: string | null;
+  distanceKm: number | null;
+  distanceWarehouseCode: string | null;
 };
 
 // from core/src/dto.ts
@@ -362,6 +372,8 @@ export type OrderDetailDto = {
   subtotal: string;
   discountTotal: string;
   deliveryCharge: string;
+  /** How the shop's rules arrived at `deliveryCharge`. Null when a person typed it. */
+  deliveryBreakdown: DeliveryBreakdown | null;
   grandTotal: string;
   bulkPricingApplied: boolean;
   /** Every rupee of GST, inside the prices or added to them. */
@@ -875,6 +887,16 @@ export type VariantSearchResult = {
   stockQty: number;
   inventoryTracked: boolean;
   inventoryPolicy: 'DENY' | 'CONTINUE';
+  /**
+   * How the price behaves with distance. The counter has no pin to measure
+   * from, so a distance-priced product is shown at its warehouse-gate price
+   * (`price` plus `distanceBaseAddition`) and the operator types a rate for a
+   * far delivery.
+   */
+  pricingKind: PricingKind;
+  distanceBaseAddition: string;
+  distanceBlockKm: number;
+  distancePerBlockAddition: string;
 };
 
 // from core/src/read/order-entry.ts
@@ -900,8 +922,11 @@ export type CustomerLookupResult = {
 export type PincodeQuote = {
   serviced: boolean;
   areaName: string | null;
-  deliveryCharge: string;
-  freeAbove: string | null;
+  /**
+   * The shop's delivery rules, so the counter can show what they would charge.
+   * The counter has no pin, so the hint is worked out at 0 km.
+   */
+  rules: DeliveryChargesDto;
 };
 
 // from core/src/read/orders.ts
@@ -1009,13 +1034,13 @@ export type SettingsDto = {
   privacy: PrivacyContactDto;
   commerce: CommerceSettingsDto;
   /**
-   * The distance-delivery rules.
+   * The delivery-charge rules for flat-priced products.
    *
    * Public like the rest of this object, and for the same reason: every figure
-   * in it is a promise made to a customer — "free over ₹1,000 within 10 km" —
-   * so the storefront is entitled to render it. It holds no secret.
+   * in it is a promise made to a customer — "free delivery over ₹10,000" — so
+   * the storefront is entitled to render it. It holds no secret.
    */
-  distancePricing: DistancePricingDto;
+  deliveryCharges: DeliveryChargesDto;
   /** The wallet and cashback rules — advertised on the product page and cart. */
   wallet: WalletRulesDto;
   /** The unloading service offered in the cart. */
@@ -1033,21 +1058,15 @@ export type SettingsDto = {
   };
 };
 
-export type DistancePricingDto = {
-  enabled: boolean;
+/** The `delivery.charges` setting — see `DeliveryChargeRules` in `delivery-pricing.ts`. */
+export type DeliveryChargesDto = {
   roadFactor: number;
-  blockKm: number;
-  perBlockCharge: string;
-  standardThreshold: string;
-  standardFreeKm: number;
-  highValueThreshold: string;
-  highValueFreeKm: number;
-  smallOrderFee: string;
-  smallOrderIncludedKm: number;
-  maxCharge: string | null;
-  /** The flat rate — charging by distance off, or unable to price the cart. */
-  flatCharge: string;
-  flatFreeAbove: string | null;
+  /** Cart-total slabs: from this amount up, this base charge. */
+  slabs: Array<{ from: string; base: string }>;
+  /** Contiguous distance ranges from 0 km, by their end. */
+  ranges: Array<{ upToKm: number; addition: string }>;
+  /** Free at or above this cart total, at any distance. Null is never. */
+  freeAbove: string | null;
 };
 
 // from core/src/read/stock.ts
@@ -1699,6 +1718,9 @@ export type StorefrontSuggestionDto = {
   price: string | null;
   unitLabelEn: string | null;
   unitLabelHi: string | null;
+  /** See `StorefrontCardDto.pricingKind`. */
+  pricingKind: PricingKind;
+  priceIsFrom: boolean;
 };
 
 /**
@@ -1738,6 +1760,17 @@ export type StorefrontCardDto = {
   /** Drives the "Rate updated today" stamp on cement and sariya. */
   isRateVolatile: boolean;
   priceUpdatedAt: string | null;
+  /**
+   * DISTANCE: the prices above already include carrying it to the shopper,
+   * and it delivers free. FLAT: the same price everywhere, delivery charged on
+   * the order.
+   */
+  pricingKind: PricingKind;
+  /**
+   * True for a DISTANCE product priced without knowing where the shopper is —
+   * the price at the warehouse, shown as "from".
+   */
+  priceIsFrom: boolean;
 };
 
 /** A category as the storefront shows it — a tile, a nav row, a breadcrumb. */
@@ -1946,12 +1979,23 @@ export type StorefrontVariantDto = {
   stockQty: number | null;
   imageKey: string | null;
   priceUpdatedAt: string | null;
+  /**
+   * The per-unit distance addition already inside `price` and every rung, for
+   * a distance-priced product. "0.00" on a flat-priced one.
+   */
+  distanceAddition: string;
+  /** Road km from the warehouse serving this variant. Null when not located. */
+  roadKm: number | null;
 };
 
 export type StorefrontProductDto = {
   id: string;
   /** How this product's ladders read, so the page words them once. */
   bulkTierBasis: BulkTierBasis;
+  /** See `StorefrontCardDto.pricingKind`. Variant prices already include any addition. */
+  pricingKind: PricingKind;
+  /** False when priced without knowing where the shopper is — "from" prices. */
+  located: boolean;
   handle: string;
   nameEn: string;
   nameHi: string | null;
@@ -1991,7 +2035,13 @@ export type StorefrontAreaDto = {
   pincode: string;
   areaName: string;
   city: string;
+  /**
+   * @deprecated The flat-priced delivery charge depends on the cart and the
+   * distance now; this is the smallest it can be (first slab, first range).
+   * Show `freeAbove` instead. Removed in the next release.
+   */
   deliveryCharge: string;
+  /** Free delivery at or above this cart total. Null when the shop sets none. */
   freeAbove: string | null;
   promiseHours: number | null;
 };
@@ -2057,6 +2107,15 @@ export type CartLineDto = {
    * earned.
    */
   cashback: string;
+  /**
+   * DISTANCE: delivery is in the price — the row shows "Free delivery".
+   * FLAT: delivery is charged on the order.
+   */
+  pricingKind: PricingKind;
+  /** The per-unit distance addition inside `unitPrice`. "0.00" on a FLAT line. */
+  distanceAddition: string;
+  /** Road km from the warehouse serving this line. Null when not located. */
+  distanceKm: number | null;
 };
 
 /*
@@ -2066,30 +2125,43 @@ export type CartLineDto = {
  * `nextTier` instead, and the cart total carries `bulkSavings`.
  */
 
+/*
+ * The delivery charge covers the cart's flat-priced lines only: distance-priced
+ * lines carry delivery in their price. It is the cart-total slab's base plus
+ * the charge of every distance range passed through, and nothing at or above
+ * the free threshold.
+ */
 export type CartDeliveryDto = {
   pincode: string;
   areaName: string | null;
   city: string | null;
   serviced: boolean;
+  /** What is charged — after any free threshold or free-delivery coupon. */
   charge: string;
+  /** Free at or above this cart total, when the cart has flat-priced lines. */
   freeAbove: string | null;
   promiseHours: number | null;
-  /**
-   * How `charge` was arrived at. `PINCODE` is the shop's flat rate — named for
-   * when it was set per area, and kept so no client has to change; `DISTANCE`
-   * means it was worked out from how far the goods travel, and `legs` then says
-   * from where.
-   */
+  /** False when every line is distance-priced, and delivery is free outright. */
+  hasFlatLines: boolean;
+  /** False when priced without a pin: distances are 0 km, and the charge an estimate. */
+  located: boolean;
+  /** The cart-total slab's base. "0.00" when free. */
+  slabBase: string;
+  /** What the distance added. "0.00" when free. */
+  distanceCharge: string;
+  /** The ranges the distance passed through, for the breakdown. */
+  distanceParts: DistanceChargePart[];
+  /** Road km to the farthest warehouse the flat-priced lines ship from. */
+  roadKm: number | null;
+  /** How much more for free delivery. Null with no threshold, or once it is met. */
+  freeShortfall: string | null;
+  /** @deprecated Always `PINCODE`. Removed in the next release. */
   mode: 'PINCODE' | 'DISTANCE';
-  /**
-   * One entry per warehouse serving this cart, when the charge was worked out
-   * by distance. Empty otherwise. More than one entry means the basket is
-   * coming in more than one van, which is why the charge is what it is — so it
-   * is carried to the storefront rather than left as an unexplained total.
-   */
+  /** @deprecated Always empty: the charge is no longer per warehouse. Removed in the next release. */
   legs: CartDeliveryLegDto[];
 };
 
+/** @deprecated See `CartDeliveryDto.legs`. */
 export type CartDeliveryLegDto = {
   warehouseId: string;
   warehouseName: string;
@@ -2805,7 +2877,9 @@ export type DeviceLocationDto = {
     pincode: string;
     areaName: string;
     city: string;
+    /** @deprecated See `StorefrontAreaDto.deliveryCharge`. */
     deliveryCharge: string;
+    /** Free delivery at or above this cart total. */
     freeAbove: string | null;
     promiseHours: number;
   } | null;

@@ -71,8 +71,19 @@ export type ShopifyCsvColumn = (typeof SHOPIFY_CSV_COLUMNS)[number];
  * `Bulk Tier Basis` is per product and read from its first row; `Bulk Tiers` is
  * per variant, encoded `20:370|40:365` — threshold, colon, rate, pipe between
  * rungs.
+ *
+ * `Pricing Kind` (`FLAT` or `DISTANCE`) and the three `Distance …` figures are
+ * per product, on its first row. A file without `Pricing Kind` leaves every
+ * product's distance pricing as it is.
  */
-export const BUILDKART_CSV_COLUMNS = ['Bulk Tier Basis', 'Bulk Tiers'] as const;
+export const BUILDKART_CSV_COLUMNS = [
+  'Bulk Tier Basis',
+  'Bulk Tiers',
+  'Pricing Kind',
+  'Distance Base Addition',
+  'Distance Block Km',
+  'Distance Per Block',
+] as const;
 export type BuildkartCsvColumn = (typeof BUILDKART_CSV_COLUMNS)[number];
 
 /** Every column this shop understands as a real field rather than a metafield. */

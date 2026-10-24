@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { parseStoreDateTime } from '../time.ts';
-import { MONEY_PATTERN } from '../money.ts';
+import { MONEY_PATTERN, normalizeMoney } from '../money.ts';
+import {
+  deliveryChargeRuleIssues,
+  MAX_DELIVERY_SLABS,
+  MAX_DISTANCE_RANGES,
+  type DeliveryChargeRules,
+} from '../delivery-pricing.ts';
 import { optionalText } from './common.ts';
 import { DISCOUNT_TRIGGERS, DISCOUNT_TYPES } from '../discounts.ts';
 import { ORDER_NUMBER_MAX_LENGTH, maxOrderNumberLength } from '../orders.ts';
@@ -589,55 +595,62 @@ export const commerceSettingsSchema = z
 export type CommerceSettingsInput = z.infer<typeof commerceSettingsSchema>;
 
 /**
- * The delivery-charge rules — distance pricing and the flat rate it falls back
- * to — as the admin form posts them.
+ * The delivery-charge rules for flat-priced products — cart-total slabs,
+ * distance ranges, the free threshold — as the admin form posts them.
  *
- * A mirror of the `delivery.distancePricing` setting rather than a reuse of it:
- * the registry schema describes a *stored* value, where every field defaults
- * and a corrupt row degrades quietly. A form must not default a missing field —
- * an admin who clears a box is saying something, and silently restoring 50.00
+ * A mirror of the `delivery.charges` setting rather than a reuse of it: the
+ * registry schema describes a *stored* value, where every field defaults and a
+ * corrupt row degrades quietly. A form must not default a missing field — an
+ * admin who clears a box is saying something, and silently restoring a figure
  * would be the screen lying about what it saved.
  *
- * The two guards are the same ones the registry enforces, repeated here so the
- * admin gets them as field errors on the offending input rather than as a
- * write that fails somewhere further down.
+ * The ordering rules (`deliveryChargeRuleIssues`) live only here, as field
+ * errors on the offending row.
  */
-export const distancePricingSchema = z
+export const deliveryChargesSchema = z
   .object({
-    enabled: z.boolean().default(false),
     roadFactor: z.coerce
       .number({ message: 'Enter a number like 1.3' })
       .min(1, 'Roads are never shorter than a straight line')
       .max(3, 'Anything above 3 is almost certainly a typo'),
-    blockKm: z.coerce.number({ message: 'Enter a distance in km' }).min(1).max(50),
-    perBlockCharge: money,
-    standardThreshold: money,
-    standardFreeKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
-    highValueThreshold: money,
-    highValueFreeKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
-    smallOrderFee: money,
-    smallOrderIncludedKm: z.coerce.number({ message: 'Enter a distance in km' }).min(0).max(500),
-    maxCharge: optionalMoney,
-    flatCharge: money,
-    flatFreeAbove: optionalMoney,
+    slabs: z
+      .array(z.object({ from: money, base: money }))
+      .min(1, 'Add at least one cart-total slab')
+      .max(MAX_DELIVERY_SLABS, `At most ${MAX_DELIVERY_SLABS} slabs`),
+    ranges: z
+      .array(
+        z.object({
+          upToKm: z.coerce
+            .number({ message: 'Enter a distance in km' })
+            .positive('Must be more than 0 km')
+            .max(1000, 'Anything above 1,000 km is almost certainly a typo'),
+          addition: money,
+        }),
+      )
+      .min(1, 'Add at least one distance range')
+      .max(MAX_DISTANCE_RANGES, `At most ${MAX_DISTANCE_RANGES} ranges`),
+    freeAbove: optionalMoney,
   })
+  .transform(
+    (value): DeliveryChargeRules => ({
+      roadFactor: value.roadFactor,
+      slabs: value.slabs.map((slab) => ({
+        from: normalizeMoney(slab.from),
+        base: normalizeMoney(slab.base),
+      })),
+      ranges: value.ranges.map((range) => ({
+        upToKm: range.upToKm,
+        addition: normalizeMoney(range.addition),
+      })),
+      freeAbove: value.freeAbove === undefined ? null : normalizeMoney(value.freeAbove),
+    }),
+  )
   .superRefine((value, ctx) => {
-    if (Number(value.highValueThreshold) <= Number(value.standardThreshold)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['highValueThreshold'],
-        message: 'Must be above the standard threshold',
-      });
-    }
-    if (value.highValueFreeKm < value.standardFreeKm) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['highValueFreeKm'],
-        message: 'Cannot be less than the standard free distance',
-      });
+    for (const issue of deliveryChargeRuleIssues(value)) {
+      ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
     }
   });
-export type DistancePricingInput = z.infer<typeof distancePricingSchema>;
+export type DeliveryChargesInput = z.input<typeof deliveryChargesSchema>;
 
 /** One fine-print line per row; blank rows are dropped rather than refused. */
 const noteLines = z

@@ -12,7 +12,7 @@
  *   - the price list is not negotiable here (no `unitPriceOverride`)
  *   - the discount is resolved from the *code* by the server, never taken as an
  *     amount
- *   - the delivery charge comes from the serviceable area, not the payload
+ *   - the delivery charge comes from the shop's rules, not the payload
  *   - the payment method must be one the owner has switched on
  *   - the order lands as PLACED, unpaid, with no payment recorded — a customer
  *     saying "I have paid" is not evidence that they have
@@ -35,7 +35,7 @@ import {
   type PlacedOrderDto,
 } from '@buildkart/shared';
 import { ForbiddenError, type Actor } from '../actor.ts';
-import { priceCart } from '../read/cart.ts';
+import { priceCartWithBreakdown } from '../read/cart.ts';
 import { getCheckoutMethods } from '../read/payment-settings.ts';
 import { writeOrder } from './create-order.ts';
 import { issueOtp, spendOtp } from './customer-auth.ts';
@@ -226,17 +226,18 @@ export async function prepareCustomerOrder(
    * cannot drift. It also resolves the discount *code* into an amount here, on
    * the server, which is why the payload has no field for one.
    */
-  const priced = await priceCart({
+  const { cart: priced, deliveryBreakdown } = await priceCartWithBreakdown({
     lines: data.lines,
     pincode: address.pincode,
     /*
      * The pin from the *address*, not from whatever the cart was carrying.
      *
-     * This is the moment the delivery charge stops being a quote. `priceCart`
-     * will take a coordinate from the storefront to preview a charge, where the
-     * worst a fabricated one can do is show the shopper a wrong number. Here it
-     * decides money, so it comes from the address the goods are being sent to —
-     * which `placeOrderSchema` requires for exactly this reason.
+     * This is the moment the delivery charge and the distance-priced lines stop
+     * being a quote. `priceCart` will take a coordinate from the storefront to
+     * preview them, where the worst a fabricated one can do is show the shopper
+     * a wrong number. Here it decides money, so it comes from the address the
+     * goods are being sent to — which `placeOrderSchema` requires for exactly
+     * this reason, and which `writeOrder` prices the lines from again.
      */
     latitude: address.latitude,
     longitude: address.longitude,
@@ -323,11 +324,11 @@ export async function prepareCustomerOrder(
     })),
     deliveryCharge: priced.deliveryCharge,
     /*
-     * Frozen alongside the charge, so an invoice can always say which godown
-     * each part of the order came from and what carrying it cost — even after
-     * that godown has been closed or its stock has moved.
+     * Frozen alongside the charge, so the order can always say how it was
+     * reached — the slab, the distance, from which warehouse — even after the
+     * rules or the warehouses have changed.
      */
-    deliveryLegs: priced.delivery?.mode === 'DISTANCE' ? priced.delivery.legs : undefined,
+    deliveryBreakdown: deliveryBreakdown ?? undefined,
     discountTotal: priced.discount?.applied ? priced.discount.amount : undefined,
     discountCode: priced.discount?.applied ? priced.discount.code : undefined,
     paymentMethod,

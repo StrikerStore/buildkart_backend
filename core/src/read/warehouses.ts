@@ -132,6 +132,32 @@ export async function listWarehouseStock(
   return { rows, nextCursor };
 }
 
+const CANDIDATE_SELECT = {
+  id: true,
+  code: true,
+  name: true,
+  latitude: true,
+  longitude: true,
+  position: true,
+} as const;
+
+function toCandidate(warehouse: {
+  id: string;
+  code: string;
+  name: string;
+  latitude: { toString(): string };
+  longitude: { toString(): string };
+  position: number;
+}): WarehouseCandidate {
+  return {
+    warehouseId: warehouse.id,
+    code: warehouse.code,
+    name: warehouse.name,
+    point: { latitude: Number(warehouse.latitude), longitude: Number(warehouse.longitude) },
+    position: warehouse.position,
+  };
+}
+
 /**
  * Which live warehouses hold each of these variants.
  *
@@ -141,9 +167,8 @@ export async function listWarehouseStock(
  * every re-price and a fifty-line cart would otherwise be fifty round trips for
  * a number that is usually zero.
  *
- * A variant with no stocking warehouse is simply absent from the map, which is
- * what `quoteDelivery` reads as "cannot route this" — and one absent line sends
- * the whole cart back to the flat per-pincode charge.
+ * A variant with no stocking warehouse is simply absent from the map;
+ * `planDistance` then routes it from the nearest active warehouse.
  */
 export async function findStockingWarehouses(
   variantIds: readonly string[],
@@ -157,31 +182,31 @@ export async function findStockingWarehouses(
       quantity: { gt: 0 },
       warehouse: { isActive: true },
     },
-    select: {
-      variantId: true,
-      warehouse: {
-        select: { id: true, name: true, latitude: true, longitude: true, position: true },
-      },
-    },
+    select: { variantId: true, warehouse: { select: CANDIDATE_SELECT } },
     // Ordered so the candidate list is stable between two prices of the same
-    // cart, which is what keeps the tie-break in `quoteDelivery` meaningful.
+    // cart, which is what keeps the tie-break in `nearestWarehouse` meaningful.
     orderBy: [{ warehouse: { position: 'asc' } }, { warehouseId: 'asc' }],
   });
 
   for (const row of rows) {
-    const candidate: WarehouseCandidate = {
-      warehouseId: row.warehouse.id,
-      name: row.warehouse.name,
-      point: {
-        latitude: Number(row.warehouse.latitude),
-        longitude: Number(row.warehouse.longitude),
-      },
-      position: row.warehouse.position,
-    };
+    const candidate = toCandidate(row.warehouse);
     const existing = byVariant.get(row.variantId);
     if (existing) existing.push(candidate);
     else byVariant.set(row.variantId, [candidate]);
   }
 
   return byVariant;
+}
+
+/**
+ * Every live warehouse — where a variant no warehouse lists is routed from.
+ * Actor-less for the same reason as `findStockingWarehouses`.
+ */
+export async function findActiveWarehouses(): Promise<WarehouseCandidate[]> {
+  const rows = await prisma.warehouse.findMany({
+    where: { isActive: true },
+    select: CANDIDATE_SELECT,
+    orderBy: [{ position: 'asc' }, { id: 'asc' }],
+  });
+  return rows.map(toCandidate);
 }

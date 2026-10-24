@@ -1,4 +1,6 @@
 import { matrixKeyOf, MAX_OPTION_AXES, MAX_VARIANTS, type BulkTierBasis } from '../variants.ts';
+import { MONEY_PATTERN, normalizeMoney } from '../money.ts';
+import type { PricingKind } from '../delivery-pricing.ts';
 import { decodeTiers } from './tiers.ts';
 import {
   parseMetafieldCell,
@@ -97,6 +99,13 @@ export type ParsedProduct = {
   googleProductCategory: string | null;
   /** From `Bulk Tier Basis`, or null when the column is absent. */
   bulkTierBasis: BulkTierBasis | null;
+  /** From `Pricing Kind` and the `Distance …` columns, or null when `Pricing Kind` is absent. */
+  deliveryPricing: {
+    pricingKind: PricingKind;
+    baseAddition: string;
+    blockKm: number;
+    perBlockAddition: string;
+  } | null;
   status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
   seoTitle: string | null;
   seoDescription: string | null;
@@ -217,6 +226,7 @@ export function parseProducts(
    */
   const hasTierColumn = header.includes('Bulk Tiers');
   const hasBasisColumn = header.includes('Bulk Tier Basis');
+  const hasPricingKindColumn = header.includes('Pricing Kind');
   const definitionByKey = new Map(definitions.map((d) => [`${d.namespace}.${d.key}`, d]));
 
   const groups = groupByHandle(rows);
@@ -505,6 +515,10 @@ export function parseProducts(
       if (value !== '') raw[column] = value;
     }
 
+    const deliveryPricing = hasPricingKindColumn
+      ? readDeliveryPricing(firstRow, first.rowNumber, handle, productIssues)
+      : null;
+
     issues.push(...productIssues);
 
     // A product with an ERROR is skipped; the rest of the file still imports.
@@ -523,6 +537,7 @@ export function parseProducts(
           ? 'AMOUNT'
           : 'QUANTITY'
         : null,
+      deliveryPricing,
       status: status ?? 'DRAFT',
       seoTitle: readCell(firstRow, 'SEO Title') || null,
       seoDescription: readCell(firstRow, 'SEO Description') || null,
@@ -544,6 +559,53 @@ export function parseProducts(
     issues,
     totalRows: rows.length,
     ignoredColumns,
+  };
+}
+
+/**
+ * A product's distance pricing from its first row.
+ *
+ * Blank figures read as nothing added (and a 5 km block), so a FLAT row need
+ * not fill them. A figure that is not a number is an ERROR rather than a
+ * guess: these columns change what customers are charged.
+ */
+function readDeliveryPricing(
+  row: CsvRow,
+  rowNumber: number,
+  handle: string,
+  productIssues: ImportIssue[],
+): ParsedProduct['deliveryPricing'] {
+  const kindCell = readCell(row, 'Pricing Kind').toUpperCase();
+  const pricingKind: PricingKind = kindCell === 'DISTANCE' ? 'DISTANCE' : 'FLAT';
+  if (kindCell !== '' && kindCell !== 'FLAT' && kindCell !== 'DISTANCE') {
+    productIssues.push(
+      issue('ERROR', 'BAD_PRICING_KIND', 'Pricing Kind must be FLAT or DISTANCE.', rowNumber, handle, 'Pricing Kind', kindCell),
+    );
+  }
+
+  const amount = (column: string): string => {
+    const value = readCell(row, column);
+    if (value === '') return '0.00';
+    if (MONEY_PATTERN.test(value)) return normalizeMoney(value);
+    productIssues.push(
+      issue('ERROR', 'BAD_DISTANCE_AMOUNT', `${column} must be an amount like 20 or 20.50.`, rowNumber, handle, column, value),
+    );
+    return '0.00';
+  };
+
+  const blockCell = readCell(row, 'Distance Block Km');
+  const blockKm = blockCell === '' ? 5 : Number(blockCell);
+  if (!Number.isFinite(blockKm) || blockKm < 0.5 || blockKm > 100) {
+    productIssues.push(
+      issue('ERROR', 'BAD_DISTANCE_BLOCK', 'Distance Block Km must be between 0.5 and 100.', rowNumber, handle, 'Distance Block Km', blockCell),
+    );
+  }
+
+  return {
+    pricingKind,
+    baseAddition: amount('Distance Base Addition'),
+    blockKm: Number.isFinite(blockKm) ? Math.round(blockKm * 100) / 100 : 5,
+    perBlockAddition: amount('Distance Per Block'),
   };
 }
 

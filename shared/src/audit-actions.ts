@@ -126,6 +126,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'delivery.warehouse.update': 'Updated a warehouse',
   'delivery.warehouse.delete': 'Removed a warehouse',
   'delivery.warehouse.stock': 'Updated what a warehouse stocks',
+  'delivery.charges': 'Updated the delivery charges',
+  // Kept so entries written before the delivery-charge rework still read.
   'delivery.distancePricing': 'Updated the delivery charges',
 
   // Content
@@ -307,7 +309,9 @@ export function linkForEntity(entityType: string, entityId: string): string | nu
       if (entityId.startsWith('checkout.')) return '/checkout';
       if (entityId.startsWith('notifications.')) return '/notifications';
       if (entityId.startsWith('payments.')) return '/settings/payments';
-      if (entityId === 'delivery.distancePricing') return '/delivery/charges';
+      if (entityId === 'delivery.charges' || entityId === 'delivery.distancePricing') {
+        return '/delivery/charges';
+      }
       if (entityId === 'seo.defaults') return '/seo';
       return '/settings';
     case 'TaxRate':

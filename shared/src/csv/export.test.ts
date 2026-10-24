@@ -36,6 +36,10 @@ function product(overrides: Partial<ExportProduct> = {}): ExportProduct {
     optionNames: [],
     optionLinkedTo: [],
     bulkTierBasis: 'QUANTITY' as const,
+    pricingKind: 'FLAT' as const,
+    distanceBaseAddition: '0.00',
+    distanceBlockKm: 5,
+    distancePerBlockAddition: '0.00',
     variants: [
       {
         tiers: [],
@@ -408,4 +412,48 @@ test('FAQs survive a full export → import round trip, separators and all', () 
     false,
     'buildkart columns are product fields, not metafields',
   );
+});
+
+test('distance pricing survives a full export → import round trip', () => {
+  const source = product({
+    pricingKind: 'DISTANCE',
+    distanceBaseAddition: '20.00',
+    distanceBlockKm: 2.5,
+    distancePerBlockAddition: '7.50',
+  });
+
+  const { header, rows } = buildExportRows([source]);
+  assert.equal(rows[0]!['Pricing Kind'], 'DISTANCE');
+
+  const csvRows: CsvRow[] = rows.map((row) =>
+    Object.fromEntries(header.map((column) => [column, row[column] ?? ''])),
+  );
+  const parsed = parseProducts(csvRows, header, SHOPIFY_CSV_COLUMNS, []);
+  assert.deepEqual(parsed.products[0]!.deliveryPricing, {
+    pricingKind: 'DISTANCE',
+    baseAddition: '20.00',
+    blockKm: 2.5,
+    perBlockAddition: '7.50',
+  });
+});
+
+test('a file without Pricing Kind leaves distance pricing alone', () => {
+  const { header, rows } = buildExportRows([product()]);
+  const kept = header.filter((column) => column !== 'Pricing Kind');
+  const csvRows: CsvRow[] = rows.map((row) =>
+    Object.fromEntries(kept.map((column) => [column, row[column] ?? ''])),
+  );
+  const parsed = parseProducts(csvRows, kept, SHOPIFY_CSV_COLUMNS, []);
+  assert.equal(parsed.products[0]!.deliveryPricing, null);
+});
+
+test('a distance figure that is not a number skips the product', () => {
+  const { header, rows } = buildExportRows([product({ pricingKind: 'DISTANCE' })]);
+  const csvRows: CsvRow[] = rows.map((row) =>
+    Object.fromEntries(header.map((column) => [column, row[column] ?? ''])),
+  );
+  csvRows[0]!['Distance Per Block'] = 'ten';
+  const parsed = parseProducts(csvRows, header, SHOPIFY_CSV_COLUMNS, []);
+  assert.equal(parsed.products.length, 0);
+  assert.ok(parsed.issues.some((issue) => issue.code === 'BAD_DISTANCE_AMOUNT'));
 });

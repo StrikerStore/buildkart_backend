@@ -445,6 +445,11 @@ export async function getProductForForm(
     hsnCode: product.hsnCode ?? '',
     isRateVolatile: product.isRateVolatile,
     bulkTierBasis: product.bulkTierBasis,
+    pricingKind: product.pricingKind,
+    distanceBaseAddition: normalizeMoney(product.distanceBaseAddition.toString()),
+    // Trailing zeros trimmed, like the tax rate: "5", not "5.00".
+    distanceBlockKm: String(Number(product.distanceBlockKm)),
+    distancePerBlockAddition: normalizeMoney(product.distancePerBlockAddition.toString()),
     searchKeywords: product.searchKeywords ?? '',
     seoTitle: product.seoTitle ?? '',
     seoDescriptionEn: product.seoDescriptionEn ?? '',

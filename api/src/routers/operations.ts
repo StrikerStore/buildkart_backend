@@ -39,7 +39,7 @@ import {
   presignMediaUpload,
   runImageBatch,
   saveDiscount,
-  saveDistancePricing,
+  saveDeliveryCharges,
   saveUnloadingService,
   savePincode,
   saveWarehouse,
@@ -97,9 +97,9 @@ export const operationsRouter = router({
   saveUnloadingService: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveUnloadingService(ctx.actor, input)),
-  saveDistancePricing: adminProcedure
+  saveDeliveryCharges: adminProcedure
     .input(payload)
-    .mutation(({ ctx, input }) => saveDistancePricing(ctx.actor, input)),
+    .mutation(({ ctx, input }) => saveDeliveryCharges(ctx.actor, input)),
 
   // --- discounts ---------------------------------------------------------
   discounts: adminProcedure.query(({ ctx }) => listDiscounts(ctx.actor)),

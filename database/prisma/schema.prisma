@@ -54,12 +54,12 @@ model AdminUser {
   /// SETTINGS_ENCRYPTION_KEY under the context `admin.totp:<id>`; null until
   /// set up. `totpPendingEnc` is one being set up — on a first enrolment, or a
   /// move to a new phone — which replaces it only once a code from it is typed.
-  totpSecretEnc  String?   @db.Text
-  totpPendingEnc String?   @db.Text
-  totpEnabledAt  DateTime?
+  totpSecretEnc      String?   @db.Text
+  totpPendingEnc     String?   @db.Text
+  totpEnabledAt      DateTime?
   /// The 30-second step of the last code accepted. A code at or before it is
   /// refused, so one watched being typed cannot be used again.
-  totpLastStep   Int?
+  totpLastStep       Int?
   /// SHA-256 of each unused recovery code. Spending one removes it.
   totpRecoveryHashes Json?
 
@@ -487,6 +487,22 @@ model Product {
   /// actually carries rungs.
   bulkTierBasis BulkTierBasis @default(QUANTITY)
 
+  /// How the price behaves with distance (`shared/src/delivery-pricing.ts`).
+  ///
+  /// FLAT is the same price everywhere, with the order paying a delivery charge
+  /// from the `delivery.charges` setting. DISTANCE adds `distanceBaseAddition`
+  /// plus `distancePerBlockAddition` for every `distanceBlockKm` started — from
+  /// the nearest warehouse stocking the variant — to each unit, and delivers
+  /// free.
+  ///
+  /// Per product, not per variant: one set of figures the whole matrix shares.
+  /// The figures are kept when a product goes back to FLAT, so switching again
+  /// does not mean typing them twice. Defaults make every existing product FLAT.
+  pricingKind              PricingKind @default(FLAT)
+  distanceBaseAddition     Decimal     @default(0) @db.Decimal(10, 2)
+  distanceBlockKm          Decimal     @default(5) @db.Decimal(5, 2)
+  distancePerBlockAddition Decimal     @default(0) @db.Decimal(10, 2)
+
   seoTitle         String? @db.VarChar(255)
   seoDescriptionEn String? @db.Text
   seoDescriptionHi String? @db.Text
@@ -673,6 +689,12 @@ model ProductVariant {
 }
 
 /// How a variant's bulk ladder is measured.
+/// See `Product.pricingKind`.
+enum PricingKind {
+  FLAT
+  DISTANCE
+}
+
 enum BulkTierBasis {
   /// Rungs are counts of units on one line: "20 or more bags".
   QUANTITY
@@ -1063,22 +1085,30 @@ model Order {
   /// address must not rewrite where a past order went.
   addressSnapshot Json
 
-  /// Frozen per-warehouse delivery breakdown, when the charge was worked out by
-  /// distance: [{ warehouseId, warehouseName, roadKm, charge, variantIds }].
+  /// Frozen per-warehouse delivery breakdown from the old per-warehouse
+  /// distance charge: [{ warehouseId, warehouseName, roadKm, charge }].
   ///
-  /// Frozen for the same reason as `taxBreakdown`: ops needs to know which
-  /// godown sent what, and recomputing it later from live warehouse rows would
-  /// answer for today's stock rather than the day the order was placed. Null on
-  /// orders charged by the per-pincode rule.
+  /// No longer written — the charge is one per order now, recorded in
+  /// `deliveryBreakdown`. Kept for the orders that have it; dropped in a later
+  /// release.
   deliveryLegs Json?
+
+  /// How the shop's rules arrived at `deliveryCharge`, frozen with it:
+  /// { slabBase, distanceCharge, roadKm, warehouseCode, freeAbove, free, waived }.
+  ///
+  /// Frozen for the same reason as `taxBreakdown`: recomputing it later from
+  /// live settings and warehouse rows would answer for today, not for the day
+  /// the order was placed. Null when a person typed the charge, and on orders
+  /// placed before it existed.
+  deliveryBreakdown Json?
 
   customerNote String? @db.Text
 
   /// Set when the order outlived tax law's record-keeping and its personal
   /// details were cleared (the totals and the place, never the person).
-  piiErasedAt DateTime?
-  internalNote String? @db.Text
-  cancelReason String? @db.Text
+  piiErasedAt  DateTime?
+  internalNote String?   @db.Text
+  cancelReason String?   @db.Text
 
   /// Denormalised current payment state, so the orders list and the detail
   /// header render without joining the transaction ledger below. The ledger
@@ -1114,18 +1144,18 @@ model Order {
   cashbackStatus    CashbackStatus @default(NONE)
   cashbackReleaseAt DateTime?
 
-  placedAt    DateTime  @default(now())
+  placedAt           DateTime  @default(now())
   /// When the shop marked it delivered — the time entered on "Mark as
   /// delivered", which defaults to the click but can be set to when the goods
   /// actually changed hands.
-  deliveredAt DateTime?
+  deliveredAt        DateTime?
   /// When the customer is told to expect it, entered on "Send out for
   /// delivery" and quoted in the out-for-delivery message.
   expectedDeliveryAt DateTime?
   /// Storefront orders only: when this order confirms itself if nobody has
   /// touched it. Cleared by any status change, so an order stepped back to
   /// Placed by hand is not confirmed again behind the owner's back.
-  autoConfirmAt DateTime?
+  autoConfirmAt      DateTime?
 
   /// Set when the shop ended a partly delivered order with what had arrived.
   /// The lines are re-priced to the delivered quantities at that moment (each
@@ -1139,8 +1169,8 @@ model Order {
   /// customer's own view and the invoice all carry on as before.
   archivedAt DateTime?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
   discount       Discount?             @relation(fields: [discountId], references: [id], onDelete: SetNull)
@@ -1485,7 +1515,7 @@ model MarketingEvent {
   eventId   String  @unique @db.VarChar(191)
   orderId   String? @db.VarChar(191)
 
-  payload Json
+  payload   Json
   /// PENDING, SENT or FAILED. A VARCHAR for the same reason as the channel.
   status    String  @default("PENDING") @db.VarChar(16)
   attempts  Int     @default(0)
@@ -1561,6 +1591,15 @@ model OrderItem {
   /// Summed across lines this is exactly `Order.taxTotal` — rounded per line
   /// and then summed, never the other way round.
   taxAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  /// For a distance-priced line: the per-unit addition already inside
+  /// `unitPrice`, the road distance it was priced at, and the warehouse it was
+  /// measured from (its code, not a relation — a deleted or renamed warehouse
+  /// must not rewrite the record). Null on flat-priced and overridden lines,
+  /// and on every order placed before distance pricing.
+  distanceAddition      Decimal? @db.Decimal(10, 2)
+  distanceKm            Decimal? @db.Decimal(7, 1)
+  distanceWarehouseCode String?  @db.VarChar(32)
 
   order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product       Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
@@ -1974,8 +2013,8 @@ model PrivacyRequest {
   /// When a confirmed account deletion runs, after its cooling-off week.
   scheduledFor DateTime?
   dueAt        DateTime
-  resolvedAt  DateTime?
-  handledById String?   @db.VarChar(191)
+  resolvedAt   DateTime?
+  handledById  String?   @db.VarChar(191)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

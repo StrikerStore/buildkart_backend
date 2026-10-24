@@ -29,7 +29,7 @@ const percent = z.coerce
  * The wallet rules, as the admin form posts them.
  *
  * A mirror of the `rewards.wallet` setting rather than a reuse of it, for the
- * reason `distancePricingSchema` gives: a stored value defaults its missing
+ * reason `deliveryChargesSchema` gives: a stored value defaults its missing
  * fields, a form must not.
  */
 export const walletRulesInputSchema = z

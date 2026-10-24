@@ -21,8 +21,19 @@
  */
 import { prisma, type Prisma } from '@buildkart/database';
 import {
+  addMoney,
   canFulfil,
+  compareMoney,
   discountPercent,
+  distanceAdditionFor,
+  metresToKm,
+  nearestWarehouse,
+  shiftTierDtos,
+  storefrontPointOf,
+  type GeoPoint,
+  type PricingKind,
+  type StorefrontPoint,
+  type WarehouseCandidate,
   formatMetafieldCell,
   isPassthroughNamespace,
   parseOptionFilter,
@@ -61,7 +72,13 @@ import { TIER_SELECT, bestTier, toTierDtos } from '../tiers.ts';
 import { categoryTreeMembershipWhere } from '../membership.ts';
 import { countsFor } from '../category-rule-sets.ts';
 import { getSettings } from './settings.ts';
-import { loadFlatRate } from './delivery-rate.ts';
+import {
+  DISTANCE_PRICING_SELECT,
+  distanceParamsOf,
+  loadAreaTerms,
+  loadDeliveryRules,
+} from './delivery-charges.ts';
+import { findActiveWarehouses, findStockingWarehouses } from './warehouses.ts';
 
 // ---------------------------------------------------------------------------
 // Visibility
@@ -98,6 +115,7 @@ const CARD_SELECT = {
   nameHi: true,
   isRateVolatile: true,
   hasVariants: true,
+  ...DISTANCE_PRICING_SELECT,
   brand: { select: { nameEn: true } },
   images: {
     orderBy: { position: 'asc' },
@@ -156,27 +174,131 @@ function toBadge(tag: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Distance pricing
+// ---------------------------------------------------------------------------
+
+type PricedProductRow = {
+  pricingKind: PricingKind;
+  distanceBaseAddition: { toString(): string };
+  distanceBlockKm: { toString(): string };
+  distancePerBlockAddition: { toString(): string };
+};
+
+/**
+ * Prices distance-priced products for one request, from where the shopper is.
+ *
+ * One per request, shared by everything on the page — the home feed's dozen
+ * sections, a product and its related cards — so the rules and the warehouses
+ * are read once, and stocking warehouses only for the distance-priced variants
+ * actually being shown. A page of flat-priced products costs nothing extra.
+ *
+ * Without a point, a distance-priced product is priced at the warehouse gate
+ * (0 km) and the card says "from".
+ */
+export type DistancePricer = {
+  located: boolean;
+  /** Reads what `additionFor` needs for these rows. Call before mapping them. */
+  prime(rows: ReadonlyArray<{ pricingKind: PricingKind; variants: ReadonlyArray<{ id: string }> }>): Promise<void>;
+  /** The per-unit addition for one variant of a product, and how far it travels. */
+  additionFor(product: PricedProductRow, variantId: string): { addition: string; metres: number | null };
+};
+
+export function distancePricerFor(point: GeoPoint | null): DistancePricer {
+  const stockedBy = new Map<string, WarehouseCandidate[]>();
+  /*
+   * In-flight loads by variant. The home feed resolves its sections in
+   * parallel through one pricer, so a variant another section is already
+   * loading is waited on rather than skipped — skipping it would price it from
+   * the fallback warehouse before its own had arrived.
+   */
+  const pending = new Map<string, Promise<void>>();
+  let roadFactor = 1.3;
+  let fallback: WarehouseCandidate[] = [];
+  let shared: Promise<void> | null = null;
+  const loadShared = () =>
+    (shared ??= Promise.all([loadDeliveryRules(), findActiveWarehouses()]).then(
+      ([rules, active]) => {
+        roadFactor = rules.roadFactor;
+        fallback = active;
+      },
+    ));
+
+  return {
+    located: point !== null,
+
+    async prime(rows) {
+      if (!point) return;
+      const ids = rows
+        .filter((row) => row.pricingKind === 'DISTANCE')
+        .flatMap((row) => row.variants.map((variant) => variant.id));
+      if (ids.length === 0) return;
+
+      const fresh = [...new Set(ids.filter((id) => !pending.has(id)))];
+      if (fresh.length > 0) {
+        const load = Promise.all([findStockingWarehouses(fresh), loadShared()]).then(
+          ([stocked]) => {
+            for (const [id, candidates] of stocked) stockedBy.set(id, candidates);
+          },
+        );
+        for (const id of fresh) pending.set(id, load);
+      }
+      await Promise.all(ids.map((id) => pending.get(id)));
+    },
+
+    additionFor(product, variantId) {
+      if (product.pricingKind !== 'DISTANCE') return { addition: '0.00', metres: null };
+      const params = distanceParamsOf(product);
+      if (!point) return { addition: distanceAdditionFor(0, params), metres: null };
+
+      const stocked = stockedBy.get(variantId);
+      const route = nearestWarehouse(
+        stocked && stocked.length > 0 ? stocked : fallback,
+        point,
+        roadFactor,
+      );
+      return {
+        addition: distanceAdditionFor(route?.metres ?? 0, params),
+        metres: route ? route.metres : null,
+      };
+    },
+  };
+}
+
+/** Maps a page of rows once their distance pricing is primed. */
+async function toCards(rows: CardRow[], pricer: DistancePricer): Promise<StorefrontCardDto[]> {
+  await pricer.prime(rows);
+  return rows.map((row) => toCardDto(row, pricer));
+}
+
 /**
  * A product row to the tile the grid draws.
  *
  * The advertised variant is the **cheapest sellable one**, not the first or the
  * lowest-priced overall: a shop showing "from ₹410" for a size it cannot
- * deliver has lied, and the customer finds out two taps later.
+ * deliver has lied, and the customer finds out two taps later. Cheapest *here*:
+ * a distance-priced product's prices already include carrying it to the
+ * shopper, rungs included.
  */
-export function toCardDto(row: CardRow): StorefrontCardDto {
+export function toCardDto(row: CardRow, pricer: DistancePricer): StorefrontCardDto {
   const sellable = row.variants.filter((variant) => canFulfil(variant, 1));
 
   // Prefer a sellable variant; fall back to any so an out-of-stock product
   // still shows a price rather than a blank card.
-  const pool = sellable.length > 0 ? sellable : row.variants;
-  let cheapest = pool[0];
-  for (const variant of pool) {
-    if (cheapest && Number(variant.price) < Number(cheapest.price)) cheapest = variant;
+  const pool = (sellable.length > 0 ? sellable : row.variants).map((variant) => {
+    const { addition } = pricer.additionFor(row, variant.id);
+    return { variant, addition, price: addMoney(decimalToString(variant.price), addition) };
+  });
+  let best = pool[0];
+  for (const entry of pool) {
+    if (best && compareMoney(entry.price, best.price) < 0) best = entry;
   }
+  const cheapest = best?.variant;
 
-  const price = cheapest ? decimalToString(cheapest.price) : null;
+  const price = best?.price ?? null;
   const compareAtPrice = cheapest ? decimalToString(cheapest.compareAtPrice) : null;
-  const cheapestBulk = cheapest ? bestTier(toTierDtos(cheapest.tiers)) : null;
+  const cheapestBulk =
+    cheapest && best ? bestTier(shiftTierDtos(toTierDtos(cheapest.tiers), best.addition)) : null;
 
   return {
     handle: row.handle,
@@ -207,6 +329,8 @@ export function toCardDto(row: CardRow): StorefrontCardDto {
     badges: row.tags.map((row) => toBadge(row.tag)),
     isRateVolatile: row.isRateVolatile,
     priceUpdatedAt: dateToIso(cheapest?.priceUpdatedAt ?? null),
+    pricingKind: row.pricingKind,
+    priceIsFrom: row.pricingKind === 'DISTANCE' && !pricer.located,
   };
 }
 
@@ -317,11 +441,19 @@ function narrowBy(query: StorefrontListQuery): Prisma.ProductWhereInput[] {
  * operator scanning their own catalogue notices. A shopper would not. So the
  * price sorts group the minimum price per product first, order that exactly,
  * and page over the result. It costs one extra query and is correct.
+ *
+ * Correct for the list price, that is. Both the price sort and the price filter
+ * read `ProductVariant.price`, which for a distance-priced product is the price
+ * before its distance addition — so such a product can sit up to its addition
+ * out of order, or just outside a price bound. Sorting by the shopper's own
+ * price would mean pricing the whole match before paging it; the small error is
+ * the better trade.
  */
 async function listVisible(
   extra: Prisma.ProductWhereInput,
   query: StorefrontListQuery,
 ): Promise<StorefrontListResultDto> {
+  const pricer = distancePricerFor(storefrontPointOf(query));
   const where: Prisma.ProductWhereInput = {
     ...VISIBLE_PRODUCT,
     AND: [extra, ...narrowBy(query)],
@@ -375,7 +507,7 @@ async function listVisible(
   }
 
   return {
-    products: rows.map(toCardDto),
+    products: await toCards(rows, pricer),
     total,
     page: query.page,
     totalPages: Math.max(1, Math.ceil(total / STOREFRONT_PAGE_SIZE)),
@@ -736,8 +868,16 @@ export async function searchProducts(query: StorefrontListQuery): Promise<Storef
  * searching "cement" on a busy morning costs one query, short enough that a
  * price the owner edited is not wrong in the dropdown for long. It is
  * per-instance, so it is a cushion rather than a guarantee.
+ *
+ * What is cached is the *unpriced* row. A distance-priced product's price
+ * depends on who is asking, and a price cached for one shopper's location
+ * would be served to the next; the pricing is applied after the cache.
  */
-const suggestCache = new Map<string, { at: number; rows: StorefrontSuggestionDto[] }>();
+type SuggestRow = Omit<StorefrontSuggestionDto, 'price' | 'pricingKind' | 'priceIsFrom'> & {
+  product: PricedProductRow;
+  variant: { id: string; price: string } | null;
+};
+const suggestCache = new Map<string, { at: number; rows: SuggestRow[] }>();
 const SUGGEST_TTL_MS = 60_000;
 /** Bounded so a crawler typing nonsense cannot grow it without limit. */
 const SUGGEST_CACHE_MAX = 500;
@@ -769,13 +909,17 @@ function suggestKey(query: StorefrontSuggestQuery): string {
  * deleted. A stale handle in somebody's cookie is not an error worth raising;
  * it is just one fewer tile.
  */
-export async function cardsByHandles(handles: string[]): Promise<StorefrontCardDto[]> {
+export async function cardsByHandles(
+  handles: string[],
+  point: StorefrontPoint = {},
+): Promise<StorefrontCardDto[]> {
   const rows = await prisma.product.findMany({
     where: { AND: [VISIBLE_PRODUCT, { handle: { in: handles } }] },
     select: CARD_SELECT,
   });
 
-  const byHandle = new Map(rows.map((row) => [row.handle, toCardDto(row)]));
+  const cards = await toCards(rows, distancePricerFor(storefrontPointOf(point)));
+  const byHandle = new Map(cards.map((card) => [card.handle, card]));
   return handles.map((handle) => byHandle.get(handle)).filter((card) => card !== undefined);
 }
 
@@ -784,8 +928,28 @@ export async function suggestProducts(
 ): Promise<StorefrontSuggestionDto[]> {
   const key = suggestKey(query);
   const hit = suggestCache.get(key);
-  if (hit && Date.now() - hit.at < SUGGEST_TTL_MS) return hit.rows;
+  const rows =
+    hit && Date.now() - hit.at < SUGGEST_TTL_MS ? hit.rows : await loadSuggestRows(query, key);
 
+  const pricer = distancePricerFor(storefrontPointOf(query));
+  await pricer.prime(
+    rows.map((row) => ({
+      pricingKind: row.product.pricingKind,
+      variants: row.variant ? [row.variant] : [],
+    })),
+  );
+
+  return rows.map(({ product, variant, ...row }) => ({
+    ...row,
+    price: variant
+      ? addMoney(variant.price, pricer.additionFor(product, variant.id).addition)
+      : null,
+    pricingKind: product.pricingKind,
+    priceIsFrom: product.pricingKind === 'DISTANCE' && !pricer.located,
+  }));
+}
+
+async function loadSuggestRows(query: StorefrontSuggestQuery, key: string): Promise<SuggestRow[]> {
   const products = await prisma.product.findMany({
     where: { AND: [VISIBLE_PRODUCT, matchesText(query.q)] },
     orderBy: [{ updatedAt: 'desc' }],
@@ -794,6 +958,7 @@ export async function suggestProducts(
       handle: true,
       nameEn: true,
       nameHi: true,
+      ...DISTANCE_PRICING_SELECT,
       brand: { select: { nameEn: true } },
       images: {
         orderBy: { position: 'asc' },
@@ -804,12 +969,12 @@ export async function suggestProducts(
         where: { isActive: true },
         orderBy: { price: 'asc' },
         take: 1,
-        select: { price: true, unitLabelEn: true, unitLabelHi: true },
+        select: { id: true, price: true, unitLabelEn: true, unitLabelHi: true },
       },
     },
   });
 
-  const rows: StorefrontSuggestionDto[] = products.map((product) => {
+  const rows: SuggestRow[] = products.map((product) => {
     const cheapest = product.variants[0];
     return {
       handle: product.handle,
@@ -817,9 +982,15 @@ export async function suggestProducts(
       nameHi: product.nameHi,
       brandName: product.brand?.nameEn ?? null,
       imageKey: product.images[0]?.media.r2Key ?? null,
-      price: cheapest ? decimalToString(cheapest.price) : null,
       unitLabelEn: cheapest?.unitLabelEn ?? null,
       unitLabelHi: cheapest?.unitLabelHi ?? null,
+      product: {
+        pricingKind: product.pricingKind,
+        distanceBaseAddition: product.distanceBaseAddition,
+        distanceBlockKm: product.distanceBlockKm,
+        distancePerBlockAddition: product.distancePerBlockAddition,
+      },
+      variant: cheapest ? { id: cheapest.id, price: decimalToString(cheapest.price) } : null,
     };
   });
 
@@ -839,7 +1010,10 @@ export async function suggestProducts(
  * useful neighbour of a 50 kg cement bag is another cement, and tag overlap
  * ("waterproof") crosses into products that answer a different question.
  */
-export async function getProductPage(handle: string): Promise<StorefrontProductDto | null> {
+export async function getProductPage(
+  handle: string,
+  point: StorefrontPoint = {},
+): Promise<StorefrontProductDto | null> {
   const product = await prisma.product.findFirst({
     where: { handle, ...VISIBLE_PRODUCT },
     select: {
@@ -855,6 +1029,7 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
       returnPolicyHi: true,
       isRateVolatile: true,
       bulkTierBasis: true,
+      ...DISTANCE_PRICING_SELECT,
       hsnCode: true,
       seoTitle: true,
       seoDescriptionEn: true,
@@ -921,24 +1096,38 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
       : Promise.resolve([]),
   ]);
 
-  const variants: StorefrontVariantDto[] = product.variants.map((variant) => ({
-    id: variant.id,
-    sku: variant.sku,
-    option1Value: variant.option1Value,
-    option2Value: variant.option2Value,
-    option3Value: variant.option3Value,
-    price: decimalToString(variant.price),
-    compareAtPrice: decimalToString(variant.compareAtPrice),
-    tiers: toTierDtos(variant.tiers),
-    unitLabelEn: variant.unitLabelEn,
-    unitLabelHi: variant.unitLabelHi,
-    inStock: canFulfil(variant, 1),
-    // Null rather than the raw column when inventory is untracked: there is no
-    // count to show, and 0 would read as "sold out" on a line that is not.
-    stockQty: variant.inventoryTracked ? variant.stockQty : null,
-    imageKey: variant.image?.media.r2Key ?? null,
-    priceUpdatedAt: dateToIso(variant.priceUpdatedAt),
-  }));
+  /*
+   * Priced for where the shopper is: a distance-priced product's price and
+   * every rung already include carrying it there, so the picker, the ladder
+   * and the line total all show what the cart will charge without doing any
+   * arithmetic of their own.
+   */
+  const pricer = distancePricerFor(storefrontPointOf(point));
+  await pricer.prime([product, ...related]);
+
+  const variants: StorefrontVariantDto[] = product.variants.map((variant) => {
+    const { addition, metres } = pricer.additionFor(product, variant.id);
+    return {
+      id: variant.id,
+      sku: variant.sku,
+      option1Value: variant.option1Value,
+      option2Value: variant.option2Value,
+      option3Value: variant.option3Value,
+      price: addMoney(decimalToString(variant.price), addition),
+      compareAtPrice: decimalToString(variant.compareAtPrice),
+      tiers: shiftTierDtos(toTierDtos(variant.tiers), addition),
+      unitLabelEn: variant.unitLabelEn,
+      unitLabelHi: variant.unitLabelHi,
+      inStock: canFulfil(variant, 1),
+      // Null rather than the raw column when inventory is untracked: there is no
+      // count to show, and 0 would read as "sold out" on a line that is not.
+      stockQty: variant.inventoryTracked ? variant.stockQty : null,
+      imageKey: variant.image?.media.r2Key ?? null,
+      priceUpdatedAt: dateToIso(variant.priceUpdatedAt),
+      distanceAddition: addition,
+      roadKm: metres === null ? null : metresToKm(metres),
+    };
+  });
 
   return {
     id: product.id,
@@ -972,7 +1161,9 @@ export async function getProductPage(handle: string): Promise<StorefrontProductD
     seoTitle: product.seoTitle,
     seoDescriptionEn: product.seoDescriptionEn,
     seoDescriptionHi: product.seoDescriptionHi,
-    related: related.map(toCardDto),
+    related: related.map((row) => toCardDto(row, pricer)),
+    pricingKind: product.pricingKind,
+    located: pricer.located,
   };
 }
 
@@ -1048,8 +1239,10 @@ const BANNER_SELECT = {
  * HTTP, and the batch link cannot help when the later calls depend on the first
  * one's answer.
  */
-export async function getHomeFeed(): Promise<StorefrontHomeDto> {
+export async function getHomeFeed(point: StorefrontPoint = {}): Promise<StorefrontHomeDto> {
   const now = new Date();
+  // One for the whole page, so a product in three sections is routed once.
+  const pricer = distancePricerFor(storefrontPointOf(point));
 
   const [hero, strip, bottom, sections] = await Promise.all([
     prisma.banner.findMany({
@@ -1085,7 +1278,7 @@ export async function getHomeFeed(): Promise<StorefrontHomeDto> {
     : null;
 
   const resolved = await Promise.all(
-    sections.map((section) => resolveSection(section, strip.map(toBannerDto), settings)),
+    sections.map((section) => resolveSection(section, strip.map(toBannerDto), settings, pricer)),
   );
 
   return {
@@ -1109,6 +1302,7 @@ async function resolveSection(
   row: SectionRow,
   stripBanners: StorefrontBannerDto[],
   settings: Pick<SettingsDto, 'commerce' | 'wallet'> | null,
+  pricer: DistancePricer,
 ): Promise<StorefrontSectionDto | null> {
   /*
    * `configJson` is `Json` and its shape follows `type` — which is exactly why
@@ -1166,10 +1360,11 @@ async function resolveSection(
         where: { id: { in: wanted }, ...VISIBLE_PRODUCT },
         select: { ...CARD_SELECT, id: true },
       });
+      await pricer.prime(rows);
       const byId = new Map(rows.map((product) => [product.id, product]));
       const products = wanted.flatMap((id) => {
         const found = byId.get(id);
-        return found ? [toCardDto(found)] : [];
+        return found ? [toCardDto(found, pricer)] : [];
       });
 
       return products.length > 0
@@ -1208,7 +1403,7 @@ async function resolveSection(
       return {
         ...head,
         type: 'TAG_CAROUSEL',
-        products: rows.map(toCardDto),
+        products: await toCards(rows, pricer),
         // The tag is a collection, so the row has somewhere to lead.
         href: `/collections/${tag.slug}`,
       };
@@ -1238,7 +1433,7 @@ async function resolveSection(
       // An empty window hides the band rather than rendering a titled gap.
       if (rows.length === 0) return null;
 
-      return { ...head, type: 'NEW_ARRIVALS', products: rows.map(toCardDto), href: null };
+      return { ...head, type: 'NEW_ARRIVALS', products: await toCards(rows, pricer), href: null };
     }
 
     case 'TRENDING': {
@@ -1291,12 +1486,13 @@ async function resolveSection(
         where: { ...VISIBLE_PRODUCT, id: { in: ranked } },
         select: { ...CARD_SELECT, id: true },
       });
+      await pricer.prime(rows);
       // The ranking's order, not the database's.
       const byId = new Map(rows.map((product) => [product.id, product]));
       const products = ranked
         .flatMap((productId) => {
           const found = byId.get(productId);
-          return found ? [toCardDto(found)] : [];
+          return found ? [toCardDto(found, pricer)] : [];
         })
         .slice(0, limit);
       if (products.length === 0) return null;
@@ -1316,7 +1512,7 @@ async function resolveSection(
       });
       if (rows.length === 0) return null;
 
-      return { ...head, type: 'RATE_TICKER', products: rows.map(toCardDto), href: null };
+      return { ...head, type: 'RATE_TICKER', products: await toCards(rows, pricer), href: null };
     }
 
     case 'BANNER_STRIP':
@@ -1463,16 +1659,16 @@ export async function listServiceableAreas(): Promise<StorefrontAreaDto[]> {
         promiseHours: true,
       },
     }),
-    loadFlatRate(),
+    loadAreaTerms(),
   ]);
 
-  // The charge is the shop's one flat rate, repeated per area so the shape
-  // the storefront already reads did not have to change.
+  // The same terms for every area: the charge depends on the cart and the
+  // distance, not the pincode. `deliveryCharge` stays for older clients.
   return rows.map((row) => ({
     pincode: row.pincode,
     areaName: row.areaNameEn,
     city: row.city,
-    deliveryCharge: rate.charge,
+    deliveryCharge: rate.deliveryCharge,
     freeAbove: rate.freeAbove,
     promiseHours: row.promiseHours,
   }));

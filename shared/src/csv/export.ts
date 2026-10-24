@@ -69,6 +69,11 @@ export type ExportProduct = {
   optionLinkedTo: Array<string | null>;
   /** How this product's ladders read. Written on every row of the product. */
   bulkTierBasis: 'QUANTITY' | 'AMOUNT';
+  /** Distance pricing, written on the product's first row. */
+  pricingKind: 'FLAT' | 'DISTANCE';
+  distanceBaseAddition: string;
+  distanceBlockKm: number;
+  distancePerBlockAddition: string;
   variants: ExportVariant[];
   images: ExportImage[];
   metafields: ExportMetafield[];
@@ -200,6 +205,10 @@ export function buildProductRows(product: ExportProduct, header: readonly string
       row['SEO Title'] = product.seoTitle ?? '';
       row['SEO Description'] = product.seoDescription ?? '';
       row['Gift Card'] = 'FALSE';
+      row['Pricing Kind'] = product.pricingKind;
+      row['Distance Base Addition'] = product.distanceBaseAddition;
+      row['Distance Block Km'] = String(product.distanceBlockKm);
+      row['Distance Per Block'] = product.distancePerBlockAddition;
 
       for (const [axisIndex, name] of product.optionNames.entries()) {
         row[`Option${axisIndex + 1} Name`] = name;

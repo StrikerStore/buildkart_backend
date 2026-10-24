@@ -133,7 +133,7 @@ All catalog structure is **data, not code** — exactly like Shopify.
 - **Collection** *(Shopify-style, phase 2)* — manual or rule-based ("all products tagged `monsoon`") groupings for homepage sections and promotions.
 - **Discount** — code or automatic; percent / flat amount / free delivery; constraints: min order value, specific categories/products/tags, usage limit, per-customer limit, validity window, active flag.
 - **Customer** — phone (primary id), name, saved addresses (with pincode **and pinned map coordinates**), language preference, order history.
-- **ServiceablePincode** — pincode, area name, delivery charge, free-delivery-above threshold, active flag. **Adding a pincode in admin instantly expands the delivery area.**
+- **ServiceablePincode** — pincode, area name, delivery charge, free-delivery-above threshold, active flag. **Adding a pincode in admin instantly expands the delivery area.** *(Superseded: a pincode now only says whether the shop delivers there. Delivery charges are the cart-total slabs and distance ranges on Delivery → Delivery charges, and some products are priced by distance instead — see ARCHITECTURE.md, "Pricing and delivery".)*
 - **Order** — items (product/variant snapshot with price at time of order), status timeline (`Placed → Confirmed → Packed → Out for Delivery → Delivered` / `Cancelled`), payment method (Razorpay/COD) & payment status, address, delivery charge, discount applied, customer notes.
 - **Banner / HomepageSection** — hero banners and featured sections managed from admin.
 - **AdminUser** — email, role (`owner`, `staff` later), permissions.
@@ -170,7 +170,7 @@ All catalog structure is **data, not code** — exactly like Shopify.
 4. **Daily rate update** — a dedicated **"Today's Rates" quick-edit screen**: volatile products (cement, sariya) in one table, inline edit of both regular and bulk price, save all at once. Designed for a 2-minute morning routine.
 5. **Orders** — list with status filters, order detail, one-click status advance (customer sees timeline update), payment status, print-friendly order slip/invoice, cancel with reason.
 6. **Discounts** — create codes or automatic discounts with all constraints from §5; enable/disable; usage stats.
-7. **Delivery settings** — manage serviceable pincodes (add/remove, per-pincode delivery charge, free-delivery threshold), view "notify me" demand per pincode.
+7. **Delivery settings** — manage serviceable pincodes (add/remove, per-pincode delivery charge, free-delivery threshold), view "notify me" demand per pincode. *(Superseded for charges — see ARCHITECTURE.md, "Pricing and delivery".)*
 8. **Customers** — list with order count/total spend, detail view with history.
 9. **Banners & homepage** — upload hero banners, pick featured products/sections.
 10. **Inventory signals** — stock counts decrement on order; low-stock list on dashboard.

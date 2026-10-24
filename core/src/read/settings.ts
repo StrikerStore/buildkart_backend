@@ -50,10 +50,7 @@ export async function getSettings(): Promise<SettingsDto> {
 
   const promise = parseSetting('delivery.promise', byKey.get('delivery.promise'));
   const sequence = parseSetting('order.numberSequence', byKey.get('order.numberSequence'));
-  const distance = parseSetting(
-    'delivery.distancePricing',
-    byKey.get('delivery.distancePricing'),
-  );
+  const charges = parseSetting('delivery.charges', byKey.get('delivery.charges'));
 
   return {
     store: parseSetting('store.profile', byKey.get('store.profile')),
@@ -81,20 +78,11 @@ export async function getSettings(): Promise<SettingsDto> {
     // Field by field like everything else here, though this key holds nothing
     // sensitive: the rule is what keeps a future secret from riding along on a
     // spread somebody added without thinking about this function.
-    distancePricing: {
-      enabled: distance.enabled,
-      roadFactor: distance.roadFactor,
-      blockKm: distance.blockKm,
-      perBlockCharge: distance.perBlockCharge,
-      standardThreshold: distance.standardThreshold,
-      standardFreeKm: distance.standardFreeKm,
-      highValueThreshold: distance.highValueThreshold,
-      highValueFreeKm: distance.highValueFreeKm,
-      smallOrderFee: distance.smallOrderFee,
-      smallOrderIncludedKm: distance.smallOrderIncludedKm,
-      maxCharge: distance.maxCharge,
-      flatCharge: distance.flatCharge,
-      flatFreeAbove: distance.flatFreeAbove,
+    deliveryCharges: {
+      roadFactor: charges.roadFactor,
+      slabs: charges.slabs.map((slab) => ({ from: slab.from, base: slab.base })),
+      ranges: charges.ranges.map((range) => ({ upToKm: range.upToKm, addition: range.addition })),
+      freeAbove: charges.freeAbove,
     },
     wallet: toWalletRulesDto(parseSetting('rewards.wallet', byKey.get('rewards.wallet'))),
     unloading: toUnloadingDto(parseSetting('delivery.unloading', byKey.get('delivery.unloading'))),

@@ -19,7 +19,7 @@ import {
 import { assertPermission, type Actor } from '../actor.ts';
 import { variantLabel } from '../variant-label.ts';
 import { TIER_SELECT, toTierDtos } from '../tiers.ts';
-import { loadFlatRate } from './delivery-rate.ts';
+import { DISTANCE_PRICING_SELECT, distanceParamsOf, loadDeliveryRules } from './delivery-charges.ts';
 import type { CustomerLookupResult, PincodeQuote, VariantSearchResult } from '@buildkart/shared';
 export type { CustomerLookupResult, PincodeQuote, VariantSearchResult };
 
@@ -79,29 +79,43 @@ export async function searchVariants(
       inventoryTracked: true,
       inventoryPolicy: true,
       product: {
-        select: { id: true, nameEn: true, nameHi: true, taxPercent: true, taxInclusive: true },
+        select: {
+          id: true,
+          nameEn: true,
+          nameHi: true,
+          taxPercent: true,
+          taxInclusive: true,
+          ...DISTANCE_PRICING_SELECT,
+        },
       },
     },
   });
 
   return actionOk({
-    results: variants.map((variant) => ({
-      variantId: variant.id,
-      productId: variant.product.id,
-      nameEn: variant.product.nameEn,
-      nameHi: variant.product.nameHi,
-      sku: variant.sku,
-      optionLabel: variantLabel(variant),
-      unitLabel: variant.unitLabelEn,
-      price: variant.price.toString(),
-      tiers: toTierDtos(variant.tiers),
-      taxPercent: Number(variant.product.taxPercent),
-      taxInclusive: variant.product.taxInclusive,
-      taxable: variant.taxable,
-      stockQty: variant.stockQty,
-      inventoryTracked: variant.inventoryTracked,
-      inventoryPolicy: variant.inventoryPolicy,
-    })),
+    results: variants.map((variant) => {
+      const distance = distanceParamsOf(variant.product);
+      return {
+        variantId: variant.id,
+        productId: variant.product.id,
+        nameEn: variant.product.nameEn,
+        nameHi: variant.product.nameHi,
+        sku: variant.sku,
+        optionLabel: variantLabel(variant),
+        unitLabel: variant.unitLabelEn,
+        price: variant.price.toString(),
+        tiers: toTierDtos(variant.tiers),
+        taxPercent: Number(variant.product.taxPercent),
+        taxInclusive: variant.product.taxInclusive,
+        taxable: variant.taxable,
+        stockQty: variant.stockQty,
+        inventoryTracked: variant.inventoryTracked,
+        inventoryPolicy: variant.inventoryPolicy,
+        pricingKind: variant.product.pricingKind,
+        distanceBaseAddition: distance.baseAddition,
+        distanceBlockKm: distance.blockKm,
+        distancePerBlockAddition: distance.perBlockAddition,
+      };
+    }),
   });
 }
 
@@ -167,7 +181,9 @@ export async function lookupCustomer(
 }
 
 /**
- * Delivery terms for a pincode, so a form can prefill rather than guess.
+ * Delivery terms for a pincode, so a form can prefill rather than guess. The
+ * rules come back whole: the charge depends on the cart, which the counter
+ * screen is still building.
  *
  * An unserviced pincode is reported, not refused: the shop can and does agree
  * deliveries outside its published areas, and blocking that would push the
@@ -185,18 +201,13 @@ export async function lookupPincode(
     return actionError('Enter a 6-digit pincode.');
   }
 
-  const [area, rate] = await Promise.all([
+  const [area, rules] = await Promise.all([
     prisma.serviceablePincode.findUnique({ where: { pincode } }),
-    loadFlatRate(),
+    loadDeliveryRules(),
   ]);
   if (!area || !area.isActive) {
-    return actionOk({ serviced: false, areaName: null, deliveryCharge: '0.00', freeAbove: null });
+    return actionOk({ serviced: false, areaName: null, rules });
   }
 
-  return actionOk({
-    serviced: true,
-    areaName: area.areaNameEn,
-    deliveryCharge: rate.charge,
-    freeAbove: rate.freeAbove,
-  });
+  return actionOk({ serviced: true, areaName: area.areaNameEn, rules });
 }

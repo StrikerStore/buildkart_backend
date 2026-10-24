@@ -19,34 +19,42 @@ import {
   canFulfil,
   cashbackBase,
   compareMoney,
+  deliveryFeeFor,
   describeDiscount,
   DISCOUNT_REJECTION_MESSAGES,
   evaluateDiscount,
   formatINR,
+  freeDeliveryShortfall,
+  metresToKm,
   multiplyMoney,
   nextCashbackSlab,
   parseSetting,
+  planDistance,
   priceOrder,
   PricingError,
   type PricedLine,
   quoteCashback,
-  quoteDelivery,
+  storefrontPointOf,
   subtractMoney,
   type CartDeliveryDto,
-  type CartDeliveryLegDto,
-  type DeliveryQuote,
   type CartCouponDto,
   type CartCouponsInput,
   type CartDiscountDto,
   type CartDropReason,
   type CartDto,
   type CartLineDto,
+  type DeliveryBreakdown,
   type DiscountRejection,
+  type DistancePlan,
   type PriceCartInput,
 } from '@buildkart/shared';
 import { decimalToString } from '../dto.ts';
-import { flatRateFrom } from './delivery-rate.ts';
-import { findStockingWarehouses } from './warehouses.ts';
+import {
+  deliveryRulesFrom,
+  DISTANCE_PRICING_SELECT,
+  loadRouting,
+  plannedLineOf,
+} from './delivery-charges.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 
 /** The empty answer, so a cleared cart and a cart of only-dead lines agree. */
@@ -108,6 +116,7 @@ const CART_VARIANT_SELECT = {
       categoryId: true,
       taxPercent: true,
       taxInclusive: true,
+      ...DISTANCE_PRICING_SELECT,
       images: { orderBy: { position: 'asc' }, take: 1, select: { media: { select: { r2Key: true } } } },
       tags: { select: { tagId: true } },
     },
@@ -124,34 +133,28 @@ function variantLabel(variant: CartVariant): string | null {
   return parts.length > 0 ? parts.join(' / ') : null;
 }
 
-/**
- * What a quote says delivery costs, or the shop's flat rate when it declined to
- * answer. Null when there is no area at all — an unchosen pincode.
- */
-function chargeFrom(
-  quote: DeliveryQuote,
-  area: { serviced: boolean; charge: string } | null,
-): string | null {
-  if (area === null) return null;
-  if (!area.serviced) return '0.00';
-  return quote.mode === 'DISTANCE' ? quote.deliveryCharge : area.charge;
+export async function priceCart(input: PriceCartInput): Promise<CartDto> {
+  return (await priceCartWithBreakdown(input)).cart;
 }
 
-export async function priceCart(input: PriceCartInput): Promise<CartDto> {
+/**
+ * `priceCart`, plus how the delivery charge was reached — the record the order
+ * writer freezes. Kept off the public DTO: it names a warehouse by its code,
+ * which is the shop's business rather than the shopper's.
+ */
+export async function priceCartWithBreakdown(
+  input: PriceCartInput,
+): Promise<{ cart: CartDto; deliveryBreakdown: DeliveryBreakdown | null }> {
   const settingsRows = await prisma.setting.findMany({
     where: {
       key: {
-        in: ['order.minimumValue', 'delivery.distancePricing', 'rewards.wallet', 'delivery.unloading'],
+        in: ['order.minimumValue', 'delivery.charges', 'rewards.wallet', 'delivery.unloading'],
       },
     },
   });
   const byKey = new Map(settingsRows.map((row) => [row.key, row.value]));
   const minimumOrderValue = parseSetting('order.minimumValue', byKey.get('order.minimumValue')).amount;
-  const distanceConfig = parseSetting(
-    'delivery.distancePricing',
-    byKey.get('delivery.distancePricing'),
-  );
-  const flatRate = flatRateFrom(distanceConfig);
+  const rules = deliveryRulesFrom(byKey.get('delivery.charges'));
   const walletRules = parseSetting('rewards.wallet', byKey.get('rewards.wallet'));
   const unloadingSetting = parseSetting('delivery.unloading', byKey.get('delivery.unloading'));
   /*
@@ -172,36 +175,41 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   const unloadingCharge = unloadingOffer?.selected ? unloadingOffer.price : '0.00';
 
   /*
-   * The pin the shopper dropped, when there is one.
+   * The pin the shopper dropped, when there is one: what distance-priced lines
+   * and the delivery charge are measured to.
    *
    * A coordinate the client supplied can only ever *understate* a distance, and
-   * here it only moves a preview. The authoritative charge is struck at order
-   * time, where `place-order.ts` re-prices from `address.latitude/longitude` —
-   * the pin the goods are actually going to — so a shopper who lies about it
-   * has lied about where their delivery goes.
+   * here it only moves a preview. What is charged is priced again in
+   * `writeOrder` from `address.latitude/longitude` — the pin the goods are
+   * actually going to — so a shopper who lies about it has lied about where
+   * their delivery goes.
    */
-  const destination =
-    input.latitude !== undefined && input.longitude !== undefined
-      ? { latitude: input.latitude, longitude: input.longitude }
-      : null;
+  const destination = storefrontPointOf(input);
 
   const area = input.pincode
     ? await prisma.serviceablePincode.findUnique({ where: { pincode: input.pincode } })
     : null;
 
-  const delivery = input.pincode
+  // Filled in below once the cart is known to hold something. An empty or
+  // undeliverable cart charges nothing.
+  const delivery: CartDeliveryDto | null = input.pincode
     ? {
         pincode: input.pincode,
         areaName: area?.isActive ? area.areaNameEn : null,
         city: area?.isActive ? area.city : null,
         serviced: Boolean(area?.isActive),
-        charge: area?.isActive ? flatRate.charge : '0.00',
-        freeAbove: area?.isActive ? flatRate.freeAbove : null,
+        charge: '0.00',
+        freeAbove: null,
         promiseHours: area?.isActive ? area.promiseHours : null,
-        // Overwritten below once the cart is known to hold something. An empty
-        // or undeliverable cart keeps the flat rate, which costs nothing.
-        mode: 'PINCODE' as CartDeliveryDto['mode'],
-        legs: [] as CartDeliveryLegDto[],
+        hasFlatLines: false,
+        located: destination !== null,
+        slabBase: '0.00',
+        distanceCharge: '0.00',
+        distanceParts: [],
+        roadKm: null,
+        freeShortfall: null,
+        mode: 'PINCODE',
+        legs: [],
       }
     : null;
 
@@ -217,8 +225,12 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     unloading: null,
     unloadingCharge: '0.00',
   };
+  const empty = (dropped: CartDto['dropped'] = []) => ({
+    cart: { ...EMPTY, ...base, dropped },
+    deliveryBreakdown: null,
+  });
 
-  if (input.lines.length === 0) return { ...EMPTY, ...base };
+  if (input.lines.length === 0) return empty();
 
   const variants = await prisma.productVariant.findMany({
     where: { id: { in: input.lines.map((line) => line.variantId) } },
@@ -264,7 +276,24 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     kept.push({ variantId: line.variantId, quantity: line.quantity, variant });
   }
 
-  if (kept.length === 0) return { ...EMPTY, ...base, dropped };
+  if (kept.length === 0) return empty(dropped);
+
+  /*
+   * Every line to its nearest stocking warehouse: a distance-priced line gets
+   * its addition from its own, and the flat-priced lines share one delivery to
+   * the farthest of theirs. Without a pin, everything is priced at 0 km.
+   */
+  const routing = await loadRouting(
+    destination,
+    kept.map((line) => line.variantId),
+  );
+  const plan = planDistance({
+    destination,
+    roadFactor: rules.roadFactor,
+    lines: kept.map(({ variant }) => plannedLineOf(variant.id, variant.product)),
+    stockedBy: routing.stockedBy,
+    fallback: routing.fallback,
+  });
 
   const catalog = kept.map(({ variant }) => ({
     variantId: variant.id,
@@ -274,6 +303,7 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     taxPercent: Number(variant.product.taxPercent),
     taxInclusive: variant.product.taxInclusive,
     taxable: variant.taxable,
+    distanceAddition: plan.lines.get(variant.id)?.addition ?? '0.00',
   }));
 
   const orderLines = kept.map((line) => ({
@@ -293,39 +323,33 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
   try {
     probe = priceOrder(orderLines, catalog, {});
   } catch (error) {
-    if (error instanceof PricingError) return { ...EMPTY, ...base, dropped };
+    if (error instanceof PricingError) return empty(dropped);
     throw error;
   }
 
   /*
-   * The delivery quote is taken twice for the same reason the price is.
+   * The delivery charge is worked out twice for the same reason the price is.
    *
    * A FREE_DELIVERY coupon is worth whatever delivery costs, so resolving it
-   * needs a charge — but the charge's tier is judged on the subtotal *after*
-   * the discount. The first quote breaks the circle by asking what delivery
-   * would cost with no discount at all, which is what the coupon is worth; the
-   * second is the one the customer pays. The warehouse lookup happens once and
-   * `quoteDelivery` is pure, so the second pass costs nothing.
+   * needs a charge — but the charge's slab is judged on the total *after* the
+   * discount. The first figure breaks the circle by asking what delivery would
+   * cost with no discount at all, which is what the coupon is worth; the second
+   * is the one the customer pays. Both are pure arithmetic on the same plan.
+   *
+   * Serviceability is still the pincode's to decide: an unserviced area charges
+   * nothing. And a cart of only distance-priced lines has nothing to charge —
+   * carrying them is in their price.
    */
-  const stockedBy = distanceConfig.enabled
-    ? await findStockingWarehouses(orderLines.map((line) => line.variantId))
-    : new Map();
-
-  const quoteArgs = {
-    destination,
-    lines: orderLines,
-    stockedBy,
-    config: distanceConfig,
-  };
-
-  const probeQuote = quoteDelivery({ ...quoteArgs, afterDiscount: probe.subtotal });
+  const charged = Boolean(delivery?.serviced) && plan.delivery.needed;
+  const feeAt = (cartTotal: string) =>
+    deliveryFeeFor({ cartTotal, metres: plan.delivery.metres, rules });
 
   const resolved = input.discountCode
     ? await resolveDiscount(
         input.discountCode,
         probe,
         kept,
-        chargeFrom(probeQuote, delivery) ?? '0.00',
+        charged ? feeAt(probe.subtotal).charge : '0.00',
       )
     : null;
 
@@ -333,44 +357,47 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     probe.subtotal,
     resolved?.applied ? resolved.amount : '0.00',
   );
-  const quote = quoteDelivery({ ...quoteArgs, afterDiscount });
-
-  /*
-   * Serviceability is still the pincode's to decide. Distance pricing only ever
-   * changes what a delivery costs, never whether there is one — so an unserviced
-   * area charges nothing here exactly as it did before.
-   */
-  const usesDistance = Boolean(delivery?.serviced) && quote.mode === 'DISTANCE';
-
-  if (delivery) {
-    if (usesDistance && quote.mode === 'DISTANCE') {
-      delivery.mode = 'DISTANCE';
-      delivery.charge = quote.deliveryCharge;
-      delivery.legs = quote.legs.map((leg) => ({
-        warehouseId: leg.warehouseId,
-        warehouseName: leg.warehouseName,
-        roadKm: leg.roadKm,
-        charge: leg.charge,
-      }));
-      // The free radius is inside the tiers now, so there is no threshold left
-      // to promise — and showing the flat rate's would be promising the wrong
-      // thing.
-      delivery.freeAbove = null;
-    }
-  }
+  const fee = charged ? feeAt(afterDiscount) : null;
+  const waived = Boolean(resolved?.applied && resolved.freeDelivery);
 
   const pricing = priceOrder(orderLines, catalog, {
-    deliveryCharge: delivery?.serviced ? delivery.charge : '0.00',
+    deliveryCharge: fee?.charge ?? '0.00',
     discountTotal: resolved?.applied ? resolved.amount : undefined,
     // A FREE_DELIVERY discount is expressed as a zero threshold, which is what
     // `priceOrder` already understands — rather than a second free-delivery
-    // concept it would have to be taught. It still zeroes a distance-computed
-    // charge, because the charge is what the threshold is tested against.
-    freeDeliveryAbove: resolved?.applied && resolved.freeDelivery
-      ? '0.00'
-      : (delivery?.serviced ? delivery.freeAbove : null),
+    // concept it would have to be taught. The shop's own threshold is already
+    // inside `fee`.
+    freeDeliveryAbove: waived ? '0.00' : null,
     unloadingCharge,
   });
+
+  const roadKm =
+    plan.located && plan.delivery.warehouse ? metresToKm(plan.delivery.metres) : null;
+
+  if (delivery) {
+    delivery.hasFlatLines = plan.delivery.needed;
+    if (fee) {
+      delivery.charge = pricing.deliveryCharge;
+      delivery.freeAbove = rules.freeAbove;
+      delivery.slabBase = fee.slabBase;
+      delivery.distanceCharge = fee.distanceCharge;
+      delivery.distanceParts = fee.parts;
+      delivery.roadKm = roadKm;
+      delivery.freeShortfall = waived ? null : freeDeliveryShortfall(afterDiscount, rules);
+    }
+  }
+
+  const deliveryBreakdown: DeliveryBreakdown | null = fee
+    ? {
+        slabBase: fee.slabBase,
+        distanceCharge: fee.distanceCharge,
+        roadKm: metresToKm(plan.delivery.metres),
+        warehouseCode: plan.delivery.warehouse?.code ?? null,
+        freeAbove: rules.freeAbove,
+        free: fee.free,
+        waived,
+      }
+    : null;
 
   const pricedById = new Map(pricing.lines.map((line) => [line.variantId, line]));
 
@@ -403,6 +430,9 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
       variant.inventoryPolicy === 'DENY' &&
       variant.stockQty < quantity;
 
+    const planned = plan.lines.get(variant.id);
+    const isDistance = variant.product.pricingKind === 'DISTANCE';
+
     return {
       variantId: variant.id,
       handle: variant.product.handle,
@@ -415,7 +445,9 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
       unitLabelHi: variant.unitLabelHi,
       quantity,
       unitPrice: priced.unitPrice,
-      listUnitPrice: decimalToString(variant.price),
+      // The list rate *for this delivery*, so the bulk strike-through compares
+      // like with like.
+      listUnitPrice: priced.listUnitPrice,
       compareAtPrice: decimalToString(variant.compareAtPrice),
       lineTotal: priced.lineTotal,
       wasBulkPrice: priced.wasBulkPrice,
@@ -423,16 +455,20 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
       nextTier: priced.nextTier,
       availableQty: short ? variant.stockQty : null,
       cashback: lineCashback.get(variant.id) ?? '0.00',
+      pricingKind: variant.product.pricingKind,
+      distanceAddition: priced.distanceAddition,
+      distanceKm:
+        isDistance && plan.located && planned?.warehouse ? metresToKm(planned.metres) : null,
     };
   });
 
-  return {
+  const cart: CartDto = {
     lines,
     dropped,
     itemCount: kept.reduce((sum, line) => sum + line.quantity, 0),
     subtotal: pricing.subtotal,
     listSubtotal: pricing.listSubtotal,
-    savings: savingsOf(kept),
+    savings: savingsOf(kept, plan),
     discountTotal: pricing.discountTotal,
     deliveryCharge: pricing.deliveryCharge,
     grandTotal: pricing.grandTotal,
@@ -451,19 +487,27 @@ export async function priceCart(input: PriceCartInput): Promise<CartDto> {
     unloading: unloadingOffer,
     unloadingCharge: pricing.unloadingCharge,
   };
+  return { cart, deliveryBreakdown };
 }
 
 /**
  * What the shopper saved against MRP.
  *
- * Only counts variants whose `compareAtPrice` is genuinely higher. An MRP equal
- * to the price contributes nothing, because claiming a saving of zero rupees is
+ * Only counts variants whose `compareAtPrice` is genuinely higher than what
+ * they pay here — the list price plus any distance addition. An MRP equal to
+ * the price contributes nothing, because claiming a saving of zero rupees is
  * the kind of thing this audience notices and holds against a shop.
  */
-function savingsOf(kept: Array<{ variant: CartVariant; quantity: number }>): string {
+function savingsOf(
+  kept: Array<{ variant: CartVariant; quantity: number }>,
+  plan: DistancePlan,
+): string {
   return kept.reduce((total, { variant, quantity }) => {
     const compareAt = decimalToString(variant.compareAtPrice);
-    const price = decimalToString(variant.price);
+    const price = addMoney(
+      decimalToString(variant.price),
+      plan.lines.get(variant.id)?.addition ?? '0.00',
+    );
     if (!compareAt || compareMoney(compareAt, price) <= 0) return total;
     return addMoney(total, multiplyMoney(subtractMoney(compareAt, price), quantity));
   }, '0.00');
@@ -625,7 +669,15 @@ export async function listCartCoupons(input: CartCouponsInput): Promise<CartCoup
    * one subtotal. Pricing per coupon would be N round trips to say the same
    * thing, and would let two coupons disagree about what the cart is worth.
    */
-  const priced = await priceCart({ lines: input.lines, ...(input.pincode ? { pincode: input.pincode } : {}) });
+  // The same pin and unloading choice as the cart itself, so a free-delivery
+  // coupon is judged against the delivery charge the shopper is looking at.
+  const priced = await priceCart({
+    lines: input.lines,
+    ...(input.pincode ? { pincode: input.pincode } : {}),
+    ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
+    ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
+    ...(input.unloading !== undefined ? { unloading: input.unloading } : {}),
+  });
   const deliveryCharge = priced.delivery?.serviced ? priced.delivery.charge : '0.00';
 
   const variants = priced.lines.length

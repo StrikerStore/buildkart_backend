@@ -379,6 +379,28 @@ export const orderLineSchema = z.object({
 });
 export type OrderLineDraft = z.infer<typeof orderLineSchema>;
 
+/** See `createOrderSchema.deliveryBreakdown` and `Order.deliveryBreakdown`. */
+export const deliveryBreakdownSchema = z.object({
+  slabBase: money,
+  distanceCharge: money,
+  /** Road-adjusted distance to the farthest warehouse the flat-priced lines ship from. */
+  roadKm: z.number().min(0).max(100000),
+  warehouseCode: z.string().trim().max(32).nullable(),
+  freeAbove: money.nullable(),
+  /** The cart total cleared the free threshold. */
+  free: z.boolean(),
+  /** A free-delivery coupon waived the charge. */
+  waived: z.boolean().default(false),
+});
+export type DeliveryBreakdown = z.infer<typeof deliveryBreakdownSchema>;
+
+/** The frozen breakdown, read back — or null when the column holds nothing usable. */
+export function parseDeliveryBreakdown(raw: unknown): DeliveryBreakdown | null {
+  if (raw === null || raw === undefined) return null;
+  const parsed = deliveryBreakdownSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export const createOrderSchema = z.object({
   customer: z.object({
     phone: phoneSchema,
@@ -443,24 +465,13 @@ export const createOrderSchema = z.object({
    */
   unloading: z.boolean().default(false),
   /**
-   * The per-warehouse breakdown behind `deliveryCharge`, when it was worked out
-   * by distance. Recorded, never recomputed: `writeOrder` freezes what it is
-   * given here because the caller is the only one who still knows which godown
-   * was nearest at the moment the charge was struck.
+   * How `deliveryCharge` was arrived at — the cart-total slab, the distance
+   * charge, how far and from where — when the shop's rules set it. Frozen onto
+   * the order for the record; the charge itself is what is billed.
    *
-   * Absent on a counter sale, where a person decided the charge.
+   * Absent on a counter sale where a person typed the charge.
    */
-  deliveryLegs: z
-    .array(
-      z.object({
-        warehouseId: z.string().trim().min(1).max(64),
-        warehouseName: z.string().trim().max(191),
-        roadKm: z.number().min(0).max(100000),
-        charge: money,
-      }),
-    )
-    .max(50)
-    .optional(),
+  deliveryBreakdown: deliveryBreakdownSchema.optional(),
   discountTotal: optionalMoney,
   discountCode: optionalText(64),
 

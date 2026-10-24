@@ -13,9 +13,10 @@ import { prisma } from '@buildkart/database';
 import {
   actionError,
   actionErrorFromZod,
+  actionErrorFromZodDeep,
   actionOk,
   deleteWarehouseSchema,
-  distancePricingSchema,
+  deliveryChargesSchema,
   normalizeMoney,
   unloadingServiceSchema,
   warehouseSchema,
@@ -83,9 +84,10 @@ export async function saveWarehouse(
  * Removes a warehouse, and with it its routing rows.
  *
  * Deleted outright rather than deactivated, unlike a variant an order might
- * reference. Nothing points at a warehouse after the fact: an order's
- * `deliveryLegs` freezes the name and the charge at the time it was placed,
- * exactly so that closing a godown cannot rewrite what a past delivery cost.
+ * reference. Nothing points at a warehouse after the fact: an order freezes the
+ * warehouse's code with each distance-priced line and with its delivery
+ * breakdown, exactly so that closing a godown cannot rewrite what a past
+ * delivery cost.
  */
 export async function deleteWarehouse(actor: Actor, input: unknown): Promise<ActionResult<void>> {
   assertPermission(actor, 'delivery:write');
@@ -182,55 +184,45 @@ export async function saveWarehouseStock(
 }
 
 /**
- * Saves the delivery-charge rules: distance pricing, and the flat rate it falls
- * back to.
+ * Saves the delivery-charge rules for flat-priced products: the cart-total
+ * slabs, the distance ranges and the free threshold.
  *
  * Gated on `delivery:write` rather than `settings:write`, although it writes a
  * `Setting` row: it is the Delivery screen's form, and the permission a person
  * is granted should match the screen they were given. Both are owner-only
  * today, so nothing widens.
  *
- * Written as the whole object rather than field by field, because the registry
- * schema validates it as a whole — the guard that stops a high-value order
- * costing more than a standard one is a relation between two fields, and a
- * partial write could satisfy neither.
+ * Written as the whole object rather than row by row, because the form schema
+ * validates it as a whole — slabs ascending with bases that never rise, ranges
+ * ascending, a threshold above the last slab — and a partial write could
+ * satisfy none of it.
  */
-export async function saveDistancePricing(
+export async function saveDeliveryCharges(
   actor: Actor,
   input: unknown,
 ): Promise<ActionResult<void>> {
   assertPermission(actor, 'delivery:write');
 
-  const parsed = distancePricingSchema.safeParse(input);
-  if (!parsed.success) return actionErrorFromZod(parsed.error);
-  const data = parsed.data;
-
+  const parsed = deliveryChargesSchema.safeParse(input);
+  // Deep, so an error lands beside the slab or range row that caused it.
+  if (!parsed.success) return actionErrorFromZodDeep(parsed.error);
   const value = {
-    enabled: data.enabled,
-    roadFactor: data.roadFactor,
-    blockKm: data.blockKm,
-    perBlockCharge: data.perBlockCharge,
-    standardThreshold: data.standardThreshold,
-    standardFreeKm: data.standardFreeKm,
-    highValueThreshold: data.highValueThreshold,
-    highValueFreeKm: data.highValueFreeKm,
-    smallOrderFee: data.smallOrderFee,
-    smallOrderIncludedKm: data.smallOrderIncludedKm,
-    maxCharge: data.maxCharge ?? null,
-    flatCharge: data.flatCharge,
-    flatFreeAbove: data.flatFreeAbove ?? null,
+    roadFactor: parsed.data.roadFactor,
+    slabs: parsed.data.slabs,
+    ranges: parsed.data.ranges,
+    freeAbove: parsed.data.freeAbove,
   };
 
   await prisma.setting.upsert({
-    where: { key: 'delivery.distancePricing' },
-    create: { key: 'delivery.distancePricing', value },
+    where: { key: 'delivery.charges' },
+    create: { key: 'delivery.charges', value },
     update: { value },
   });
 
   await recordAudit(actor, {
-    action: 'delivery.distancePricing',
+    action: 'delivery.charges',
     entityType: 'Setting',
-    entityId: 'delivery.distancePricing',
+    entityId: 'delivery.charges',
     diff: value,
   });
 

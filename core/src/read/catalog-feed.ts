@@ -13,7 +13,13 @@
  * Public by nature — every field here is already on the product page.
  */
 import { prisma } from '@buildkart/database';
-import { canFulfil, type CatalogFeedItemDto } from '@buildkart/shared';
+import {
+  addMoney,
+  canFulfil,
+  distanceAdditionFor,
+  type CatalogFeedItemDto,
+} from '@buildkart/shared';
+import { DISTANCE_PRICING_SELECT, distanceParamsOf } from './delivery-charges.ts';
 
 /** Meta reads at most 5000 characters of description. */
 const DESCRIPTION_MAX = 5000;
@@ -59,6 +65,7 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
       seoDescriptionEn: true,
       productType: true,
       googleProductCategory: true,
+      ...DISTANCE_PRICING_SELECT,
       brand: { select: { nameEn: true } },
       category: { select: { nameEn: true } },
       images: {
@@ -90,7 +97,16 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
     // and one rejected row is noise in Commerce Manager's diagnostics.
     if (!cheapest || product.images.length === 0) return [];
 
-    const price = money(cheapest.price)!;
+    /*
+     * A feed has no shopper and no location, so a distance-priced product is
+     * listed at its price at the warehouse gate (0 km) — the "from" price a
+     * shopper without a location sees too, and never more than any of them pay.
+     */
+    const addition =
+      product.pricingKind === 'DISTANCE'
+        ? distanceAdditionFor(0, distanceParamsOf(product))
+        : '0.00';
+    const price = addMoney(money(cheapest.price)!, addition);
     const compareAt = money(cheapest.compareAtPrice);
     const onSale = compareAt !== null && Number(compareAt) > Number(price);
     const title = product.nameEn.slice(0, 200);

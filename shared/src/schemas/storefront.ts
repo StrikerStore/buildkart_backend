@@ -53,7 +53,34 @@ const optionFilter = z
   .max(383)
   .refine((value) => value.includes(':'), 'An option filter looks like "Size:12mm"');
 
+/**
+ * Where the shopper is, so a distance-priced product shows its price for here
+ * (see `delivery-pricing.ts`). Read from the area the shopper chose; absent,
+ * those products show their price at the warehouse as a "from" price.
+ *
+ * Like `priceCartSchema`'s pin, the client can move this in its own favour —
+ * and like that pin, it only moves a *preview*. What is charged is priced in
+ * `writeOrder` from the address the goods are sent to.
+ *
+ * Both or neither, bounded to India's box like the checkout pin.
+ */
+export const storefrontPointShape = {
+  latitude: z.coerce.number().min(6).max(38).optional(),
+  longitude: z.coerce.number().min(68).max(98).optional(),
+};
+export const storefrontPointSchema = z.object(storefrontPointShape);
+export type StorefrontPoint = z.infer<typeof storefrontPointSchema>;
+
+/** The point, when both halves are there. One half alone is no point at all. */
+export function storefrontPointOf(
+  input: { latitude?: number | null; longitude?: number | null } | null | undefined,
+): { latitude: number; longitude: number } | null {
+  if (input?.latitude == null || input.longitude == null) return null;
+  return { latitude: input.latitude, longitude: input.longitude };
+}
+
 export const storefrontListQuerySchema = z.object({
+  ...storefrontPointShape,
   q: z.string().trim().max(191).optional(),
   /** Brand slugs, so a filtered URL stays readable and stable across reseeds. */
   brands: z.array(z.string().trim().max(191)).max(20).default([]),
@@ -89,10 +116,18 @@ export const storefrontPageQuerySchema = storefrontListQuerySchema.extend({
  * shop, and a three-character floor would refuse the second one.
  */
 export const storefrontSuggestSchema = z.object({
+  ...storefrontPointShape,
   q: z.string().trim().min(2).max(191),
   limit: z.coerce.number().int().min(1).max(10).default(8),
 });
 export type StorefrontSuggestQuery = z.infer<typeof storefrontSuggestSchema>;
+
+/** One product page, priced for where the shopper is. */
+export const storefrontProductQuerySchema = z.object({
+  ...storefrontPointShape,
+  handle: z.string().trim().min(1).max(191),
+});
+export type StorefrontProductQuery = z.infer<typeof storefrontProductQuerySchema>;
 
 /**
  * Products by handle, in the order asked for.
@@ -103,6 +138,7 @@ export type StorefrontSuggestQuery = z.infer<typeof storefrontSuggestSchema>;
  * daily, a cached price is a wrong price.
  */
 export const storefrontCardsByHandlesSchema = z.object({
+  ...storefrontPointShape,
   handles: z.array(z.string().trim().min(1).max(191)).min(1).max(12),
 });
 export type StorefrontCardsByHandlesQuery = z.infer<typeof storefrontCardsByHandlesSchema>;
@@ -140,20 +176,20 @@ export const priceCartSchema = z.object({
   /** The chosen delivery area, when one has been chosen. */
   pincode: z.string().trim().regex(/^\d{6}$/).optional(),
   /**
-   * The pin the shopper dropped, when the shop charges by distance.
+   * The pin the shopper dropped: what distance-priced products and the
+   * delivery charge are measured to.
    *
    * This is the one input here the client can move in its own favour, and the
    * exception is deliberate rather than an oversight in the rule above. A
    * fabricated coordinate cannot assert a price — it can only understate a
-   * distance, in a *preview*. The charge that is actually taken is struck in
-   * `place-order.ts`, which re-prices from `address.latitude/longitude`: the
-   * pin the goods are being sent to. Lying there sends the delivery somewhere
-   * else, which is not an exploit so much as a self-inflicted wound.
+   * distance, in a *preview*. What is actually charged is priced in
+   * `writeOrder` from `address.latitude/longitude`: the pin the goods are being
+   * sent to. Lying there sends the delivery somewhere else, which is not an
+   * exploit so much as a self-inflicted wound.
    *
    * Bounded to India's box, same as the checkout pin.
    */
-  latitude: z.coerce.number().min(6).max(38).optional(),
-  longitude: z.coerce.number().min(68).max(98).optional(),
+  ...storefrontPointShape,
   /** A code the shopper typed. Upper-cased here so the lookup is exact. */
   discountCode: z.string().trim().max(64).toUpperCase().optional(),
   /** The shopper added the unloading service. A yes/no; the price is the shop's. */

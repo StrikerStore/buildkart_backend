@@ -632,3 +632,110 @@ test('the unloading fee adds to the total like delivery, and is not discounted',
   assert.equal(without.unloadingCharge, '0.00');
   assert.equal(without.grandTotal, '1250.00');
 });
+
+// ---------------------------------------------------------------------------
+// Distance-priced products
+// ---------------------------------------------------------------------------
+
+test('a distance addition raises the list price and the line total', () => {
+  const result = priceOrder(
+    [{ variantId: 'wire', quantity: 2 }],
+    [{ ...WIRE, distanceAddition: '30.00' }],
+    NONE,
+  );
+  const line = result.lines[0]!;
+  assert.equal(line.unitPrice, '1280.00');
+  assert.equal(line.listUnitPrice, '1280.00');
+  assert.equal(line.lineTotal, '2560.00');
+  assert.equal(line.distanceAddition, '30.00');
+  assert.equal(result.subtotal, '2560.00');
+});
+
+test('a distance addition sits on top of the bulk rung too', () => {
+  const result = priceOrder(
+    [{ variantId: 'cement', quantity: 20 }],
+    [{ ...CEMENT, distanceAddition: '25.00' }],
+    NONE,
+  );
+  const line = result.lines[0]!;
+  assert.equal(line.unitPrice, '440.00');
+  assert.equal(line.listUnitPrice, '457.00');
+  assert.equal(line.appliedTier?.unitPrice, '440.00');
+  assert.equal(line.wasBulkPrice, true);
+});
+
+/*
+ * Amount rungs are judged on the adjusted list total: to the shopper the
+ * adjusted price *is* the list price, and every screen shows it that way.
+ * Four basins at 2,000 are 8,000 — short of the 10,000 rung — but at 2,500 a
+ * basin from far away, the same four clear it.
+ */
+test('an amount rung is judged on the distance-adjusted list total', () => {
+  const near = priceOrder([{ variantId: 'basin', quantity: 4 }], [BASIN], NONE);
+  assert.equal(near.lines[0]!.wasBulkPrice, false);
+
+  const far = priceOrder(
+    [{ variantId: 'basin', quantity: 4 }],
+    [{ ...BASIN, distanceAddition: '500.00' }],
+    NONE,
+  );
+  assert.equal(far.lines[0]!.wasBulkPrice, true);
+  assert.equal(far.lines[0]!.unitPrice, '2450.00');
+});
+
+test('the next rung is quoted with the addition, and saves the same', () => {
+  const plain = priceOrder([{ variantId: 'cement', quantity: 17 }], [CEMENT], NONE);
+  const far = priceOrder(
+    [{ variantId: 'cement', quantity: 17 }],
+    [{ ...CEMENT, distanceAddition: '25.00' }],
+    NONE,
+  );
+  assert.equal(far.lines[0]!.nextTier?.unitPrice, '440.00');
+  assert.equal(far.lines[0]!.nextTier?.saving, plain.lines[0]!.nextTier?.saving);
+});
+
+test('an agreed rate ignores the addition', () => {
+  const result = priceOrder(
+    [{ variantId: 'cement', quantity: 10, unitPriceOverride: '420.00' }],
+    [{ ...CEMENT, distanceAddition: '25.00' }],
+    NONE,
+  );
+  assert.equal(result.lines[0]!.unitPrice, '420.00');
+  assert.equal(result.lines[0]!.distanceAddition, '0.00');
+});
+
+test('the addition is part of the goods, and taxed at their rate', () => {
+  const inclusive = priceOrder(
+    [{ variantId: 'wire', quantity: 1 }],
+    [{ ...WIRE, price: '1000.00', taxPercent: 18, taxInclusive: true, distanceAddition: '180.00' }],
+    NONE,
+  );
+  // 1,180 inclusive of 18% is 1,000 + 180.
+  assert.equal(inclusive.lines[0]!.taxableAmount, '1000.00');
+  assert.equal(inclusive.lines[0]!.taxAmount, '180.00');
+  assert.equal(inclusive.grandTotal, '1180.00');
+
+  const exclusive = priceOrder(
+    [{ variantId: 'wire', quantity: 1 }],
+    [{ ...WIRE, price: '1000.00', taxPercent: 18, taxInclusive: false, distanceAddition: '100.00' }],
+    NONE,
+  );
+  assert.equal(exclusive.lines[0]!.taxAmount, '198.00');
+  assert.equal(exclusive.grandTotal, '1298.00');
+});
+
+test('free delivery is judged on a subtotal that includes the additions', () => {
+  const result = priceOrder(
+    [{ variantId: 'wire', quantity: 4 }],
+    [{ ...WIRE, distanceAddition: '50.00' }],
+    { deliveryCharge: '200.00', freeDeliveryAbove: '5200.00' },
+  );
+  // 4 × 1,250 is 5,000 — short; 4 × 1,300 is 5,200 — free.
+  assert.equal(result.deliveryCharge, '0.00');
+});
+
+test('no addition leaves a line exactly as it was', () => {
+  const result = priceOrder([{ variantId: 'cement', quantity: 20 }], CATALOG, NONE);
+  assert.equal(result.lines[0]!.distanceAddition, '0.00');
+  assert.equal(result.lines[0]!.unitPrice, '415.00');
+});

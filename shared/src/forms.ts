@@ -11,6 +11,7 @@
  */
 import type { CategoryMatch, TagSlugRule } from './category-rules.ts';
 import type { BulkTierBasis } from './variants.ts';
+import type { PricingKind } from './delivery-pricing.ts';
 import type { MediaImageDto } from './media-context.ts';
 import type { MetafieldOwnerType, MetafieldType } from './metafields/index.ts';
 import { emptyVariantDraft } from './variants.ts';
@@ -127,6 +128,12 @@ export type ProductFormInitialDto = {
   isRateVolatile: boolean;
   /** How this product's bulk ladders are read. */
   bulkTierBasis: BulkTierBasis;
+  /** FLAT: same price everywhere. DISTANCE: the price rises with distance. */
+  pricingKind: PricingKind;
+  /** Per-unit amounts, e.g. "20.00", and the block size in km, e.g. "5". */
+  distanceBaseAddition: string;
+  distanceBlockKm: string;
+  distancePerBlockAddition: string;
   searchKeywords: string;
   seoTitle: string;
   seoDescriptionEn: string;
@@ -164,6 +171,10 @@ export function emptyProductForm(): ProductFormInitialDto {
     hsnCode: '',
     isRateVolatile: false,
     bulkTierBasis: 'QUANTITY',
+    pricingKind: 'FLAT',
+    distanceBaseAddition: '0.00',
+    distanceBlockKm: '5',
+    distancePerBlockAddition: '0.00',
     searchKeywords: '',
     seoTitle: '',
     seoDescriptionEn: '',

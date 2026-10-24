@@ -65,6 +65,11 @@ export async function duplicateProduct(
         taxInclusive: source.taxInclusive,
         hsnCode: source.hsnCode,
         isRateVolatile: source.isRateVolatile,
+        // Likewise distance pricing: the copy must cost what the original does.
+        pricingKind: source.pricingKind,
+        distanceBaseAddition: source.distanceBaseAddition,
+        distanceBlockKm: source.distanceBlockKm,
+        distancePerBlockAddition: source.distancePerBlockAddition,
         searchKeywords: source.searchKeywords,
         seoTitle: source.seoTitle,
         seoDescriptionEn: source.seoDescriptionEn,

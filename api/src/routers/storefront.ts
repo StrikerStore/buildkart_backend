@@ -89,6 +89,8 @@ import {
   priceCartSchema,
   storefrontCardsByHandlesSchema,
   storefrontListQuerySchema,
+  storefrontPointSchema,
+  storefrontProductQuerySchema,
   storefrontSuggestSchema,
   storefrontPageQuerySchema,
 } from '@buildkart/shared';
@@ -97,8 +99,14 @@ import { customerProcedure, publicProcedure, router } from '../trpc.ts';
 import { createCustomerToken, CUSTOMER_SESSION_TTL_SECONDS } from '../auth/customer-session.ts';
 
 export const storefrontRouter = router({
-  /** Banners and every homepage section, resolved. One call, one page. */
-  home: publicProcedure.query(() => getHomeFeed()),
+  /*
+   * Banners and every homepage section, resolved. One call, one page. The
+   * point is optional: an older client that sends none sees distance-priced
+   * products at their "from" price.
+   */
+  home: publicProcedure
+    .input(storefrontPointSchema.optional())
+    .query(({ input }) => getHomeFeed(input ?? {})),
 
   /** The category tree behind the header strip and the nav sheet. */
   categoryNav: publicProcedure.query(() => listCategoryNav()),
@@ -124,8 +132,11 @@ export const storefrontRouter = router({
   }),
 
   product: publicProcedure
-    .input(z.object({ handle: z.string().trim().min(1).max(191) }))
-    .query(({ input }) => getProductPage(input.handle)),
+    .input(storefrontProductQuerySchema)
+    .query(({ input }) => {
+      const { handle, ...point } = input;
+      return getProductPage(handle, point);
+    }),
 
   search: publicProcedure
     .input(storefrontListQuerySchema)
@@ -146,7 +157,10 @@ export const storefrontRouter = router({
   /** Recently-viewed: the browser holds handles, the shop holds the prices. */
   cardsByHandles: publicProcedure
     .input(storefrontCardsByHandlesSchema)
-    .query(({ input }) => cardsByHandles(input.handles)),
+    .query(({ input }) => {
+      const { handles, ...point } = input;
+      return cardsByHandles(handles, point);
+    }),
 
   /*
    * The cart's totals.

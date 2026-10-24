@@ -70,7 +70,43 @@ export type VariantPricing = {
    * means it.
    */
   taxable?: boolean;
+  /**
+   * What a distance-priced product adds to each unit for this delivery (see
+   * `delivery-pricing.ts`). Added to `price` and to every rung's price before
+   * anything else happens, so to the rest of the engine it simply *is* the
+   * price — rungs, the next-rung nudge, tax and totals all work unchanged.
+   * Absent means 0.
+   */
+  distanceAddition?: string;
 };
+
+/**
+ * A catalogue entry with its distance addition folded into the price and every
+ * rung. Amount-rung thresholds are left alone: they are judged on the line's
+ * list total, and the list price now includes the addition.
+ */
+export function withDistanceAddition(entry: VariantPricing): VariantPricing {
+  const add = entry.distanceAddition ? toPaise(entry.distanceAddition) : 0;
+  if (add === 0) return entry;
+  return {
+    ...entry,
+    price: fromPaise(toPaise(entry.price) + add),
+    tiers: entry.tiers?.map((tier) => ({ ...tier, unitPrice: fromPaise(toPaise(tier.unitPrice) + add) })),
+  };
+}
+
+/**
+ * `withDistanceAddition` for a ladder in its wire shape, so the storefront
+ * shows the same rung prices the engine will charge.
+ */
+export function shiftTierDtos<T extends { unitPrice: string }>(
+  tiers: readonly T[],
+  addition: string,
+): T[] {
+  const add = toPaise(addition);
+  if (add === 0) return [...tiers];
+  return tiers.map((tier) => ({ ...tier, unitPrice: fromPaise(toPaise(tier.unitPrice) + add) }));
+}
 
 /** The next rung up, and what reaching it would be worth. */
 export type NextTier = {
@@ -105,6 +141,11 @@ export type PricedLine = {
   nextTier: NextTier | null;
   /** True when the rate came from the operator rather than the price list. */
   wasOverridden: boolean;
+  /**
+   * The distance addition inside `unitPrice`, per unit. "0.00" for a flat-priced
+   * product, and for an overridden line — an agreed rate is all-in.
+   */
+  distanceAddition: string;
   /** The rate actually applied — 0 when untaxed or exempt. */
   taxPercent: number;
   taxInclusive: boolean;
@@ -400,7 +441,7 @@ export function priceOrder(
 ): OrderPricing {
   if (inputs.length === 0) throw new PricingError('An order needs at least one item.');
 
-  const byId = new Map(catalog.map((entry) => [entry.variantId, entry]));
+  const byId = new Map(catalog.map((entry) => [entry.variantId, withDistanceAddition(entry)]));
 
   let listSubtotalPaise = 0;
   const listLineTotals: number[] = [];
@@ -442,6 +483,10 @@ export function priceOrder(
         listLineTotalPaise,
       ),
       wasOverridden: line.unitPriceOverride !== undefined,
+      distanceAddition:
+        line.unitPriceOverride === undefined && entry.distanceAddition
+          ? fromPaise(toPaise(entry.distanceAddition))
+          : '0.00',
       entry,
     };
   });
@@ -481,6 +526,7 @@ export function priceOrder(
       appliedTier: line.appliedTier,
       nextTier: line.nextTier,
       wasOverridden: line.wasOverridden,
+      distanceAddition: line.distanceAddition,
       taxPercent: rateBp / 100,
       taxInclusive: inclusive,
       discountShare: fromPaise(share),
