@@ -1,5 +1,5 @@
 /**
- * The context is where every request's trust is decided, so its edges are worth
+ * The context test is where every request's trust is decided, so its edges are worth
  * pinning down before anything consumes this service.
  */
 import { test } from 'node:test';
