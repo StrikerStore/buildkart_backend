@@ -89,20 +89,26 @@ PREPARE s FROM @stmt; EXECUTE s; DEALLOCATE PREPARE s;
 -- Today's flat rate, carried into the new key. No old row means the shop never
 -- set a charge, and the new key's defaults charge nothing — as before. A row
 -- that already exists under the new key is left alone.
+--
+-- Read into a variable first rather than inserting with a SELECT from
+-- `Setting` itself: with the same table on both sides, MySQL cannot tell which
+-- `key` the ON DUPLICATE KEY clause means (error 1052).
+SET @oldDelivery := (SELECT `value` FROM `Setting` WHERE `key` = 'delivery.distancePricing');
+
 INSERT INTO `Setting` (`key`, `value`, `updatedAt`)
 SELECT 'delivery.charges',
        JSON_OBJECT(
          'roadFactor',
-         COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(`value`, '$.roadFactor')) AS DECIMAL(4, 2)), 1.3),
+         COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@oldDelivery, '$.roadFactor')) AS DECIMAL(4, 2)), 1.3),
          'slabs',
          JSON_ARRAY(JSON_OBJECT(
            'from', '0.00',
-           'base', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(`value`, '$.flatCharge')), '0.00'))),
+           'base', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(@oldDelivery, '$.flatCharge')), '0.00'))),
          'ranges',
          JSON_ARRAY(JSON_OBJECT('upToKm', 5, 'addition', '0.00')),
          'freeAbove',
-         JSON_EXTRACT(`value`, '$.flatFreeAbove')),
+         JSON_EXTRACT(@oldDelivery, '$.flatFreeAbove')),
        NOW(3)
-  FROM `Setting`
- WHERE `key` = 'delivery.distancePricing'
-ON DUPLICATE KEY UPDATE `key` = `key`;
+  FROM DUAL
+ WHERE @oldDelivery IS NOT NULL
+ON DUPLICATE KEY UPDATE `updatedAt` = `updatedAt`;
