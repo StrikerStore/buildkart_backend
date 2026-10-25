@@ -85,10 +85,14 @@ export async function seedGrowth(): Promise<{
     update: { value: DELIVERY_CHARGES },
   });
 
+  // The kind is the product's; the figures are each variant's own.
   await prisma.product.updateMany({
     where: { productType: { in: DISTANCE_PRICED_TYPES } },
+    data: { pricingKind: 'DISTANCE' },
+  });
+  await prisma.productVariant.updateMany({
+    where: { product: { productType: { in: DISTANCE_PRICED_TYPES } } },
     data: {
-      pricingKind: 'DISTANCE',
       distanceBaseAddition: '10.00',
       distanceBlockKm: 5,
       distancePerBlockAddition: '5.00',

@@ -490,18 +490,19 @@ model Product {
   /// How the price behaves with distance (`shared/src/delivery-pricing.ts`).
   ///
   /// FLAT is the same price everywhere, with the order paying a delivery charge
-  /// from the `delivery.charges` setting. DISTANCE adds `distanceBaseAddition`
-  /// plus `distancePerBlockAddition` for every `distanceBlockKm` started — from
-  /// the nearest warehouse stocking the variant — to each unit, and delivers
-  /// free.
-  ///
-  /// Per product, not per variant: one set of figures the whole matrix shares.
-  /// The figures are kept when a product goes back to FLAT, so switching again
-  /// does not mean typing them twice. Defaults make every existing product FLAT.
-  pricingKind              PricingKind @default(FLAT)
-  distanceBaseAddition     Decimal     @default(0) @db.Decimal(10, 2)
-  distanceBlockKm          Decimal     @default(5) @db.Decimal(5, 2)
-  distancePerBlockAddition Decimal     @default(0) @db.Decimal(10, 2)
+  /// from the `delivery.charges` setting. DISTANCE adds each variant's own
+  /// figures (`ProductVariant.distance*`) to every unit, and delivers free. One
+  /// choice for the product; the figures are per variant. Defaults make every
+  /// existing product FLAT.
+  pricingKind PricingKind @default(FLAT)
+
+  /// @deprecated The per-product figures from before they moved to the variant
+  /// (20261027000000_variant_distance_pricing copied them across). No longer
+  /// read or written; kept one release so the previous backend keeps working
+  /// while a deploy rolls over, then dropped.
+  distanceBaseAddition     Decimal @default(0) @db.Decimal(10, 2)
+  distanceBlockKm          Decimal @default(5) @db.Decimal(5, 2)
+  distancePerBlockAddition Decimal @default(0) @db.Decimal(10, 2)
 
   seoTitle         String? @db.VarChar(255)
   seoDescriptionEn String? @db.Text
@@ -655,6 +656,16 @@ model ProductVariant {
   /// honoured rather than merely round-tripped — a CSV that says a variant is
   /// exempt means it.
   taxable Boolean @default(true)
+
+  /// What a distance-priced product adds to each unit of this variant
+  /// (`shared/src/delivery-pricing.ts`): `distanceBaseAddition` plus
+  /// `distancePerBlockAddition` for every `distanceBlockKm` started from the
+  /// nearest warehouse stocking it. Per variant, because a 50 kg bag costs more
+  /// to carry than a 25 kg one. Read only while the product's `pricingKind` is
+  /// DISTANCE, and kept when it is not, so switching back restores them.
+  distanceBaseAddition     Decimal @default(0) @db.Decimal(10, 2)
+  distanceBlockKm          Decimal @default(5) @db.Decimal(5, 2)
+  distancePerBlockAddition Decimal @default(0) @db.Decimal(10, 2)
 
   imageId String?
 

@@ -305,18 +305,11 @@ async function commitProduct(
         : product.status;
 
   /*
-   * Distance pricing, from `Pricing Kind` and the `Distance …` columns. Like
-   * the FAQ columns, an absent column leaves the product's own figures alone —
-   * a Shopify file has no such column and must not reset them.
+   * The pricing kind, from `Pricing Kind`. Like the FAQ columns, an absent
+   * column leaves the product's own setting alone — a Shopify file has no such
+   * column and must not reset it. The distance figures are per variant, below.
    */
-  const deliveryPricingData = product.deliveryPricing
-    ? {
-        pricingKind: product.deliveryPricing.pricingKind,
-        distanceBaseAddition: product.deliveryPricing.baseAddition,
-        distanceBlockKm: product.deliveryPricing.blockKm,
-        distancePerBlockAddition: product.deliveryPricing.perBlockAddition,
-      }
-    : {};
+  const deliveryPricingData = product.pricingKind ? { pricingKind: product.pricingKind } : {};
 
   const result = await prisma.$transaction(async (tx) => {
     const saved = await tx.product.upsert({
@@ -424,6 +417,15 @@ async function commitProduct(
         option3Value: values[2] ?? null,
         position: index,
         priceUpdatedAt: new Date(),
+        // This variant's distance figures; a file without the columns leaves
+        // the stored ones alone.
+        ...(variant.distance
+          ? {
+              distanceBaseAddition: variant.distance.baseAddition,
+              distanceBlockKm: variant.distance.blockKm,
+              distancePerBlockAddition: variant.distance.perBlockAddition,
+            }
+          : {}),
       };
 
       const existingId = byKey.get(variant.matrixKey);

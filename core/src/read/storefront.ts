@@ -73,10 +73,12 @@ import { categoryTreeMembershipWhere } from '../membership.ts';
 import { countsFor } from '../category-rule-sets.ts';
 import { getSettings } from './settings.ts';
 import {
-  DISTANCE_PRICING_SELECT,
   distanceParamsOf,
   loadAreaTerms,
   loadDeliveryRules,
+  PRICING_KIND_SELECT,
+  VARIANT_DISTANCE_SELECT,
+  type VariantDistanceRow,
 } from './delivery-charges.ts';
 import { findActiveWarehouses, findStockingWarehouses } from './warehouses.ts';
 
@@ -115,7 +117,7 @@ const CARD_SELECT = {
   nameHi: true,
   isRateVolatile: true,
   hasVariants: true,
-  ...DISTANCE_PRICING_SELECT,
+  ...PRICING_KIND_SELECT,
   brand: { select: { nameEn: true } },
   images: {
     orderBy: { position: 'asc' },
@@ -150,6 +152,7 @@ const CARD_SELECT = {
       inventoryTracked: true,
       inventoryPolicy: true,
       priceUpdatedAt: true,
+      ...VARIANT_DISTANCE_SELECT,
     },
   },
 } satisfies Prisma.ProductSelect;
@@ -178,13 +181,6 @@ function toBadge(tag: {
 // Distance pricing
 // ---------------------------------------------------------------------------
 
-type PricedProductRow = {
-  pricingKind: PricingKind;
-  distanceBaseAddition: { toString(): string };
-  distanceBlockKm: { toString(): string };
-  distancePerBlockAddition: { toString(): string };
-};
-
 /**
  * Prices distance-priced products for one request, from where the shopper is.
  *
@@ -200,8 +196,14 @@ export type DistancePricer = {
   located: boolean;
   /** Reads what `additionFor` needs for these rows. Call before mapping them. */
   prime(rows: ReadonlyArray<{ pricingKind: PricingKind; variants: ReadonlyArray<{ id: string }> }>): Promise<void>;
-  /** The per-unit addition for one variant of a product, and how far it travels. */
-  additionFor(product: PricedProductRow, variantId: string): { addition: string; metres: number | null };
+  /**
+   * The per-unit addition for one variant, and how far it travels: the kind is
+   * the product's, the figures are the variant's own.
+   */
+  additionFor(
+    pricingKind: PricingKind,
+    variant: { id: string } & VariantDistanceRow,
+  ): { addition: string; metres: number | null };
 };
 
 export function distancePricerFor(point: GeoPoint | null): DistancePricer {
@@ -246,12 +248,12 @@ export function distancePricerFor(point: GeoPoint | null): DistancePricer {
       await Promise.all(ids.map((id) => pending.get(id)));
     },
 
-    additionFor(product, variantId) {
-      if (product.pricingKind !== 'DISTANCE') return { addition: '0.00', metres: null };
-      const params = distanceParamsOf(product);
+    additionFor(pricingKind, variant) {
+      if (pricingKind !== 'DISTANCE') return { addition: '0.00', metres: null };
+      const params = distanceParamsOf(variant);
       if (!point) return { addition: distanceAdditionFor(0, params), metres: null };
 
-      const stocked = stockedBy.get(variantId);
+      const stocked = stockedBy.get(variant.id);
       const route = nearestWarehouse(
         stocked && stocked.length > 0 ? stocked : fallback,
         point,
@@ -286,7 +288,7 @@ export function toCardDto(row: CardRow, pricer: DistancePricer): StorefrontCardD
   // Prefer a sellable variant; fall back to any so an out-of-stock product
   // still shows a price rather than a blank card.
   const pool = (sellable.length > 0 ? sellable : row.variants).map((variant) => {
-    const { addition } = pricer.additionFor(row, variant.id);
+    const { addition } = pricer.additionFor(row.pricingKind, variant);
     return { variant, addition, price: addMoney(decimalToString(variant.price), addition) };
   });
   let best = pool[0];
@@ -874,8 +876,8 @@ export async function searchProducts(query: StorefrontListQuery): Promise<Storef
  * would be served to the next; the pricing is applied after the cache.
  */
 type SuggestRow = Omit<StorefrontSuggestionDto, 'price' | 'pricingKind' | 'priceIsFrom'> & {
-  product: PricedProductRow;
-  variant: { id: string; price: string } | null;
+  pricingKind: PricingKind;
+  variant: ({ id: string; price: string } & VariantDistanceRow) | null;
 };
 const suggestCache = new Map<string, { at: number; rows: SuggestRow[] }>();
 const SUGGEST_TTL_MS = 60_000;
@@ -934,18 +936,18 @@ export async function suggestProducts(
   const pricer = distancePricerFor(storefrontPointOf(query));
   await pricer.prime(
     rows.map((row) => ({
-      pricingKind: row.product.pricingKind,
+      pricingKind: row.pricingKind,
       variants: row.variant ? [row.variant] : [],
     })),
   );
 
-  return rows.map(({ product, variant, ...row }) => ({
+  return rows.map(({ pricingKind, variant, ...row }) => ({
     ...row,
     price: variant
-      ? addMoney(variant.price, pricer.additionFor(product, variant.id).addition)
+      ? addMoney(variant.price, pricer.additionFor(pricingKind, variant).addition)
       : null,
-    pricingKind: product.pricingKind,
-    priceIsFrom: product.pricingKind === 'DISTANCE' && !pricer.located,
+    pricingKind,
+    priceIsFrom: pricingKind === 'DISTANCE' && !pricer.located,
   }));
 }
 
@@ -958,7 +960,7 @@ async function loadSuggestRows(query: StorefrontSuggestQuery, key: string): Prom
       handle: true,
       nameEn: true,
       nameHi: true,
-      ...DISTANCE_PRICING_SELECT,
+      ...PRICING_KIND_SELECT,
       brand: { select: { nameEn: true } },
       images: {
         orderBy: { position: 'asc' },
@@ -969,7 +971,13 @@ async function loadSuggestRows(query: StorefrontSuggestQuery, key: string): Prom
         where: { isActive: true },
         orderBy: { price: 'asc' },
         take: 1,
-        select: { id: true, price: true, unitLabelEn: true, unitLabelHi: true },
+        select: {
+          id: true,
+          price: true,
+          unitLabelEn: true,
+          unitLabelHi: true,
+          ...VARIANT_DISTANCE_SELECT,
+        },
       },
     },
   });
@@ -984,13 +992,16 @@ async function loadSuggestRows(query: StorefrontSuggestQuery, key: string): Prom
       imageKey: product.images[0]?.media.r2Key ?? null,
       unitLabelEn: cheapest?.unitLabelEn ?? null,
       unitLabelHi: cheapest?.unitLabelHi ?? null,
-      product: {
-        pricingKind: product.pricingKind,
-        distanceBaseAddition: product.distanceBaseAddition,
-        distanceBlockKm: product.distanceBlockKm,
-        distancePerBlockAddition: product.distancePerBlockAddition,
-      },
-      variant: cheapest ? { id: cheapest.id, price: decimalToString(cheapest.price) } : null,
+      pricingKind: product.pricingKind,
+      variant: cheapest
+        ? {
+            id: cheapest.id,
+            price: decimalToString(cheapest.price),
+            distanceBaseAddition: cheapest.distanceBaseAddition,
+            distanceBlockKm: cheapest.distanceBlockKm,
+            distancePerBlockAddition: cheapest.distancePerBlockAddition,
+          }
+        : null,
     };
   });
 
@@ -1029,7 +1040,7 @@ export async function getProductPage(
       returnPolicyHi: true,
       isRateVolatile: true,
       bulkTierBasis: true,
-      ...DISTANCE_PRICING_SELECT,
+      ...PRICING_KIND_SELECT,
       hsnCode: true,
       seoTitle: true,
       seoDescriptionEn: true,
@@ -1067,6 +1078,7 @@ export async function getProductPage(
           inventoryTracked: true,
           inventoryPolicy: true,
           priceUpdatedAt: true,
+          ...VARIANT_DISTANCE_SELECT,
           image: { select: { media: { select: { r2Key: true } } } },
         },
       },
@@ -1106,7 +1118,7 @@ export async function getProductPage(
   await pricer.prime([product, ...related]);
 
   const variants: StorefrontVariantDto[] = product.variants.map((variant) => {
-    const { addition, metres } = pricer.additionFor(product, variant.id);
+    const { addition, metres } = pricer.additionFor(product.pricingKind, variant);
     return {
       id: variant.id,
       sku: variant.sku,

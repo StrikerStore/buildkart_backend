@@ -21,6 +21,35 @@ const optionalMoney = z
     message: 'Enter an amount like 410 or 410.50',
   });
 
+/** A per-unit distance addition; blank is nothing. */
+const additionField = z
+  .string()
+  .trim()
+  .transform((v) => (v === '' ? '0.00' : v))
+  .refine((v) => MONEY_PATTERN.test(v), 'Enter an amount like 20 or 20.50')
+  .default('0.00');
+
+/**
+ * What this variant adds to each unit when its product is distance-priced
+ * (see `delivery-pricing.ts`): the base, plus the per-block addition for every
+ * block of kilometres started. Kept while the product is flat-priced, so
+ * switching it to distance restores them.
+ */
+export const variantDistanceFields = {
+  distanceBaseAddition: additionField,
+  distanceBlockKm: z
+    .union([z.string(), z.number()])
+    .transform((v) => (v === '' ? 5 : Number(v)))
+    .refine(
+      (v) => Number.isFinite(v) && v >= 0.5 && v <= 100,
+      'Enter a block between 0.5 and 100 km',
+    )
+    // Decimal(5,2): anything finer would be stored rounded and then disagree.
+    .refine((v) => Math.round(v * 100) === v * 100, 'At most two decimal places')
+    .default(5),
+  distancePerBlockAddition: additionField,
+};
+
 /**
  * One rung as the client sends it — the threshold still raw text, because how
  * to read it depends on the product's basis, which lives a level up.
@@ -61,6 +90,7 @@ export const variantRowSchema = z.object({
     .nullish()
     .transform((v) => (v === '' || v === undefined ? null : v)),
   isActive: z.boolean().default(true),
+  ...variantDistanceFields,
 });
 
 export const saveVariantsSchema = z

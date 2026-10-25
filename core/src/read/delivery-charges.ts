@@ -45,9 +45,12 @@ export async function loadAreaTerms(): Promise<{
   };
 }
 
-/** The product columns distance pricing reads, for a Prisma `select`. */
-export const DISTANCE_PRICING_SELECT = {
-  pricingKind: true,
+/**
+ * What distance pricing reads, for a Prisma `select`: the kind is the
+ * product's, the figures are each variant's own.
+ */
+export const PRICING_KIND_SELECT = { pricingKind: true } as const;
+export const VARIANT_DISTANCE_SELECT = {
   distanceBaseAddition: true,
   distanceBlockKm: true,
   distancePerBlockAddition: true,
@@ -55,31 +58,30 @@ export const DISTANCE_PRICING_SELECT = {
 
 type DecimalLike = { toString(): string } | string | number;
 
-/** A product's distance figures, from its Decimal columns. */
-export function distanceParamsOf(product: {
+/** A variant's distance figures, as read from its columns. */
+export type VariantDistanceRow = {
   distanceBaseAddition: DecimalLike;
   distanceBlockKm: DecimalLike;
   distancePerBlockAddition: DecimalLike;
-}): DistanceParams {
+};
+
+/** A variant's distance figures, from its Decimal columns. */
+export function distanceParamsOf(variant: VariantDistanceRow): DistanceParams {
   return {
-    baseAddition: Number(product.distanceBaseAddition.toString()).toFixed(2),
-    blockKm: Number(product.distanceBlockKm.toString()),
-    perBlockAddition: Number(product.distancePerBlockAddition.toString()).toFixed(2),
+    baseAddition: Number(variant.distanceBaseAddition.toString()).toFixed(2),
+    blockKm: Number(variant.distanceBlockKm.toString()),
+    perBlockAddition: Number(variant.distancePerBlockAddition.toString()).toFixed(2),
   };
 }
 
-/** What `planDistance` needs for one line, from a product row. */
+/** What `planDistance` needs for one line: the product's kind, the variant's figures. */
 export function plannedLineOf(
   variantId: string,
-  product: {
-    pricingKind: PricingKind;
-    distanceBaseAddition: DecimalLike;
-    distanceBlockKm: DecimalLike;
-    distancePerBlockAddition: DecimalLike;
-  },
+  pricingKind: PricingKind,
+  variant: VariantDistanceRow,
 ): { variantId: string; kind: PricingKind; params?: DistanceParams } {
-  return product.pricingKind === 'DISTANCE'
-    ? { variantId, kind: 'DISTANCE', params: distanceParamsOf(product) }
+  return pricingKind === 'DISTANCE'
+    ? { variantId, kind: 'DISTANCE', params: distanceParamsOf(variant) }
     : { variantId, kind: 'FLAT' };
 }
 

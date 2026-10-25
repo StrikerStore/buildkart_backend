@@ -63,6 +63,11 @@ export type ParsedVariant = {
   taxable: boolean;
   /** `Variant Image` — matched to an image by URL after grouping. */
   imageSrc: string | null;
+  /**
+   * This variant's distance figures, from the `Distance …` columns, or null
+   * when the file has none of them — which leaves the stored figures alone.
+   */
+  distance: { baseAddition: string; blockKm: number; perBlockAddition: string } | null;
   rowNumber: number;
 };
 
@@ -99,13 +104,8 @@ export type ParsedProduct = {
   googleProductCategory: string | null;
   /** From `Bulk Tier Basis`, or null when the column is absent. */
   bulkTierBasis: BulkTierBasis | null;
-  /** From `Pricing Kind` and the `Distance …` columns, or null when `Pricing Kind` is absent. */
-  deliveryPricing: {
-    pricingKind: PricingKind;
-    baseAddition: string;
-    blockKm: number;
-    perBlockAddition: string;
-  } | null;
+  /** From `Pricing Kind`, or null when the column is absent. */
+  pricingKind: PricingKind | null;
   status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
   seoTitle: string | null;
   seoDescription: string | null;
@@ -227,6 +227,7 @@ export function parseProducts(
   const hasTierColumn = header.includes('Bulk Tiers');
   const hasBasisColumn = header.includes('Bulk Tier Basis');
   const hasPricingKindColumn = header.includes('Pricing Kind');
+  const hasDistanceColumns = DISTANCE_COLUMNS.some((column) => header.includes(column));
   const definitionByKey = new Map(definitions.map((d) => [`${d.namespace}.${d.key}`, d]));
 
   const groups = groupByHandle(rows);
@@ -377,6 +378,9 @@ export function parseProducts(
         requiresShipping: readBoolean(entry.row, 'Variant Requires Shipping') ?? true,
         taxable: readBoolean(entry.row, 'Variant Taxable') ?? true,
         imageSrc: readCell(entry.row, 'Variant Image') || null,
+        distance: hasDistanceColumns
+          ? readVariantDistance(entry.row, firstRow, entry.rowNumber, handle, productIssues)
+          : null,
         rowNumber: entry.rowNumber,
       });
     }
@@ -515,8 +519,8 @@ export function parseProducts(
       if (value !== '') raw[column] = value;
     }
 
-    const deliveryPricing = hasPricingKindColumn
-      ? readDeliveryPricing(firstRow, first.rowNumber, handle, productIssues)
+    const pricingKind = hasPricingKindColumn
+      ? readPricingKind(firstRow, first.rowNumber, handle, productIssues)
       : null;
 
     issues.push(...productIssues);
@@ -537,7 +541,7 @@ export function parseProducts(
           ? 'AMOUNT'
           : 'QUANTITY'
         : null,
-      deliveryPricing,
+      pricingKind,
       status: status ?? 'DRAFT',
       seoTitle: readCell(firstRow, 'SEO Title') || null,
       seoDescription: readCell(firstRow, 'SEO Description') || null,
@@ -562,29 +566,44 @@ export function parseProducts(
   };
 }
 
-/**
- * A product's distance pricing from its first row.
- *
- * Blank figures read as nothing added (and a 5 km block), so a FLAT row need
- * not fill them. A figure that is not a number is an ERROR rather than a
- * guess: these columns change what customers are charged.
- */
-function readDeliveryPricing(
+const DISTANCE_COLUMNS = ['Distance Base Addition', 'Distance Block Km', 'Distance Per Block'];
+
+/** A product's pricing kind, from its first row. Blank is FLAT. */
+function readPricingKind(
   row: CsvRow,
   rowNumber: number,
   handle: string,
   productIssues: ImportIssue[],
-): ParsedProduct['deliveryPricing'] {
+): PricingKind {
   const kindCell = readCell(row, 'Pricing Kind').toUpperCase();
-  const pricingKind: PricingKind = kindCell === 'DISTANCE' ? 'DISTANCE' : 'FLAT';
   if (kindCell !== '' && kindCell !== 'FLAT' && kindCell !== 'DISTANCE') {
     productIssues.push(
       issue('ERROR', 'BAD_PRICING_KIND', 'Pricing Kind must be FLAT or DISTANCE.', rowNumber, handle, 'Pricing Kind', kindCell),
     );
   }
+  return kindCell === 'DISTANCE' ? 'DISTANCE' : 'FLAT';
+}
+
+/**
+ * One variant's distance figures, from its own row.
+ *
+ * A blank cell takes the product's first row — the way a file written before
+ * the figures moved to the variant carries them, on the first row only — and a
+ * blank there reads as nothing added (and a 5 km block). A figure that is not a
+ * number is an ERROR rather than a guess: these columns change what customers
+ * are charged.
+ */
+function readVariantDistance(
+  row: CsvRow,
+  firstRow: CsvRow,
+  rowNumber: number,
+  handle: string,
+  productIssues: ImportIssue[],
+): NonNullable<ParsedVariant['distance']> {
+  const cell = (column: string) => readCell(row, column) || readCell(firstRow, column);
 
   const amount = (column: string): string => {
-    const value = readCell(row, column);
+    const value = cell(column);
     if (value === '') return '0.00';
     if (MONEY_PATTERN.test(value)) return normalizeMoney(value);
     productIssues.push(
@@ -593,7 +612,7 @@ function readDeliveryPricing(
     return '0.00';
   };
 
-  const blockCell = readCell(row, 'Distance Block Km');
+  const blockCell = cell('Distance Block Km');
   const blockKm = blockCell === '' ? 5 : Number(blockCell);
   if (!Number.isFinite(blockKm) || blockKm < 0.5 || blockKm > 100) {
     productIssues.push(
@@ -602,7 +621,6 @@ function readDeliveryPricing(
   }
 
   return {
-    pricingKind,
     baseAddition: amount('Distance Base Addition'),
     blockKm: Number.isFinite(blockKm) ? Math.round(blockKm * 100) / 100 : 5,
     perBlockAddition: amount('Distance Per Block'),

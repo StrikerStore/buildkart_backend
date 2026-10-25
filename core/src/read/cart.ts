@@ -51,9 +51,10 @@ import {
 import { decimalToString } from '../dto.ts';
 import {
   deliveryRulesFrom,
-  DISTANCE_PRICING_SELECT,
   loadRouting,
   plannedLineOf,
+  PRICING_KIND_SELECT,
+  VARIANT_DISTANCE_SELECT,
 } from './delivery-charges.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 
@@ -105,6 +106,7 @@ const CART_VARIANT_SELECT = {
   inventoryPolicy: true,
   isActive: true,
   taxable: true,
+  ...VARIANT_DISTANCE_SELECT,
   image: { select: { media: { select: { r2Key: true } } } },
   product: {
     select: {
@@ -116,7 +118,7 @@ const CART_VARIANT_SELECT = {
       categoryId: true,
       taxPercent: true,
       taxInclusive: true,
-      ...DISTANCE_PRICING_SELECT,
+      ...PRICING_KIND_SELECT,
       images: { orderBy: { position: 'asc' }, take: 1, select: { media: { select: { r2Key: true } } } },
       tags: { select: { tagId: true } },
     },
@@ -290,7 +292,9 @@ export async function priceCartWithBreakdown(
   const plan = planDistance({
     destination,
     roadFactor: rules.roadFactor,
-    lines: kept.map(({ variant }) => plannedLineOf(variant.id, variant.product)),
+    lines: kept.map(({ variant }) =>
+      plannedLineOf(variant.id, variant.product.pricingKind, variant),
+    ),
     stockedBy: routing.stockedBy,
     fallback: routing.fallback,
   });

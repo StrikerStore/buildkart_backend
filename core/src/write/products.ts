@@ -107,6 +107,10 @@ function variantScalars(row: VariantRowInput) {
     inventoryTracked: row.inventoryTracked,
     barcode: row.barcode ?? null,
     isActive: row.isActive,
+    // Kept whatever the product's kind, so switching it to DISTANCE restores them.
+    distanceBaseAddition: row.distanceBaseAddition,
+    distanceBlockKm: row.distanceBlockKm,
+    distancePerBlockAddition: row.distancePerBlockAddition,
   };
 }
 
@@ -189,11 +193,8 @@ function productScalars(
     hsnCode: data.hsnCode ?? null,
     isRateVolatile: data.isRateVolatile,
     bulkTierBasis: data.bulkTierBasis,
-    // Kept whatever the kind, so switching back to DISTANCE restores them.
+    // The figures it prices by are each variant's own (`variantScalars`).
     pricingKind: data.pricingKind,
-    distanceBaseAddition: data.distanceBaseAddition,
-    distanceBlockKm: data.distanceBlockKm,
-    distancePerBlockAddition: data.distancePerBlockAddition,
     searchKeywords: data.searchKeywords ?? null,
     seoTitle: data.seoTitle ?? null,
     seoDescriptionEn: data.seoDescriptionEn ?? null,

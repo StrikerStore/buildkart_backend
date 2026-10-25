@@ -66,10 +66,8 @@ export async function duplicateProduct(
         hsnCode: source.hsnCode,
         isRateVolatile: source.isRateVolatile,
         // Likewise distance pricing: the copy must cost what the original does.
+        // The figures are per variant, copied below.
         pricingKind: source.pricingKind,
-        distanceBaseAddition: source.distanceBaseAddition,
-        distanceBlockKm: source.distanceBlockKm,
-        distancePerBlockAddition: source.distancePerBlockAddition,
         searchKeywords: source.searchKeywords,
         seoTitle: source.seoTitle,
         seoDescriptionEn: source.seoDescriptionEn,
@@ -127,6 +125,9 @@ export async function duplicateProduct(
           weightUnit: variant.weightUnit,
           requiresShipping: variant.requiresShipping,
           taxable: variant.taxable,
+          distanceBaseAddition: variant.distanceBaseAddition,
+          distanceBlockKm: variant.distanceBlockKm,
+          distancePerBlockAddition: variant.distancePerBlockAddition,
           isActive: variant.isActive,
           position: variant.position,
           priceUpdatedAt: new Date(),

@@ -68,9 +68,6 @@ function toExportProduct(
     ),
     bulkTierBasis: product.bulkTierBasis,
     pricingKind: product.pricingKind,
-    distanceBaseAddition: normalizeMoney(product.distanceBaseAddition.toString()),
-    distanceBlockKm: Number(product.distanceBlockKm),
-    distancePerBlockAddition: normalizeMoney(product.distancePerBlockAddition.toString()),
     variants: product.variants.map((v) => ({
       // Normalised like every other money column, so a ladder that has not been
       // touched does not diff against the file it was exported from.
@@ -98,6 +95,9 @@ function toExportProduct(
       barcode: v.barcode,
       requiresShipping: v.requiresShipping,
       taxable: v.taxable,
+      distanceBaseAddition: normalizeMoney(v.distanceBaseAddition.toString()),
+      distanceBlockKm: Number(v.distanceBlockKm),
+      distancePerBlockAddition: normalizeMoney(v.distancePerBlockAddition.toString()),
     })),
     images: product.images.map((image) => ({
       // The public URL, so the file is portable: another store — or Shopify —

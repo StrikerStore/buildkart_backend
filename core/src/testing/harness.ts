@@ -143,7 +143,10 @@ export async function seedProduct(options: {
   /** Defaults to true, matching the column and the whole catalogue. */
   taxInclusive?: boolean;
   hsnCode?: string;
-  /** A distance-priced product's figures. Absent is FLAT, like the column. */
+  /**
+   * Makes the product distance-priced, with these figures on its variant.
+   * Absent is FLAT, like the column.
+   */
   distance?: { baseAddition: string; blockKm: number; perBlockAddition: string };
 }) {
   const prisma = await loadPrisma();
@@ -156,18 +159,18 @@ export async function seedProduct(options: {
       taxPercent: options.taxPercent ?? 0,
       taxInclusive: options.taxInclusive ?? true,
       hsnCode: options.hsnCode ?? null,
-      ...(options.distance
-        ? {
-            pricingKind: 'DISTANCE' as const,
-            distanceBaseAddition: options.distance.baseAddition,
-            distanceBlockKm: options.distance.blockKm,
-            distancePerBlockAddition: options.distance.perBlockAddition,
-          }
-        : {}),
+      ...(options.distance ? { pricingKind: 'DISTANCE' as const } : {}),
       variants: {
         create: {
           matrixKey: '',
           price: options.price,
+          ...(options.distance
+            ? {
+                distanceBaseAddition: options.distance.baseAddition,
+                distanceBlockKm: options.distance.blockKm,
+                distancePerBlockAddition: options.distance.perBlockAddition,
+              }
+            : {}),
           tiers: {
             create: (options.tiers ?? []).map((tier, index) => ({
               basis: tier.minQuantity !== undefined ? ('QUANTITY' as const) : ('AMOUNT' as const),
@@ -187,6 +190,35 @@ export async function seedProduct(options: {
     include: { variants: true },
   });
   return { product, variant: product.variants[0]! };
+}
+
+/** Another size of a seeded product, with its own price and distance figures. */
+export async function seedVariant(options: {
+  productId: string;
+  option: string;
+  price: string;
+  distance?: { baseAddition: string; blockKm: number; perBlockAddition: string };
+}) {
+  const prisma = await loadPrisma();
+  return prisma.productVariant.create({
+    data: {
+      productId: options.productId,
+      matrixKey: options.option,
+      option1Value: options.option,
+      price: options.price,
+      stockQty: 100,
+      inventoryTracked: true,
+      inventoryPolicy: 'DENY',
+      isActive: true,
+      ...(options.distance
+        ? {
+            distanceBaseAddition: options.distance.baseAddition,
+            distanceBlockKm: options.distance.blockKm,
+            distancePerBlockAddition: options.distance.perBlockAddition,
+          }
+        : {}),
+    },
+  });
 }
 
 /**

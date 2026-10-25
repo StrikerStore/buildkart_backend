@@ -45,11 +45,12 @@ import { notifyOrder, notifyShopOfOrder } from '../notify/dispatch.ts';
 import { afterOrderWritten } from '../marketing/meta-capi.ts';
 import { TIER_SELECT, toEngineTiers } from '../tiers.ts';
 import {
-  DISTANCE_PRICING_SELECT,
   loadDeliveryRules,
   loadRouting,
   plannedLineOf,
   pointFrom,
+  PRICING_KIND_SELECT,
+  VARIANT_DISTANCE_SELECT,
 } from '../read/delivery-charges.ts';
 import { allocateOrderNumber } from './order-number.ts';
 import { AUTO_CONFIRM_AFTER_MS } from './orders.ts';
@@ -161,6 +162,7 @@ export async function writeOrder(
       taxable: true,
       inventoryTracked: true,
       inventoryPolicy: true,
+      ...VARIANT_DISTANCE_SELECT,
       product: {
         select: {
           id: true,
@@ -171,7 +173,7 @@ export async function writeOrder(
           taxPercent: true,
           taxInclusive: true,
           hsnCode: true,
-          ...DISTANCE_PRICING_SELECT,
+          ...PRICING_KIND_SELECT,
         },
       },
     },
@@ -251,7 +253,9 @@ export async function writeOrder(
   const plan = planDistance({
     destination,
     roadFactor: rules.roadFactor,
-    lines: variants.map((variant) => plannedLineOf(variant.id, variant.product)),
+    lines: variants.map((variant) =>
+      plannedLineOf(variant.id, variant.product.pricingKind, variant),
+    ),
     stockedBy: routing.stockedBy,
     fallback: routing.fallback,
   });

@@ -128,12 +128,11 @@ export type ProductFormInitialDto = {
   isRateVolatile: boolean;
   /** How this product's bulk ladders are read. */
   bulkTierBasis: BulkTierBasis;
-  /** FLAT: same price everywhere. DISTANCE: the price rises with distance. */
+  /**
+   * FLAT: same price everywhere. DISTANCE: the price rises with distance, by
+   * each variant's own figures (on the variant drafts).
+   */
   pricingKind: PricingKind;
-  /** Per-unit amounts, e.g. "20.00", and the block size in km, e.g. "5". */
-  distanceBaseAddition: string;
-  distanceBlockKm: string;
-  distancePerBlockAddition: string;
   searchKeywords: string;
   seoTitle: string;
   seoDescriptionEn: string;
@@ -172,9 +171,6 @@ export function emptyProductForm(): ProductFormInitialDto {
     isRateVolatile: false,
     bulkTierBasis: 'QUANTITY',
     pricingKind: 'FLAT',
-    distanceBaseAddition: '0.00',
-    distanceBlockKm: '5',
-    distancePerBlockAddition: '0.00',
     searchKeywords: '',
     seoTitle: '',
     seoDescriptionEn: '',

@@ -19,7 +19,12 @@ import {
 import { assertPermission, type Actor } from '../actor.ts';
 import { variantLabel } from '../variant-label.ts';
 import { TIER_SELECT, toTierDtos } from '../tiers.ts';
-import { DISTANCE_PRICING_SELECT, distanceParamsOf, loadDeliveryRules } from './delivery-charges.ts';
+import {
+  distanceParamsOf,
+  loadDeliveryRules,
+  PRICING_KIND_SELECT,
+  VARIANT_DISTANCE_SELECT,
+} from './delivery-charges.ts';
 import type { CustomerLookupResult, PincodeQuote, VariantSearchResult } from '@buildkart/shared';
 export type { CustomerLookupResult, PincodeQuote, VariantSearchResult };
 
@@ -78,6 +83,7 @@ export async function searchVariants(
       taxable: true,
       inventoryTracked: true,
       inventoryPolicy: true,
+      ...VARIANT_DISTANCE_SELECT,
       product: {
         select: {
           id: true,
@@ -85,7 +91,7 @@ export async function searchVariants(
           nameHi: true,
           taxPercent: true,
           taxInclusive: true,
-          ...DISTANCE_PRICING_SELECT,
+          ...PRICING_KIND_SELECT,
         },
       },
     },
@@ -93,7 +99,7 @@ export async function searchVariants(
 
   return actionOk({
     results: variants.map((variant) => {
-      const distance = distanceParamsOf(variant.product);
+      const distance = distanceParamsOf(variant);
       return {
         variantId: variant.id,
         productId: variant.product.id,

@@ -37,9 +37,6 @@ function product(overrides: Partial<ExportProduct> = {}): ExportProduct {
     optionLinkedTo: [],
     bulkTierBasis: 'QUANTITY' as const,
     pricingKind: 'FLAT' as const,
-    distanceBaseAddition: '0.00',
-    distanceBlockKm: 5,
-    distancePerBlockAddition: '0.00',
     variants: [
       {
         tiers: [],
@@ -58,6 +55,9 @@ function product(overrides: Partial<ExportProduct> = {}): ExportProduct {
         barcode: null,
         requiresShipping: true,
         taxable: true,
+        distanceBaseAddition: '0.00',
+        distanceBlockKm: 5,
+        distancePerBlockAddition: '0.00',
       },
     ],
     images: [],
@@ -67,7 +67,16 @@ function product(overrides: Partial<ExportProduct> = {}): ExportProduct {
   };
 }
 
-function variant(values: string[], sku: string, price: string) {
+function variant(
+  values: string[],
+  sku: string,
+  price: string,
+  distance: { base: string; blockKm: number; perBlock: string } = {
+    base: '0.00',
+    blockKm: 5,
+    perBlock: '0.00',
+  },
+) {
   return {
     tiers: [],
     sku,
@@ -85,6 +94,9 @@ function variant(values: string[], sku: string, price: string) {
     barcode: null,
     requiresShipping: true,
     taxable: true,
+    distanceBaseAddition: distance.base,
+    distanceBlockKm: distance.blockKm,
+    distancePerBlockAddition: distance.perBlock,
   };
 }
 
@@ -414,45 +426,73 @@ test('FAQs survive a full export → import round trip, separators and all', () 
   );
 });
 
-test('distance pricing survives a full export → import round trip', () => {
-  const source = product({
+/** Two sizes of a distance-priced product, each with its own figures. */
+const twoSizes = () =>
+  product({
     pricingKind: 'DISTANCE',
-    distanceBaseAddition: '20.00',
-    distanceBlockKm: 2.5,
-    distancePerBlockAddition: '7.50',
+    optionNames: ['Size'],
+    optionLinkedTo: [null],
+    variants: [
+      variant(['25 kg'], 'C25', '220.00', { base: '10.00', blockKm: 5, perBlock: '5.00' }),
+      variant(['50 kg'], 'C50', '400.00', { base: '20.00', blockKm: 2.5, perBlock: '7.50' }),
+    ],
   });
 
-  const { header, rows } = buildExportRows([source]);
-  assert.equal(rows[0]!['Pricing Kind'], 'DISTANCE');
+const toCsvRows = (header: readonly string[], rows: Array<Record<string, string>>): CsvRow[] =>
+  rows.map((row) => Object.fromEntries(header.map((column) => [column, row[column] ?? ''])));
 
-  const csvRows: CsvRow[] = rows.map((row) =>
-    Object.fromEntries(header.map((column) => [column, row[column] ?? ''])),
+test('distance pricing survives a full export → import round trip, per variant', () => {
+  const { header, rows } = buildExportRows([twoSizes()]);
+  assert.equal(rows[0]!['Pricing Kind'], 'DISTANCE');
+  assert.equal(rows[1]!['Distance Per Block'], '7.50', 'each variant row carries its own figures');
+
+  const parsed = parseProducts(toCsvRows(header, rows), header, SHOPIFY_CSV_COLUMNS, []);
+  const back = parsed.products[0]!;
+  assert.equal(back.pricingKind, 'DISTANCE');
+  assert.deepEqual(
+    back.variants.map((v) => v.distance),
+    [
+      { baseAddition: '10.00', blockKm: 5, perBlockAddition: '5.00' },
+      { baseAddition: '20.00', blockKm: 2.5, perBlockAddition: '7.50' },
+    ],
   );
-  const parsed = parseProducts(csvRows, header, SHOPIFY_CSV_COLUMNS, []);
-  assert.deepEqual(parsed.products[0]!.deliveryPricing, {
-    pricingKind: 'DISTANCE',
-    baseAddition: '20.00',
-    blockKm: 2.5,
-    perBlockAddition: '7.50',
+});
+
+/*
+ * A file exported before the figures moved to the variant carries them on the
+ * product's first row only. Its other rows are blank and take the first row's,
+ * rather than importing as nothing added.
+ */
+test('blank figures on a variant row take the first row', () => {
+  const { header, rows } = buildExportRows([twoSizes()]);
+  rows[1]!['Distance Base Addition'] = '';
+  rows[1]!['Distance Block Km'] = '';
+  rows[1]!['Distance Per Block'] = '';
+
+  const parsed = parseProducts(toCsvRows(header, rows), header, SHOPIFY_CSV_COLUMNS, []);
+  assert.deepEqual(parsed.products[0]!.variants[1]!.distance, {
+    baseAddition: '10.00',
+    blockKm: 5,
+    perBlockAddition: '5.00',
   });
 });
 
-test('a file without Pricing Kind leaves distance pricing alone', () => {
-  const { header, rows } = buildExportRows([product()]);
-  const kept = header.filter((column) => column !== 'Pricing Kind');
-  const csvRows: CsvRow[] = rows.map((row) =>
-    Object.fromEntries(kept.map((column) => [column, row[column] ?? ''])),
+test('a file without the distance columns leaves distance pricing alone', () => {
+  const { header, rows } = buildExportRows([twoSizes()]);
+  const kept = header.filter((column) => column !== 'Pricing Kind' && !column.startsWith('Distance '));
+
+  const parsed = parseProducts(toCsvRows(kept, rows), kept, SHOPIFY_CSV_COLUMNS, []);
+  assert.equal(parsed.products[0]!.pricingKind, null);
+  assert.deepEqual(
+    parsed.products[0]!.variants.map((v) => v.distance),
+    [null, null],
   );
-  const parsed = parseProducts(csvRows, kept, SHOPIFY_CSV_COLUMNS, []);
-  assert.equal(parsed.products[0]!.deliveryPricing, null);
 });
 
 test('a distance figure that is not a number skips the product', () => {
-  const { header, rows } = buildExportRows([product({ pricingKind: 'DISTANCE' })]);
-  const csvRows: CsvRow[] = rows.map((row) =>
-    Object.fromEntries(header.map((column) => [column, row[column] ?? ''])),
-  );
-  csvRows[0]!['Distance Per Block'] = 'ten';
+  const { header, rows } = buildExportRows([twoSizes()]);
+  const csvRows = toCsvRows(header, rows);
+  csvRows[1]!['Distance Per Block'] = 'ten';
   const parsed = parseProducts(csvRows, header, SHOPIFY_CSV_COLUMNS, []);
   assert.equal(parsed.products.length, 0);
   assert.ok(parsed.issues.some((issue) => issue.code === 'BAD_DISTANCE_AMOUNT'));

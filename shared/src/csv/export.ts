@@ -30,6 +30,10 @@ export type ExportVariant = {
   barcode: string | null;
   requiresShipping: boolean;
   taxable: boolean;
+  /** This variant's distance figures, written on its own row. */
+  distanceBaseAddition: string;
+  distanceBlockKm: number;
+  distancePerBlockAddition: string;
 };
 
 export type ExportImage = {
@@ -69,11 +73,8 @@ export type ExportProduct = {
   optionLinkedTo: Array<string | null>;
   /** How this product's ladders read. Written on every row of the product. */
   bulkTierBasis: 'QUANTITY' | 'AMOUNT';
-  /** Distance pricing, written on the product's first row. */
+  /** How the price behaves with distance, written on the product's first row. */
   pricingKind: 'FLAT' | 'DISTANCE';
-  distanceBaseAddition: string;
-  distanceBlockKm: number;
-  distancePerBlockAddition: string;
   variants: ExportVariant[];
   images: ExportImage[];
   metafields: ExportMetafield[];
@@ -206,9 +207,6 @@ export function buildProductRows(product: ExportProduct, header: readonly string
       row['SEO Description'] = product.seoDescription ?? '';
       row['Gift Card'] = 'FALSE';
       row['Pricing Kind'] = product.pricingKind;
-      row['Distance Base Addition'] = product.distanceBaseAddition;
-      row['Distance Block Km'] = String(product.distanceBlockKm);
-      row['Distance Per Block'] = product.distancePerBlockAddition;
 
       for (const [axisIndex, name] of product.optionNames.entries()) {
         row[`Option${axisIndex + 1} Name`] = name;
@@ -270,6 +268,10 @@ export function buildProductRows(product: ExportProduct, header: readonly string
       row['Variant Compare At Price'] = variant.compareAtPrice ?? '';
       row['Variant Requires Shipping'] = boolText(variant.requiresShipping);
       row['Variant Taxable'] = boolText(variant.taxable);
+      // Per variant, like the price they add to.
+      row['Distance Base Addition'] = variant.distanceBaseAddition;
+      row['Distance Block Km'] = String(variant.distanceBlockKm);
+      row['Distance Per Block'] = variant.distancePerBlockAddition;
       row['Variant Barcode'] = variant.barcode ?? '';
       row['Variant Weight Unit'] = variant.weightUnit ?? '';
       row['Cost per item'] = variant.costPerItem ?? '';

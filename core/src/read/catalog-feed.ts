@@ -19,7 +19,11 @@ import {
   distanceAdditionFor,
   type CatalogFeedItemDto,
 } from '@buildkart/shared';
-import { DISTANCE_PRICING_SELECT, distanceParamsOf } from './delivery-charges.ts';
+import {
+  distanceParamsOf,
+  PRICING_KIND_SELECT,
+  VARIANT_DISTANCE_SELECT,
+} from './delivery-charges.ts';
 
 /** Meta reads at most 5000 characters of description. */
 const DESCRIPTION_MAX = 5000;
@@ -65,7 +69,7 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
       seoDescriptionEn: true,
       productType: true,
       googleProductCategory: true,
-      ...DISTANCE_PRICING_SELECT,
+      ...PRICING_KIND_SELECT,
       brand: { select: { nameEn: true } },
       category: { select: { nameEn: true } },
       images: {
@@ -81,6 +85,7 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
           stockQty: true,
           inventoryTracked: true,
           inventoryPolicy: true,
+          ...VARIANT_DISTANCE_SELECT,
         },
       },
     },
@@ -88,25 +93,33 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
 
   return products.flatMap((product) => {
     const sellable = product.variants.filter((variant) => canFulfil(variant, 1));
-    const pool = sellable.length > 0 ? sellable : product.variants;
-    const cheapest = pool.reduce<(typeof pool)[number] | undefined>(
-      (best, variant) => (!best || Number(variant.price) < Number(best.price) ? variant : best),
-      undefined,
-    );
-    // A product with no image or no price would be rejected by Meta anyway,
-    // and one rejected row is noise in Commerce Manager's diagnostics.
-    if (!cheapest || product.images.length === 0) return [];
-
     /*
      * A feed has no shopper and no location, so a distance-priced product is
      * listed at its price at the warehouse gate (0 km) — the "from" price a
      * shopper without a location sees too, and never more than any of them pay.
+     * Each variant carries its own figures, so the cheapest is judged on that
+     * price, not the list price.
      */
-    const addition =
-      product.pricingKind === 'DISTANCE'
-        ? distanceAdditionFor(0, distanceParamsOf(product))
-        : '0.00';
-    const price = addMoney(money(cheapest.price)!, addition);
+    const pool = (sellable.length > 0 ? sellable : product.variants).map((variant) => ({
+      variant,
+      price: addMoney(
+        money(variant.price)!,
+        product.pricingKind === 'DISTANCE'
+          ? distanceAdditionFor(0, distanceParamsOf(variant))
+          : '0.00',
+      ),
+    }));
+    const best = pool.reduce<(typeof pool)[number] | undefined>(
+      (current, entry) =>
+        !current || Number(entry.price) < Number(current.price) ? entry : current,
+      undefined,
+    );
+    // A product with no image or no price would be rejected by Meta anyway,
+    // and one rejected row is noise in Commerce Manager's diagnostics.
+    if (!best || product.images.length === 0) return [];
+
+    const cheapest = best.variant;
+    const price = best.price;
     const compareAt = money(cheapest.compareAtPrice);
     const onSale = compareAt !== null && Number(compareAt) > Number(price);
     const title = product.nameEn.slice(0, 200);

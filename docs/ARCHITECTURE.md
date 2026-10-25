@@ -557,9 +557,11 @@ Every product is one of two kinds (`Product.pricingKind`):
   `delivery.charges` setting: the base of the slab the whole cart's total falls in, plus the
   charge of every distance range the trip passes through (past the last range, its charge
   repeats per further block of its width), and nothing at or above `freeAbove`.
-- **DISTANCE** — the unit price rises with distance: `distanceBaseAddition` plus
-  `distancePerBlockAddition` for every `distanceBlockKm` started. Delivery for these lines
-  is free; the cart says so on the line.
+- **DISTANCE** — the unit price rises with distance: the variant's `distanceBaseAddition`
+  plus `distancePerBlockAddition` for every `distanceBlockKm` started. The kind is the
+  product's; the figures are each variant's own (`ProductVariant.distance*`), because a 50 kg
+  bag costs more to carry than a 25 kg one. Delivery for these lines is free; the cart says
+  so on the line.
 
 Distance is straight-line × `roadFactor`, from the nearest warehouse stocking the variant
 (the nearest active one when none lists it). The FLAT lines' delivery is measured to the
@@ -571,7 +573,7 @@ Where it lives:
   `deliveryFeeFor`, `planDistance`, and the form validation. `order-pricing.ts` folds a
   line's `distanceAddition` into its price and every rung before anything else, so tiers,
   tax and totals are unchanged.
-- `core/src/read/delivery-charges.ts` — the I/O: the setting, a product's figures, and
+- `core/src/read/delivery-charges.ts` — the I/O: the setting, a variant's figures, and
   warehouse routing.
 - `core/src/read/cart.ts` (`priceCart`) prices the cart from the shopper's pin;
   `core/src/write/create-order.ts` (`writeOrder`) prices every line again from the

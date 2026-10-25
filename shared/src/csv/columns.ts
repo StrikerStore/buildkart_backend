@@ -72,9 +72,9 @@ export type ShopifyCsvColumn = (typeof SHOPIFY_CSV_COLUMNS)[number];
  * per variant, encoded `20:370|40:365` — threshold, colon, rate, pipe between
  * rungs.
  *
- * `Pricing Kind` (`FLAT` or `DISTANCE`) and the three `Distance …` figures are
- * per product, on its first row. A file without `Pricing Kind` leaves every
- * product's distance pricing as it is.
+ * `Pricing Kind` (`FLAT` or `DISTANCE`) is per product, on its first row; the
+ * three `Distance …` figures are per variant, on each variant's row. A file
+ * without those columns leaves the stored kind and figures as they are.
  */
 export const BUILDKART_CSV_COLUMNS = [
   'Bulk Tier Basis',

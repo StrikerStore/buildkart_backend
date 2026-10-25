@@ -16,6 +16,7 @@ import {
   resetDatabase,
   seedProduct,
   seedSettings,
+  seedVariant,
   seedWarehouse,
 } from '../testing/harness.ts';
 
@@ -210,6 +211,54 @@ test('a typed delivery charge stands as typed', async () => {
 // ---------------------------------------------------------------------------
 // The cart shows the same
 // ---------------------------------------------------------------------------
+
+/*
+ * The figures are per variant: a 50 kg bag costs more to carry than a 25 kg
+ * one, and each size of the same product is priced by its own.
+ */
+test('two sizes of one product are priced by their own figures', async () => {
+  const { product, variant: small } = await seedProduct({
+    handle: 'cement',
+    price: '220.00',
+    distance: { baseAddition: '10.00', blockKm: 5, perBlockAddition: '5.00' },
+  });
+  const large = await seedVariant({
+    productId: product.id,
+    option: '50 kg',
+    price: '400.00',
+    distance: CEMENT,
+  });
+  await seedWarehouse({ code: 'A', from: HOME, roadKm: 7, variantIds: [small.id, large.id] });
+
+  const result = await place([
+    { variantId: small.id, quantity: 1 },
+    { variantId: large.id, quantity: 1 },
+  ]);
+  assert.ok(result.ok, JSON.stringify(result));
+
+  const items = await prisma.orderItem.findMany({ where: { orderId: result.data.orderId } });
+  const byVariant = new Map(items.map((item) => [item.variantId, item]));
+  // 7 km is two blocks: 10 + 2 × 5 on the small bag, 20 + 2 × 10 on the large.
+  assert.equal(byVariant.get(small.id)!.unitPrice.toFixed(2), '240.00');
+  assert.equal(byVariant.get(small.id)!.distanceAddition?.toFixed(2), '20.00');
+  assert.equal(byVariant.get(large.id)!.unitPrice.toFixed(2), '440.00');
+  assert.equal(byVariant.get(large.id)!.distanceAddition?.toFixed(2), '40.00');
+
+  // And the cart says the same for the same pin.
+  const cart = await core.priceCart({
+    lines: [
+      { variantId: small.id, quantity: 1 },
+      { variantId: large.id, quantity: 1 },
+    ],
+    pincode: '452001',
+    latitude: HOME.latitude,
+    longitude: HOME.longitude,
+  });
+  assert.deepEqual(
+    cart.lines.map((line) => line.unitPrice).sort(),
+    ['240.00', '440.00'],
+  );
+});
 
 test('the cart prices a distance-priced line for the pin, and says it delivers free', async () => {
   const { variant: cement } = await seedProduct({

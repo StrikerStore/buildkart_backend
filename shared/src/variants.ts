@@ -74,6 +74,13 @@ export type VariantDraft = {
   barcode: string;
   imageMediaId: string | null;
   isActive: boolean;
+  /**
+   * What this variant adds per unit when the product is distance-priced:
+   * amounts like "20.00", and the block size in km like "5".
+   */
+  distanceBaseAddition: string;
+  distanceBlockKm: string;
+  distancePerBlockAddition: string;
 };
 
 export function matrixKeyOf(values: readonly string[]): string {
@@ -102,6 +109,11 @@ export function emptyVariantDraft(overrides: Partial<VariantDraft> = {}): Varian
     barcode: '',
     imageMediaId: null,
     isActive: true,
+    // Nothing added until somebody sets it; the product form warns about a
+    // distance-priced product with a size left at nothing.
+    distanceBaseAddition: '0.00',
+    distanceBlockKm: '5',
+    distancePerBlockAddition: '0.00',
     ...overrides,
   };
 }
