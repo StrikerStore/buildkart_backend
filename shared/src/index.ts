@@ -11,6 +11,7 @@ export * from './actor.ts';
 export * from './imports.ts';
 export * from './dtos.ts';
 export * from './settings.ts';
+export * from './app-version.ts';
 export * from './variants.ts';
 export * from './forms.ts';
 export * from './sku.ts';

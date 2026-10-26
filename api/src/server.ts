@@ -2,21 +2,31 @@
  * The HTTP entry point.
  *
  * A standalone Node server rather than a framework: this service renders
- * nothing, so everything a web framework brings would be weight. It listens on
- * Railway's private network — see the topology table in docs/ARCHITECTURE.md — and
- * is not published to a public domain until a client outside Railway needs it.
+ * nothing, so everything a web framework brings would be weight.
+ *
+ * It answers on Railway's private network and on `api.buildkart.co`, behind
+ * two doors:
+ *
+ *   - `/…`     the whole router, for our own servers (website, admin). Every
+ *              procedure needs the service token.
+ *   - `/app/…` the mobile router, for the phone app. App Check stands in for
+ *              the service token, and the admin's routers are not there.
+ *
+ * See "The mobile app's door" in docs/ARCHITECTURE.md.
  */
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { createHTTPHandler } from '@trpc/server/adapters/standalone';
 import { autoConfirmOrders, isSecretsKeyConfigured } from '@buildkart/core';
-import { createContext } from './context.ts';
+import { createAppContext, createContext } from './context.ts';
 import { verifyAdminSession } from './auth/verifier.ts';
 import { verifyCustomerSession } from './auth/customer-verifier.ts';
+import { verifyAppCheck } from './auth/app-check.ts';
 import { handleHttpRoute } from './http.ts';
 import { appRouter } from './routers/index.ts';
+import { mobileRouter } from './routers/mobile.ts';
 
 /*
  * `backend/.env` — the credentials file.
@@ -36,26 +46,55 @@ loadEnv({ path: join(backendDir, '.env'), override: false, quiet: true });
  */
 const PORT = Number(process.env.PORT ?? process.env.API_PORT ?? 3002);
 
+function headerOf(req: IncomingMessage) {
+  return (name: string) => {
+    const value = req.headers[name.toLowerCase()];
+    return Array.isArray(value) ? value[0] : value;
+  };
+}
+
+function logInternalError({ error, path }: { error: { code: string; cause?: unknown }; path?: string }) {
+  if (error.code === 'INTERNAL_SERVER_ERROR') {
+    console.error(`[api] ${path ?? '<no path>'}`, error.cause ?? error);
+  }
+}
+
 const handler = createHTTPHandler({
   router: appRouter,
   createContext: ({ req }) =>
     createContext({
-      header: (name) => {
-        const value = req.headers[name.toLowerCase()];
-        return Array.isArray(value) ? value[0] : value;
-      },
+      header: headerOf(req),
       // Phase 4: this service now holds the signing key, so it can tell a
       // real token from a forged one. The seam stays a parameter so a test can
       // still inject its own.
       verifyAdminSession,
       verifyCustomerSession,
     }),
-  onError({ error, path }) {
-    if (error.code === 'INTERNAL_SERVER_ERROR') {
-      console.error(`[api] ${path ?? '<no path>'}`, error.cause ?? error);
-    }
-  },
+  onError: logInternalError,
 });
+
+/*
+ * The mobile app's door. A different router *and* a different context: the
+ * phone is proven by App Check rather than the service token, and only the
+ * customer-facing routers are mounted. `basePath` strips the prefix, so the
+ * app calls `/app/storefront.home` and the router sees `storefront.home`.
+ */
+const APP_PREFIX = '/app/';
+const mobileHandler = createHTTPHandler({
+  router: mobileRouter,
+  basePath: APP_PREFIX,
+  createContext: ({ req }) =>
+    createAppContext({
+      header: headerOf(req),
+      verifyAppCheck,
+      verifyCustomerSession,
+    }),
+  onError: logInternalError,
+});
+
+function isAppRequest(req: IncomingMessage): boolean {
+  return (req.url ?? '').startsWith(APP_PREFIX);
+}
 
 /*
  * Sent on every response. The API only ever answers with JSON or a CSV, so it
@@ -79,7 +118,9 @@ const server = createServer((req, res) => {
    */
   void handleHttpRoute(req, res)
     .then((handled) => {
-      if (!handled) handler(req, res);
+      if (handled) return;
+      if (isAppRequest(req)) mobileHandler(req, res);
+      else handler(req, res);
     })
     .catch((error) => {
       console.error('[api] unhandled route error', error);
@@ -116,6 +157,16 @@ server.listen(PORT, '0.0.0.0', () => {
     // Not a warning to be tidied away: without it every request is untrusted
     // and the whole surface refuses, which looks like a broken deploy.
     console.warn('[api] SERVICE_TOKEN is not set — every request will be rejected.');
+  }
+
+  // The same reasoning for the app's door: unconfigured means every phone is
+  // refused, which on a staging deploy looks like a broken app, not a setting.
+  if (!process.env.FIREBASE_PROJECT_NUMBER || !process.env.FIREBASE_APP_IDS) {
+    console.warn(
+      process.env.APP_CHECK_MODE === 'monitor'
+        ? '[api] App Check is not configured; /app/ is OPEN because APP_CHECK_MODE=monitor.'
+        : '[api] App Check is not configured — every /app/ request will be rejected.',
+    );
   }
 
   /*

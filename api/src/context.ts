@@ -15,6 +15,13 @@
  * service**. Until then `verifyAdminSession` defaults to a stub that refuses
  * everything, so the API fails closed rather than trusting a header. Tests and
  * Phase 4 inject a real verifier through the same seam.
+ *
+ * **The mobile app is a third kind of caller, with its own door.** A phone
+ * cannot hold the service token — anything in an app binary can be unpacked —
+ * so requests under `/app/` are built by `createAppContext` instead: Firebase
+ * App Check stands in for the service token, and the customer's session is
+ * verified exactly as for the website. That door leads to a narrower router
+ * (`routers/mobile.ts`) and can never produce an admin.
  */
 import { PUBLIC_ACTOR } from '@buildkart/core';
 // `Actor` from shared, not core: it is part of this API's public type, so a
@@ -74,10 +81,34 @@ export type ContextOptions = {
   serviceToken?: string | undefined;
 };
 
+/** What a Firebase App Check token turned out to be. */
+export type AppCheckResult =
+  | { ok: true; appId: string }
+  | { ok: false; reason: 'missing' | 'invalid' | 'unknown-app' | 'unconfigured' };
+
+/** Verifies the `x-firebase-appcheck` header. The real one is in `auth/app-check.ts`. */
+export type AppCheckVerifier = (token: string | undefined) => Promise<AppCheckResult>;
+
+/** The default: trust no phone until App Check is wired up. */
+export const refuseAllAppChecks: AppCheckVerifier = async () => ({
+  ok: false,
+  reason: 'unconfigured',
+});
+
+/**
+ * Who opened the connection.
+ *
+ * - `service` — one of our servers (website, admin), proven by the service token.
+ * - `app` — our mobile app, proven by App Check, and only ever under `/app/`.
+ * - `none` — neither. Every procedure refuses it.
+ *
+ * One field rather than a boolean per kind, so a request can never be both.
+ */
+export type CallerKind = 'service' | 'app' | 'none';
+
 export type ApiContext = {
   actor: Actor;
-  /** False when the caller did not present a valid service token. */
-  trustedCaller: boolean;
+  caller: CallerKind;
   clientIp: string | null;
 };
 
@@ -120,7 +151,7 @@ export async function createContext(options: ContextOptions): Promise<ApiContext
   const clientIp = clientIpFrom(header);
 
   if (!trustedCaller) {
-    return { actor: PUBLIC_ACTOR, trustedCaller: false, clientIp };
+    return { actor: PUBLIC_ACTOR, caller: 'none', clientIp };
   }
 
   const admin = await verifyAdminSession(bearer(header('authorization')));
@@ -128,7 +159,7 @@ export async function createContext(options: ContextOptions): Promise<ApiContext
   if (admin) {
     return {
       actor: { kind: 'admin', adminId: admin.adminId, role: admin.role, ip: clientIp },
-      trustedCaller: true,
+      caller: 'service',
       clientIp,
     };
   }
@@ -145,7 +176,103 @@ export async function createContext(options: ContextOptions): Promise<ApiContext
     actor: customer
       ? { kind: 'customer', customerId: customer.customerId }
       : PUBLIC_ACTOR,
-    trustedCaller: true,
+    caller: 'service',
+    clientIp,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The mobile app's door
+// ---------------------------------------------------------------------------
+
+/**
+ * The client's address, for a request that came straight from a phone.
+ *
+ * `clientIpFrom` believes the *leftmost* forwarded entry, which is right when
+ * the caller is our own website forwarding its visitor's address — and wrong
+ * here, because a phone writes that entry itself. A forged address would walk
+ * straight past the OTP limit that counts by IP.
+ *
+ * So, in order of trust:
+ *
+ *   1. `cf-connecting-ip`, but only when `trustCloudflare` says the API sits
+ *      behind Cloudflare's proxy. Cloudflare overwrites it on every request;
+ *      without Cloudflare in front, anyone can send it.
+ *   2. The **rightmost** `x-forwarded-for` entry — the one Railway's own proxy
+ *      appended, which a client cannot control. Whatever the phone wrote sits
+ *      to its left and is ignored.
+ */
+export function appClientIpFrom(
+  header: (name: string) => string | undefined,
+  trustCloudflare: boolean,
+): string | null {
+  if (trustCloudflare) {
+    const cloudflare = header('cf-connecting-ip')?.trim();
+    if (cloudflare) return cloudflare.slice(0, 45);
+  }
+
+  const forwarded = header('x-forwarded-for');
+  if (forwarded) {
+    const last = forwarded.split(',').at(-1)?.trim();
+    if (last) return last.slice(0, 45);
+  }
+  return null;
+}
+
+export type AppContextOptions = {
+  header: (name: string) => string | undefined;
+  verifyAppCheck?: AppCheckVerifier;
+  verifyCustomerSession?: CustomerSessionVerifier;
+  /**
+   * `monitor` lets a request with a failed App Check through, and logs it.
+   * For the first beta builds only, while attestation is tuned on real phones;
+   * anything other than the exact string `monitor` means enforce.
+   */
+  appCheckMode?: string | undefined;
+  /** Whether `cf-connecting-ip` can be believed. See `appClientIpFrom`. */
+  trustCloudflare?: boolean;
+};
+
+/**
+ * Who is calling, for a request under `/app/`.
+ *
+ * Deliberately not a branch inside `createContext`. The two doors trust
+ * different proofs, and a single function that could return either kind of
+ * caller is one refactor away from returning the wrong one.
+ *
+ * Two things this never does:
+ *
+ *   - **Read the service token.** A phone has no business holding it, so its
+ *     presence here proves nothing — and ignoring it means the website's token
+ *     cannot be used to reach anything wider through this door.
+ *   - **Read an admin session.** No admin works from the customer app, and an
+ *     admin token arriving here is a leak, not a login.
+ */
+export async function createAppContext(options: AppContextOptions): Promise<ApiContext> {
+  const {
+    header,
+    verifyAppCheck = refuseAllAppChecks,
+    verifyCustomerSession = refuseAllCustomerSessions,
+  } = options;
+  const mode = options.appCheckMode ?? process.env.APP_CHECK_MODE;
+  const trustCloudflare = options.trustCloudflare ?? process.env.TRUST_CLOUDFLARE_IP === 'true';
+
+  const clientIp = appClientIpFrom(header, trustCloudflare);
+
+  const check = await verifyAppCheck(header('x-firebase-appcheck'));
+  if (!check.ok) {
+    if (mode !== 'monitor') {
+      return { actor: PUBLIC_ACTOR, caller: 'none', clientIp };
+    }
+    // The reason, never the token: a log line is not a place for a credential.
+    console.warn(`[app-check] let through in monitor mode (${check.reason}) from ${clientIp ?? 'unknown'}`);
+  }
+
+  const customer = await verifyCustomerSession(header('x-customer-token'));
+
+  return {
+    actor: customer ? { kind: 'customer', customerId: customer.customerId } : PUBLIC_ACTOR,
+    caller: 'app',
     clientIp,
   };
 }

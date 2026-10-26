@@ -94,7 +94,7 @@ API code is bundled into either app, but the types stay live across the boundary
 
 | Service | Holds | Reachable from |
 |---|---|---|
-| `backend/api` | `DATABASE_URL`, R2 keys, `SESSION_SECRET`, `CRON_SECRET` | Private network only, at first |
+| `backend/api` | `DATABASE_URL`, R2 keys, `SESSION_SECRET`, `CRON_SECRET`, Firebase App Check ids | Private network for the website and admin; public at `api.buildkart.co` for payment webhooks and the mobile app's `/app/` door |
 | `admin` | `API_URL`, `SERVICE_TOKEN` | Public — `admin.buildkart.co` |
 | `website` | `API_URL`, `SERVICE_TOKEN` | Public — `buildkart.co` |
 | MySQL | — | `backend/api` only |
@@ -491,7 +491,48 @@ the admin's service. Repoint the Railway cron jobs at the API.
 **Phase 6 — The website is built on the API from day one.** It never depends on
 `@buildkart/database` at all.
 
-**Later — the REST facade**, when the mobile app or WhatsApp bot is real.
+**Phase 7 — The mobile app's door. ✅ Backend done.** The customer app (Expo, React Native)
+calls this same API, and **not** through a REST facade: it is TypeScript, so it imports a
+type from the contract exactly as the website does. What it could not do is hold the
+service token — anything inside an app binary can be unpacked — so it gets a door of its
+own:
+
+- **`/app/…` is a second tRPC handler** in `server.ts`, with its own router and its own
+  context. Everything else on the server is untouched; the website and admin keep the root.
+- **`routers/mobile.ts`** mounts `storefront`, `content`, `support` and `payments` — the
+  same routers, not copies. `auth`, `catalog`, `orders`, `operations`, `marketing`,
+  `analytics`, `notifications` and `privacy` are left out, so those procedures do not exist
+  on that path. That matters most for `auth.login`: the admin's password login is a public
+  procedure, and on this path it would make every phone a brute-force client.
+- **`createAppContext`** replaces the service token with **Firebase App Check** — Play
+  Integrity on Android, App Attest on iOS — verified with `jose` against Firebase's keys in
+  `auth/app-check.ts`. It reads the customer's session from `x-customer-token` exactly as
+  the website's context does, and it never reads the service token or an admin session.
+- **One `caller` field** (`'service' | 'app' | 'none'`) replaced the `trustedCaller`
+  boolean. Public and customer procedures accept `service` or `app`; admin procedures accept
+  `service` only. So the admin procedures that *do* live in the four kept routers are still
+  refused on the app path — two locks, either of which would be enough.
+- **The phone's address** comes from `cf-connecting-ip` when `TRUST_CLOUDFLARE_IP=true`,
+  otherwise from the *rightmost* `x-forwarded-for` entry (the one Railway appended). The
+  leftmost, which `clientIpFrom` uses for our own servers, is written by the phone itself.
+- **A per-IP sign-in code limit** (30 per 15 minutes across all numbers) joins the per-phone
+  one, for both doors. Generous, because carrier-grade NAT puts many real customers behind
+  one address.
+- **`content.appConfig`** tells the app whether its build is still served (`apps.mobile`
+  setting; the rule is `appUpdateStatus` in `shared/app-version.ts`). Raising the minimum is
+  how the shop retires a build the API no longer understands.
+
+*Fails closed.* With `FIREBASE_PROJECT_NUMBER` or `FIREBASE_APP_IDS` unset, every `/app/`
+request is refused. `APP_CHECK_MODE=monitor` lets failed checks through with a log line —
+for the first beta builds only.
+
+*The rule from here on:* once the app is in the stores, **anything reachable through
+`MobileRouter` changes additively.** An installed app cannot be recompiled. A changed
+input is a new procedure; the old one stays until `appConfig`'s minimum has passed every
+build that calls it.
+
+**Later — the REST facade**, if a genuinely non-TypeScript client arrives (the WhatsApp bot,
+say). The mobile app turned out not to need one.
 
 **What stays in the apps**, because separation is not the same as moving everything: the
 UI, the theme, cookie handling, `revalidatePath`, and code with exactly one caller. The CSV

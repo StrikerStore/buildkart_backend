@@ -47,6 +47,22 @@ const MAX_SENDS = 5;
 const SEND_WINDOW_MINUTES = 15;
 
 /**
+ * Codes per IP address per window, across every phone number.
+ *
+ * The per-phone limit stops one number being flooded; it does nothing against
+ * a script that walks through a thousand numbers, which costs a WhatsApp
+ * message each. This one does.
+ *
+ * Generous on purpose. Indian mobile networks put many subscribers behind one
+ * shared IPv4 address (carrier-grade NAT), so a busy tower can legitimately
+ * send dozens of sign-ins from "one" address in a quarter of an hour. Set low,
+ * this would lock real contractors out at the busiest moment; set here, a
+ * script is capped at a few thousand messages a day rather than unlimited, and
+ * Cloudflare's per-IP rule in front of `/app/` takes it the rest of the way.
+ */
+const MAX_SENDS_PER_IP = 30;
+
+/**
  * One message for a wrong code and an expired one.
  *
  * Distinguishing them tells someone guessing whether the code they are working
@@ -213,10 +229,17 @@ export async function issueOtp(
   const now = new Date();
   const since = new Date(now.getTime() - SEND_WINDOW_MINUTES * 60_000);
 
-  const recent = await prisma.customerOtp.count({
-    where: { phone, createdAt: { gte: since } },
-  });
-  if (recent >= MAX_SENDS) {
+  const [recent, fromThisAddress] = await Promise.all([
+    prisma.customerOtp.count({
+      where: { phone, createdAt: { gte: since } },
+    }),
+    // No address, no limit: an unknown IP is a test or a misconfigured proxy,
+    // and counting every such request together would lock out everybody.
+    ip
+      ? prisma.customerOtp.count({ where: { ip, createdAt: { gte: since } } })
+      : 0,
+  ]);
+  if (recent >= MAX_SENDS || fromThisAddress >= MAX_SENDS_PER_IP) {
     return actionError(
       `Too many codes requested. Try again in ${SEND_WINDOW_MINUTES} minutes.`,
     );

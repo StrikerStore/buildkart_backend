@@ -44,16 +44,36 @@ export const middleware = t.middleware;
 /**
  * Rejects anything without a valid service token.
  *
- * Applied to *every* procedure, including the public ones. "Public" here means
- * "no signed-in human required" — the storefront reading a category page — not
- * "anyone on the internet". Nothing on this API is meant to be called by a
- * stranger's browser directly.
+ * What every admin procedure sits behind. Only our own servers hold the token,
+ * so the mobile app — however well it attests — never gets past this one.
  */
 const requireTrustedCaller = middleware(({ ctx, next }) => {
-  if (!ctx.trustedCaller) {
+  if (ctx.caller !== 'service') {
     throw new TRPCError({
       code: 'UNAUTHORIZED',
       message: 'A valid service token is required.',
+    });
+  }
+  return next({ ctx });
+});
+
+/**
+ * Rejects anything that is neither one of our servers nor our mobile app.
+ *
+ * Applied to *every* customer-facing procedure, including the public ones.
+ * "Public" here means "no signed-in human required" — the storefront reading a
+ * category page — not "anyone on the internet". A stranger's script is refused
+ * whichever door it tries: it has no service token, and no App Check token.
+ *
+ * Letting `app` through here is safe only because of where that caller can
+ * appear: `createAppContext` is wired to the `/app/` handler alone, and that
+ * handler serves `routers/mobile.ts`, which leaves the admin's routers out.
+ */
+const requireKnownCaller = middleware(({ ctx, next }) => {
+  if (ctx.caller !== 'service' && ctx.caller !== 'app') {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'A valid service token or app attestation is required.',
     });
   }
   return next({ ctx });
@@ -74,8 +94,8 @@ const requireAdmin = requireTrustedCaller.unstable_pipe(({ ctx, next }) => {
   return next({ ctx: { ...ctx, actor: ctx.actor } });
 });
 
-/** For data any caller of ours may read — the storefront included. */
-export const publicProcedure = t.procedure.use(requireTrustedCaller);
+/** For data any caller of ours may read — the storefront and the app included. */
+export const publicProcedure = t.procedure.use(requireKnownCaller);
 
 /** For anything that needs a signed-in admin. */
 export const adminProcedure = t.procedure.use(requireAdmin);
@@ -88,7 +108,7 @@ export const adminProcedure = t.procedure.use(requireAdmin);
  * "nobody is signed in" into a clear 401 the storefront can redirect on,
  * instead of a FORBIDDEN naming a customer id that was never going to exist.
  */
-const requireCustomer = requireTrustedCaller.unstable_pipe(({ ctx, next }) => {
+const requireCustomer = requireKnownCaller.unstable_pipe(({ ctx, next }) => {
   if (ctx.actor.kind !== 'customer') {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Sign in to continue.' });
   }

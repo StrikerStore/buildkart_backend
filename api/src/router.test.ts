@@ -13,11 +13,11 @@ import { PUBLIC_ACTOR } from '@buildkart/core';
 import { appRouter } from './routers/index.ts';
 import type { ApiContext } from './context.ts';
 
-const untrusted: ApiContext = { actor: PUBLIC_ACTOR, trustedCaller: false, clientIp: null };
-const trustedAnonymous: ApiContext = { actor: PUBLIC_ACTOR, trustedCaller: true, clientIp: null };
+const untrusted: ApiContext = { actor: PUBLIC_ACTOR, caller: 'none', clientIp: null };
+const trustedAnonymous: ApiContext = { actor: PUBLIC_ACTOR, caller: 'service', clientIp: null };
 const admin: ApiContext = {
   actor: { kind: 'admin', adminId: 'a1', role: 'OWNER', ip: null },
-  trustedCaller: true,
+  caller: 'service',
   clientIp: null,
 };
 

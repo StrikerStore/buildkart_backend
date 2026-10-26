@@ -6,10 +6,13 @@
  */
 import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import {
+  appUpdateStatus,
   formatINR,
   ORDER_STATUS_LABELS,
   mediaContext,
+  type AppConfigDto,
   type AppRouter,
+  type MobileRouter,
   type OrderDetailDto,
   type Actor,
 } from '../dist/index.js';
@@ -37,4 +40,25 @@ export async function proveInference() {
   const actor: Actor = { kind: 'public' };
 
   return { price, label, media, storeName, minimum, detail, actor };
+}
+
+/*
+ * The mobile app's view: the narrower router, as a phone would build its
+ * client. `@ts-expect-error` is the point — if the admin's routers ever leak
+ * into `MobileRouter`, these lines stop being errors and this check fails.
+ */
+const mobile = createTRPCClient<MobileRouter>({
+  links: [httpBatchLink({ url: 'http://127.0.0.1:3002/app' })],
+});
+
+export async function proveMobileInference() {
+  const config: AppConfigDto = await mobile.content.appConfig.query();
+  const status: 'required' | 'available' | 'current' = appUpdateStatus('1.0.0', config);
+
+  // @ts-expect-error — the admin's login is not on the mobile router.
+  await mobile.auth.login.mutate({});
+  // @ts-expect-error — nor are the admin's orders.
+  await mobile.orders.list.query({});
+
+  return { config, status };
 }

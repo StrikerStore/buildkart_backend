@@ -153,6 +153,9 @@ model CustomerOtp {
 
   /// The lookup: newest live code for a phone.
   @@index([phone, createdAt])
+  /// The per-address send limit: codes from one IP in the last window, across
+  /// every phone number. See `MAX_SENDS_PER_IP` in core's customer-auth.
+  @@index([ip, createdAt])
   /// Expiry lookups. Rows themselves are deleted after a year by
   /// `/cron/privacy` (the Rules' one-year log retention).
   @@index([expiresAt])

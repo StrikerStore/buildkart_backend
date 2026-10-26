@@ -9,6 +9,8 @@
  */
 import { z } from 'zod';
 import {
+  getAppConfig,
+  saveAppConfig,
   deleteBanner,
   deleteBlogPost,
   deleteCustomerReview,
@@ -256,4 +258,17 @@ export const contentRouter = router({
   publishedMenu: publicProcedure
     .input(z.object({ handle: z.string().min(1).max(64) }))
     .query(({ input }) => getPublishedMenu(input.handle)),
+
+  /*
+   * The first thing the mobile app asks at launch: is this build still served,
+   * and is there a newer one? Public, because it is asked before anyone signs
+   * in — and a build too old to talk to the rest of the API must still be able
+   * to ask this. Its shape is therefore the one thing on the mobile router that
+   * may never change.
+   */
+  appConfig: publicProcedure.query(() => getAppConfig()),
+
+  saveAppConfig: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveAppConfig(ctx.actor, input)),
 });

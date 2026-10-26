@@ -1,10 +1,18 @@
 export { appRouter, type AppRouter } from './routers/index.ts';
+export { mobileRouter, type MobileRouter } from './routers/mobile.ts';
 export {
   createContext,
+  createAppContext,
   clientIpFrom,
+  appClientIpFrom,
   refuseAllSessions,
+  refuseAllAppChecks,
   type AdminSessionVerifier,
+  type AppCheckResult,
+  type AppCheckVerifier,
+  type AppContextOptions,
   type ApiContext,
+  type CallerKind,
   type ContextOptions,
   type VerifiedAdmin,
 } from './context.ts';

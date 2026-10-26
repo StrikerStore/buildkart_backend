@@ -59,7 +59,7 @@ async function requireAdminActor(req: IncomingMessage) {
     verifyAdminSession,
     verifyCustomerSession,
   });
-  if (!ctx.trustedCaller || ctx.actor.kind !== 'admin') return null;
+  if (ctx.caller !== 'service' || ctx.actor.kind !== 'admin') return null;
   return ctx.actor;
 }
 

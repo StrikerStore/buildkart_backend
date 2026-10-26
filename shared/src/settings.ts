@@ -12,6 +12,7 @@ import { EMPTY_SECRET, encryptedSecretSchema } from './secrets.ts';
 import { DEFAULT_WALLET_RULES, walletRulesSchema } from './wallet.ts';
 import { CHECKOUT_OPTIONS } from './checkout-options.ts';
 import { DEFAULT_PARTIAL_COD } from './payments.ts';
+import { appConfigSettingSchema } from './app-version.ts';
 
 const money = z.string().regex(MONEY_PATTERN, 'Must be an amount like "10000.00"');
 
@@ -680,6 +681,13 @@ export const SETTING_SCHEMAS = {
         'सामान उतारना और ग्राउंड फ़्लोर पर बताई जगह पर रखना शामिल है।',
       ],
     }),
+
+  /**
+   * Which mobile app builds are still served, and where to get a newer one.
+   * Public through `content.appConfig` — not through `getSettings`, which
+   * names its own keys. The rule that reads it is in `app-version.ts`.
+   */
+  'apps.mobile': appConfigSettingSchema,
 } as const;
 
 /**

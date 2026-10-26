@@ -11,6 +11,7 @@ import {
   actionErrorFromZod,
   actionErrorFromZodDeep,
   actionOk,
+  appConfigInputSchema,
   commerceSettingsSchema,
   normalizeMoney,
   privacyContactSchema,
@@ -196,6 +197,33 @@ export async function saveWalletRules(actor: Actor, input: unknown): Promise<Act
     entityType: 'Setting',
     entityId: 'rewards.wallet',
     diff: value,
+  });
+
+  return actionOk();
+}
+
+/**
+ * Which mobile app builds are still served.
+ *
+ * Raising the minimum is the one setting here that can lock customers out:
+ * every phone below it sees only an "update the app" screen. That is the point
+ * — it is how the shop retires a build the API no longer understands — and it
+ * is also why the change is audited with both numbers, so "why can nobody
+ * order from the app?" has an answer in the log.
+ */
+export async function saveAppConfig(actor: Actor, input: unknown): Promise<ActionResult<void>> {
+  assertPermission(actor, 'settings:write');
+
+  const parsed = appConfigInputSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+
+  await writeSettings([{ key: 'apps.mobile', value: parsed.data }]);
+
+  await recordAudit(actor, {
+    action: 'settings.apps',
+    entityType: 'Setting',
+    entityId: 'apps.mobile',
+    diff: parsed.data,
   });
 
   return actionOk();

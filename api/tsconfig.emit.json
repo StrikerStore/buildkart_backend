@@ -7,5 +7,5 @@
     "declarationMap": false,
     "outDir": "./dts"
   },
-  "include": ["src/routers/index.ts"]
+  "include": ["src/routers/index.ts", "src/routers/mobile.ts"]
 }

@@ -9,7 +9,7 @@
  */
 import { prisma } from '@buildkart/database';
 import { SETTINGS_DTO_KEYS, parseSetting } from '@buildkart/shared';
-import type { CommerceSettingsDto, SettingsDto, StoreProfileDto } from '@buildkart/shared';
+import type { AppConfigDto, CommerceSettingsDto, SettingsDto, StoreProfileDto } from '@buildkart/shared';
 export type { CommerceSettingsDto, SettingsDto, StoreProfileDto };
 import { toWalletRulesDto } from './wallet.ts';
 
@@ -125,5 +125,26 @@ function toUnloadingDto(value: {
     price: value.price,
     notesEn: value.notesEn,
     notesHi: value.notesHi,
+  };
+}
+
+/**
+ * Which mobile app builds are still served — public, like everything here.
+ *
+ * Its own read rather than a field on `getSettings`: the app asks for this at
+ * launch, before anything else, and should not pay for the whole settings set
+ * to learn whether it may run at all. An empty store link becomes null so the
+ * app can tell "not listed yet" from a link.
+ */
+export async function getAppConfig(): Promise<AppConfigDto> {
+  const row = await prisma.setting.findUnique({ where: { key: 'apps.mobile' } });
+  const config = parseSetting('apps.mobile', row?.value);
+  return {
+    minSupportedVersion: config.minSupportedVersion,
+    latestVersion: config.latestVersion,
+    storeUrls: {
+      android: config.androidStoreUrl || null,
+      ios: config.iosStoreUrl || null,
+    },
   };
 }
