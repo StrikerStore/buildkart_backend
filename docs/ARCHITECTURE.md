@@ -557,8 +557,9 @@ Every product is one of two kinds (`Product.pricingKind`):
   `delivery.charges` setting: the base of the slab the whole cart's total falls in, plus the
   charge of every distance range the trip passes through (past the last range, its charge
   repeats per further block of its width), and nothing at or above `freeAbove`.
-- **DISTANCE** — the unit price rises with distance: the variant's `distanceBaseAddition`
-  plus `distancePerBlockAddition` for every `distanceBlockKm` started. The kind is the
+- **DISTANCE** — the unit price rises with distance: the variant's `distanceBaseAddition`,
+  which covers the first `distanceBlockKm`, plus `distancePerBlockAddition` for every further
+  block started. The MRP shown rises by the same amount, so the price never passes it. The kind is the
   product's; the figures are each variant's own (`ProductVariant.distance*`), because a 50 kg
   bag costs more to carry than a 25 kg one. Delivery for these lines is free; the cart says
   so on the line.

@@ -11,6 +11,7 @@ import {
   nearestWarehouse,
   planDistance,
   roadMetres,
+  shiftMrp,
   slabFor,
   type DeliveryChargeRules,
   type DistanceParams,
@@ -53,12 +54,13 @@ test('a point is no distance from itself', () => {
 
 const CEMENT: DistanceParams = { baseAddition: '20.00', blockKm: 5, perBlockAddition: '10.00' };
 
-test('a distance-priced product adds its base at the gate, and a block for every block started', () => {
+test('the base covers the first block, and every further block started adds', () => {
   assert.equal(distanceAdditionFor(0, CEMENT), '20.00');
-  assert.equal(distanceAdditionFor(1, CEMENT), '30.00');
-  assert.equal(distanceAdditionFor(km(3), CEMENT), '30.00');
-  assert.equal(distanceAdditionFor(km(7), CEMENT), '40.00');
-  assert.equal(distanceAdditionFor(km(12), CEMENT), '50.00');
+  assert.equal(distanceAdditionFor(1, CEMENT), '20.00');
+  assert.equal(distanceAdditionFor(km(3), CEMENT), '20.00');
+  assert.equal(distanceAdditionFor(km(7), CEMENT), '30.00');
+  assert.equal(distanceAdditionFor(km(12), CEMENT), '40.00');
+  assert.equal(distanceAdditionFor(km(25), CEMENT), '60.00');
 });
 
 /*
@@ -67,14 +69,30 @@ test('a distance-priced product adds its base at the gate, and a block for every
  * standing on the line.
  */
 test('exactly on a block line is that block; one metre past it is the next', () => {
-  assert.equal(distanceAdditionFor(5000, CEMENT), '30.00');
-  assert.equal(distanceAdditionFor(5001, CEMENT), '40.00');
+  assert.equal(distanceAdditionFor(5000, CEMENT), '20.00');
+  assert.equal(distanceAdditionFor(5001, CEMENT), '30.00');
+  assert.equal(distanceAdditionFor(10_000, CEMENT), '30.00');
+  assert.equal(distanceAdditionFor(10_001, CEMENT), '40.00');
+});
+
+/** The owner's own example: a cubic metre of sand at ₹1,400, ₹400 base, ₹100 per 5 km. */
+test('the sand example: base to 5 km, then ₹100 for every further 5 km', () => {
+  const sand = { baseAddition: '400.00', blockKm: 5, perBlockAddition: '100.00' };
+  assert.equal(distanceAdditionFor(km(4), sand), '400.00');
+  assert.equal(distanceAdditionFor(km(10), sand), '500.00');
+  assert.equal(distanceAdditionFor(km(25), sand), '800.00');
 });
 
 test('blocks need not be whole kilometres', () => {
   const params = { baseAddition: '0.00', blockKm: 2.5, perBlockAddition: '4.50' };
-  assert.equal(distanceAdditionFor(km(2.5), params), '4.50');
-  assert.equal(distanceAdditionFor(km(6), params), '13.50');
+  assert.equal(distanceAdditionFor(km(2.5), params), '0.00');
+  assert.equal(distanceAdditionFor(km(6), params), '9.00');
+});
+
+test('the MRP rises by the same addition, and none stays none', () => {
+  assert.equal(shiftMrp('1500.00', '400.00'), '1900.00');
+  assert.equal(shiftMrp('1500.00', '0.00'), '1500.00');
+  assert.equal(shiftMrp(null, '400.00'), null);
 });
 
 test('no per-block addition is the base alone at any distance', () => {
@@ -256,7 +274,7 @@ test('a distance-priced line is priced from its own nearest stocking warehouse',
   });
   const line = plan.lines.get('cement')!;
   assert.equal(line.warehouse?.warehouseId, 'near');
-  assert.equal(line.addition, '30.00');
+  assert.equal(line.addition, '20.00');
   assert.equal(plan.delivery.needed, false);
   assert.equal(plan.located, true);
 });
@@ -296,7 +314,7 @@ test('a variant no warehouse lists is routed from the nearest active warehouse',
     fallback: [far, near],
   });
   assert.equal(plan.lines.get('sand')?.warehouse?.warehouseId, 'near');
-  assert.equal(plan.lines.get('sand')?.addition, '30.00');
+  assert.equal(plan.lines.get('sand')?.addition, '20.00');
 });
 
 test('no warehouses at all prices everything at 0 km', () => {

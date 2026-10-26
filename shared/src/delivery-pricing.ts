@@ -4,8 +4,9 @@
  * Every product is one of two kinds:
  *
  * - **DISTANCE**: the price itself rises with how far the goods travel, by
- *   figures set on the product (a base addition, then so much per block of
- *   kilometres). Delivery for these lines is free; carrying them is in the price.
+ *   figures set on each variant (a base addition covering the first block of
+ *   kilometres, then so much per further block). Delivery for these lines is
+ *   free; carrying them is in the price, and the MRP shown rises with it.
  * - **FLAT**: the same price everywhere. The order pays one delivery charge
  *   from the shop's rules — a base set by what the whole cart is worth, plus a
  *   distance charge — and nothing at all above the free threshold.
@@ -58,11 +59,11 @@ export const PRICING_KIND_LABELS: Record<PricingKind, string> = {
 
 /** A DISTANCE product's figures. One set per product; every variant shares it. */
 export type DistanceParams = {
-  /** Added to every unit whatever the distance — the price at the warehouse gate. */
+  /** Added to every unit whatever the distance; it covers the first block. */
   baseAddition: string;
   /** The block size, in kilometres. */
   blockKm: number;
-  /** Added to every unit for each block started. */
+  /** Added to every unit for each block started after the first. */
   perBlockAddition: string;
 };
 
@@ -186,14 +187,26 @@ export function nearestWarehouse(
 /**
  * What a DISTANCE product adds to each unit at this distance.
  *
- * `base + perBlock × ceil(metres / block)`: every block *started* counts,
- * measured from the warehouse. At the gate (0 m) it is the base alone; one
- * metre out it is the base and one block; exactly on a block line it is still
- * that block, and one metre past it the next.
+ * The base covers the first block; every further block *started* adds the
+ * per-block amount: `base + perBlock × (ceil(metres / block) − 1)`. With a
+ * 5 km block, anywhere up to exactly 5 km is the base alone; one metre past it
+ * is the base and one block; exactly 10 km is still one block, and one metre
+ * past it two.
  */
 export function distanceAdditionFor(metres: number, params: DistanceParams): string {
-  const blocks = metres <= 0 ? 0 : Math.ceil(metres / blockMetres(params.blockKm));
-  return fromPaise(toPaise(params.baseAddition) + toPaise(params.perBlockAddition) * blocks);
+  const started = metres <= 0 ? 0 : Math.ceil(metres / blockMetres(params.blockKm));
+  const beyondFirst = Math.max(0, started - 1);
+  return fromPaise(toPaise(params.baseAddition) + toPaise(params.perBlockAddition) * beyondFirst);
+}
+
+/**
+ * A distance-priced variant's MRP, raised by the same per-unit addition as its
+ * price — so the price can never pass the MRP shown beside it, and the saving
+ * the shopper is shown stays what it is at the warehouse. Null stays null.
+ */
+export function shiftMrp(compareAtPrice: string | null, addition: string): string | null {
+  if (compareAtPrice === null) return null;
+  return fromPaise(toPaise(compareAtPrice) + toPaise(addition));
 }
 
 // ---------------------------------------------------------------------------

@@ -658,9 +658,10 @@ model ProductVariant {
   taxable Boolean @default(true)
 
   /// What a distance-priced product adds to each unit of this variant
-  /// (`shared/src/delivery-pricing.ts`): `distanceBaseAddition` plus
-  /// `distancePerBlockAddition` for every `distanceBlockKm` started from the
-  /// nearest warehouse stocking it. Per variant, because a 50 kg bag costs more
+  /// (`shared/src/delivery-pricing.ts`): `distanceBaseAddition`, which covers
+  /// the first `distanceBlockKm`, plus `distancePerBlockAddition` for every
+  /// further block started, from the nearest warehouse stocking it. The MRP
+  /// shown rises by the same amount. Per variant, because a 50 kg bag costs more
   /// to carry than a 25 kg one. Read only while the product's `pricingKind` is
   /// DISTANCE, and kept when it is not, so switching back restores them.
   distanceBaseAddition     Decimal @default(0) @db.Decimal(10, 2)

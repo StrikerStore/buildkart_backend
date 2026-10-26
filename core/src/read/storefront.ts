@@ -28,6 +28,7 @@ import {
   distanceAdditionFor,
   metresToKm,
   nearestWarehouse,
+  shiftMrp,
   shiftTierDtos,
   storefrontPointOf,
   type GeoPoint,
@@ -298,7 +299,9 @@ export function toCardDto(row: CardRow, pricer: DistancePricer): StorefrontCardD
   const cheapest = best?.variant;
 
   const price = best?.price ?? null;
-  const compareAtPrice = cheapest ? decimalToString(cheapest.compareAtPrice) : null;
+  // The MRP rises with the price, so a far shopper never sees one above the other.
+  const compareAtPrice =
+    cheapest && best ? shiftMrp(decimalToString(cheapest.compareAtPrice), best.addition) : null;
   const cheapestBulk =
     cheapest && best ? bestTier(shiftTierDtos(toTierDtos(cheapest.tiers), best.addition)) : null;
 
@@ -1126,7 +1129,7 @@ export async function getProductPage(
       option2Value: variant.option2Value,
       option3Value: variant.option3Value,
       price: addMoney(decimalToString(variant.price), addition),
-      compareAtPrice: decimalToString(variant.compareAtPrice),
+      compareAtPrice: shiftMrp(decimalToString(variant.compareAtPrice), addition),
       tiers: shiftTierDtos(toTierDtos(variant.tiers), addition),
       unitLabelEn: variant.unitLabelEn,
       unitLabelHi: variant.unitLabelHi,

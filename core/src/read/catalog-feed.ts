@@ -17,6 +17,7 @@ import {
   addMoney,
   canFulfil,
   distanceAdditionFor,
+  shiftMrp,
   type CatalogFeedItemDto,
 } from '@buildkart/shared';
 import {
@@ -100,15 +101,13 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
      * Each variant carries its own figures, so the cheapest is judged on that
      * price, not the list price.
      */
-    const pool = (sellable.length > 0 ? sellable : product.variants).map((variant) => ({
-      variant,
-      price: addMoney(
-        money(variant.price)!,
+    const pool = (sellable.length > 0 ? sellable : product.variants).map((variant) => {
+      const addition =
         product.pricingKind === 'DISTANCE'
           ? distanceAdditionFor(0, distanceParamsOf(variant))
-          : '0.00',
-      ),
-    }));
+          : '0.00';
+      return { variant, addition, price: addMoney(money(variant.price)!, addition) };
+    });
     const best = pool.reduce<(typeof pool)[number] | undefined>(
       (current, entry) =>
         !current || Number(entry.price) < Number(current.price) ? entry : current,
@@ -120,7 +119,8 @@ export async function getCatalogFeed(): Promise<CatalogFeedItemDto[]> {
 
     const cheapest = best.variant;
     const price = best.price;
-    const compareAt = money(cheapest.compareAtPrice);
+    // The MRP rises with the price, as on the storefront.
+    const compareAt = shiftMrp(money(cheapest.compareAtPrice), best.addition);
     const onSale = compareAt !== null && Number(compareAt) > Number(price);
     const title = product.nameEn.slice(0, 200);
 

@@ -31,6 +31,7 @@ import {
   parseSetting,
   planDistance,
   priceOrder,
+  shiftMrp,
   PricingError,
   type PricedLine,
   quoteCashback,
@@ -45,7 +46,6 @@ import {
   type CartLineDto,
   type DeliveryBreakdown,
   type DiscountRejection,
-  type DistancePlan,
   type PriceCartInput,
 } from '@buildkart/shared';
 import { decimalToString } from '../dto.ts';
@@ -452,7 +452,8 @@ export async function priceCartWithBreakdown(
       // The list rate *for this delivery*, so the bulk strike-through compares
       // like with like.
       listUnitPrice: priced.listUnitPrice,
-      compareAtPrice: decimalToString(variant.compareAtPrice),
+      // Raised with the price, like the storefront's.
+      compareAtPrice: shiftMrp(decimalToString(variant.compareAtPrice), priced.distanceAddition),
       lineTotal: priced.lineTotal,
       wasBulkPrice: priced.wasBulkPrice,
       appliedTier: priced.appliedTier,
@@ -472,7 +473,7 @@ export async function priceCartWithBreakdown(
     itemCount: kept.reduce((sum, line) => sum + line.quantity, 0),
     subtotal: pricing.subtotal,
     listSubtotal: pricing.listSubtotal,
-    savings: savingsOf(kept, plan),
+    savings: savingsOf(kept),
     discountTotal: pricing.discountTotal,
     deliveryCharge: pricing.deliveryCharge,
     grandTotal: pricing.grandTotal,
@@ -497,21 +498,17 @@ export async function priceCartWithBreakdown(
 /**
  * What the shopper saved against MRP.
  *
- * Only counts variants whose `compareAtPrice` is genuinely higher than what
- * they pay here — the list price plus any distance addition. An MRP equal to
- * the price contributes nothing, because claiming a saving of zero rupees is
+ * Only counts variants whose `compareAtPrice` is genuinely higher. An MRP equal
+ * to the price contributes nothing, because claiming a saving of zero rupees is
  * the kind of thing this audience notices and holds against a shop.
+ *
+ * Judged on the list price and MRP as stored: a distance addition raises both
+ * by the same amount (`shiftMrp`), so it never changes the saving.
  */
-function savingsOf(
-  kept: Array<{ variant: CartVariant; quantity: number }>,
-  plan: DistancePlan,
-): string {
+function savingsOf(kept: Array<{ variant: CartVariant; quantity: number }>): string {
   return kept.reduce((total, { variant, quantity }) => {
     const compareAt = decimalToString(variant.compareAtPrice);
-    const price = addMoney(
-      decimalToString(variant.price),
-      plan.lines.get(variant.id)?.addition ?? '0.00',
-    );
+    const price = decimalToString(variant.price);
     if (!compareAt || compareMoney(compareAt, price) <= 0) return total;
     return addMoney(total, multiplyMoney(subtractMoney(compareAt, price), quantity));
   }, '0.00');

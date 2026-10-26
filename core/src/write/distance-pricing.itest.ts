@@ -39,7 +39,7 @@ const RULES = {
   freeAbove: '10000.00',
 };
 
-/** ₹20 a bag at the gate, ₹10 more for every 5 km started. */
+/** ₹20 a bag to 5 km, ₹10 more for every further 5 km started. */
 const CEMENT = { baseAddition: '20.00', blockKm: 5, perBlockAddition: '10.00' };
 
 before(async () => {
@@ -93,12 +93,12 @@ test('a distance-priced line is priced from the pin and its nearest stocking war
     include: { items: true },
   });
   const item = order.items[0]!;
-  // 7 km: the base and two blocks started.
-  assert.equal(item.unitPrice.toFixed(2), '440.00');
-  assert.equal(item.distanceAddition?.toFixed(2), '40.00');
+  // 7 km: the base covers the first 5 km, and the block from 5 to 10 adds ₹10.
+  assert.equal(item.unitPrice.toFixed(2), '430.00');
+  assert.equal(item.distanceAddition?.toFixed(2), '30.00');
   assert.equal(item.distanceWarehouseCode, 'NEAR');
   assert.ok(Math.abs(Number(item.distanceKm) - 7) <= 0.1, `got ${item.distanceKm}`);
-  assert.equal(order.subtotal.toFixed(2), '1320.00');
+  assert.equal(order.subtotal.toFixed(2), '1290.00');
   // Nothing flat-priced, so nothing to deliver.
   assert.equal(order.deliveryCharge.toFixed(2), '0.00');
   assert.equal(order.deliveryBreakdown, null);
@@ -113,7 +113,7 @@ test('a caller cannot lower the addition', async () => {
     grandTotal: '400.00',
   });
   assert.ok(result.ok, JSON.stringify(result));
-  assert.equal(result.data.grandTotal, '440.00');
+  assert.equal(result.data.grandTotal, '430.00');
 });
 
 test('an agreed rate ignores the addition and records none', async () => {
@@ -180,8 +180,8 @@ test('the slab is judged on the whole cart, distance-priced lines included', asy
   assert.ok(result.ok, JSON.stringify(result));
 
   const order = await prisma.order.findUniqueOrThrow({ where: { id: result.data.orderId } });
-  // 100 + 3 × 430 = 1,390: the ₹1,000+ slab, and the first range at 3 km.
-  assert.equal(order.subtotal.toFixed(2), '1390.00');
+  // 100 + 3 × 420 = 1,360: the ₹1,000+ slab, and the first range at 3 km.
+  assert.equal(order.subtotal.toFixed(2), '1360.00');
   assert.equal(order.deliveryCharge.toFixed(2), '230.00');
 });
 
@@ -238,11 +238,11 @@ test('two sizes of one product are priced by their own figures', async () => {
 
   const items = await prisma.orderItem.findMany({ where: { orderId: result.data.orderId } });
   const byVariant = new Map(items.map((item) => [item.variantId, item]));
-  // 7 km is two blocks: 10 + 2 × 5 on the small bag, 20 + 2 × 10 on the large.
-  assert.equal(byVariant.get(small.id)!.unitPrice.toFixed(2), '240.00');
-  assert.equal(byVariant.get(small.id)!.distanceAddition?.toFixed(2), '20.00');
-  assert.equal(byVariant.get(large.id)!.unitPrice.toFixed(2), '440.00');
-  assert.equal(byVariant.get(large.id)!.distanceAddition?.toFixed(2), '40.00');
+  // 7 km is one block past the first: 10 + 5 on the small bag, 20 + 10 on the large.
+  assert.equal(byVariant.get(small.id)!.unitPrice.toFixed(2), '235.00');
+  assert.equal(byVariant.get(small.id)!.distanceAddition?.toFixed(2), '15.00');
+  assert.equal(byVariant.get(large.id)!.unitPrice.toFixed(2), '430.00');
+  assert.equal(byVariant.get(large.id)!.distanceAddition?.toFixed(2), '30.00');
 
   // And the cart says the same for the same pin.
   const cart = await core.priceCart({
@@ -256,7 +256,7 @@ test('two sizes of one product are priced by their own figures', async () => {
   });
   assert.deepEqual(
     cart.lines.map((line) => line.unitPrice).sort(),
-    ['240.00', '440.00'],
+    ['235.00', '430.00'],
   );
 });
 
@@ -281,16 +281,16 @@ test('the cart prices a distance-priced line for the pin, and says it delivers f
 
   const cementLine = cart.lines.find((line) => line.variantId === cement.id)!;
   assert.equal(cementLine.pricingKind, 'DISTANCE');
-  assert.equal(cementLine.unitPrice, '440.00');
-  assert.equal(cementLine.distanceAddition, '40.00');
+  assert.equal(cementLine.unitPrice, '430.00');
+  assert.equal(cementLine.distanceAddition, '30.00');
 
-  // 440 + 3,000 = 3,440: the ₹1,000+ slab plus both ranges.
+  // 430 + 3,000 = 3,430: the ₹1,000+ slab plus both ranges.
   assert.equal(cart.delivery?.hasFlatLines, true);
   assert.equal(cart.delivery?.located, true);
   assert.equal(cart.deliveryCharge, '245.00');
   assert.equal(cart.delivery?.slabBase, '200.00');
   assert.equal(cart.delivery?.distanceCharge, '45.00');
-  assert.equal(cart.delivery?.freeShortfall, '6560.00');
+  assert.equal(cart.delivery?.freeShortfall, '6570.00');
 });
 
 test('without a pin the cart prices at the warehouse gate and says so', async () => {
