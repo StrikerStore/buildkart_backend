@@ -19,16 +19,22 @@ import { sessionClaimsSchema, type SessionClaims } from '@buildkart/shared';
  */
 
 /**
- * One day. It used to be seven, but the admin opens every customer's name,
- * number and address, and a session is a bearer credential: a cookie lifted
- * from a shared or lost machine should stop working by tomorrow, not next
- * week. With two-step sign-in, a day is one code each morning.
+ * Thirty days, so the owner signs in about once a month rather than every
+ * morning. It was one day, but a code each morning was friction the people
+ * using it did not want.
+ *
+ * A session is still a bearer credential, and the admin opens every customer's
+ * name, number and address. What keeps a long lifetime safe is that the token
+ * is not the last word: `resolveAdminSession` checks the account on every
+ * request, so deactivating an admin or changing their password (which bumps
+ * `sessionVersion`) ends a lifted session immediately, however long it had
+ * left.
  *
  * Exported so a caller can give its cookie the same lifetime as the token it
  * holds. A cookie that outlives its token logs someone out mid-click with no
  * explanation; one that dies first throws away a session that was still good.
  */
-export const SESSION_TTL_SECONDS = 60 * 60 * 24;
+export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 /**
  * Between a right password and the second step. Long enough to find the phone

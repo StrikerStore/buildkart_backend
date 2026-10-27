@@ -126,9 +126,9 @@ test('a valid signature over an unrecognised payload is still refused', async ()
 
 test('the cookie lifetime the caller is told matches the token', async () => {
   const { SESSION_TTL_SECONDS } = await subject();
-  // A day: the admin holds every customer's details, so a lifted cookie
-  // should be dead by tomorrow.
-  assert.equal(SESSION_TTL_SECONDS, 60 * 60 * 24);
+  // Thirty days. Safe only because every request re-checks the account, so a
+  // password change or deactivation still ends a lifted session at once.
+  assert.equal(SESSION_TTL_SECONDS, 60 * 60 * 24 * 30);
 });
 
 /*

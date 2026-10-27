@@ -101,8 +101,9 @@ without an account — is recorded with **Privacy → Record a request**.
   may turn it on under **Settings → Account**. Ten single-use recovery codes are shown once. The secret is
   sealed with `SETTINGS_ENCRYPTION_KEY`. `ADMIN_2FA_OPTIONAL=true` lifts the requirement — local
   development only.
-- **Sessions last a day.** Changing a password, or turning on or moving two-step sign-in, signs out every
-  other device.
+- **Sessions last 30 days.** Changing a password, or turning on or moving two-step sign-in, signs out every
+  other device, and deactivating an admin ends their sessions on the next request. On a shared or lost
+  machine, change the password rather than waiting for the session to run out.
 - **Records opened.** Opening a customer, an order (including its invoice or challan) or a support
   conversation writes a `pii.view.*` row — once per admin, record and hour. **Change log → Area →
   Records opened** shows them; the default view hides them. Look through it monthly: anyone opening records
