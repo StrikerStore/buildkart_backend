@@ -24,7 +24,7 @@ import { parseStoreDateTime } from './time.ts';
  * changes what is collected or why, so every consent recorded afterwards says
  * which wording it was given against.
  */
-export const NOTICE_VERSION = '2026-10';
+export const NOTICE_VERSION = '2026-11';
 
 export const PRIVACY_NOTICE_PATH = '/pages/privacy-policy';
 export const TERMS_PATH = '/pages/terms-and-conditions';
@@ -44,10 +44,19 @@ export const CONSENT_PURPOSES = [
   'AGE_18_PLUS',
   /** A customer agreed to have their review, name and photos shown on the site. */
   'REVIEW_PUBLISH',
+  /** Being called back about a Contact us message or a rate request. */
+  'ENQUIRY',
 ] as const;
 export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number];
 
-export const CONSENT_SOURCES = ['BANNER', 'SIGNIN', 'ACCOUNT', 'NOTIFY_FORM', 'ADMIN'] as const;
+export const CONSENT_SOURCES = [
+  'BANNER',
+  'SIGNIN',
+  'ACCOUNT',
+  'NOTIFY_FORM',
+  'ENQUIRY_FORM',
+  'ADMIN',
+] as const;
 export type ConsentSource = (typeof CONSENT_SOURCES)[number];
 
 // ---------------------------------------------------------------------------
@@ -423,6 +432,8 @@ export const RETENTION = {
   attributionIdentifiersDays: 365,
   /** A closed support conversation's words and photos. */
   closedSupportDays: 2 * 365,
+  /** A Contact us message or rate request, from the last time anyone touched it. */
+  enquiryDays: 365,
   /** Personal details on orders and invoices: years after the financial year ends. */
   orderRecordYears: 8,
   /** Between confirming "delete my account" and it happening. */

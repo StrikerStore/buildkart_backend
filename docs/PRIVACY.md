@@ -29,7 +29,9 @@ conversations and photos, WhatsApp message log, consents, nominee, and — only 
 analytics and Meta ad measurement.
 
 **Held about people without an account:** a phone number and pincode for "tell me when you deliver
-here", and receivers' names and numbers on orders.
+here", a name, number and message from the Contact us form or a rate request (`Enquiry`), and
+receivers' names and numbers on orders. An enquiry's number is typed, not verified, so nothing is ever
+sent to it automatically; it holds a keyed hash of the sender's IP for rate limiting, never the IP.
 
 **Processors** — `PROCESSORS` in `shared/src/privacy.ts` is the single list; the data export and the
 notice read it:
@@ -64,6 +66,7 @@ needs the contracts to require them to keep data safe.
 | "Tell me when you deliver here" | 30 days after telling them, or 1 year |
 | Browser and click ids on orders | 1 year (channel and campaign kept) |
 | Closed support conversations | words and photos 2 years |
+| Contact us messages and rate requests (`Enquiry`) | 1 year after the last change |
 | Order and invoice personal details | 8 years after the financial year ends (then city, state, pincode only) |
 | Deleted accounts | removed 7 days after the customer confirms |
 | Breach records (`PrivacyIncident`) | kept — they are the proof the duties were met |
@@ -104,8 +107,8 @@ without an account — is recorded with **Privacy → Record a request**.
 - **Sessions last 30 days.** Changing a password, or turning on or moving two-step sign-in, signs out every
   other device, and deactivating an admin ends their sessions on the next request. On a shared or lost
   machine, change the password rather than waiting for the session to run out.
-- **Records opened.** Opening a customer, an order (including its invoice or challan) or a support
-  conversation writes a `pii.view.*` row — once per admin, record and hour. **Change log → Area →
+- **Records opened.** Opening a customer, an order (including its invoice or challan), a support
+  conversation or an enquiry writes a `pii.view.*` row — once per admin, record and hour. **Change log → Area →
   Records opened** shows them; the default view hides them. Look through it monthly: anyone opening records
   with no order or ticket behind them is the thing to ask about.
 - **Sign-in limits.** Five failures in 15 minutes, counted per email and per address, pauses sign-in
@@ -214,5 +217,6 @@ Rule 6(1)(d) asks for measures that keep personal data available after an incide
 | Breaches | `core/src/{read,write}/privacy-incidents.ts` |
 | Two-step sign-in | `core/src/totp.ts`, `core/src/two-factor.ts`, `core/src/auth.ts` |
 | Records opened | `recordAccess` in `core/src/audit.ts` |
+| Contact us and rate requests | `core/src/{read,write}/enquiries.ts` |
 | Security alerts | `notifyShopSecurityAlert` in `core/src/notify/dispatch.ts` |
 | Consent banner and cookie | `website/components/analytics/consent-banner.tsx`, `website/lib/consent.ts` |

@@ -39,6 +39,7 @@ import {
   presignMediaUpload,
   runImageBatch,
   saveDiscount,
+  getDeliveryChargesForForm,
   saveDeliveryCharges,
   saveUnloadingService,
   savePincode,
@@ -97,6 +98,7 @@ export const operationsRouter = router({
   saveUnloadingService: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveUnloadingService(ctx.actor, input)),
+  deliveryCharges: adminProcedure.query(({ ctx }) => getDeliveryChargesForForm(ctx.actor)),
   saveDeliveryCharges: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => saveDeliveryCharges(ctx.actor, input)),

@@ -199,7 +199,6 @@ export async function checkPincodeServiceable(pincode: string): Promise<{
   serviced: boolean;
   areaName: string | null;
   city: string | null;
-  deliveryCharge: string;
   freeAbove: string | null;
   promiseHours: number | null;
 }> {
@@ -208,7 +207,6 @@ export async function checkPincodeServiceable(pincode: string): Promise<{
     serviced: false,
     areaName: null,
     city: null,
-    deliveryCharge: '0.00',
     freeAbove: null,
     promiseHours: null,
   };
@@ -226,7 +224,6 @@ export async function checkPincodeServiceable(pincode: string): Promise<{
     serviced: true,
     areaName: area.areaNameEn,
     city: area.city,
-    deliveryCharge: rate.deliveryCharge,
     freeAbove: rate.freeAbove,
     promiseHours: area.promiseHours,
   };

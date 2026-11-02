@@ -35,6 +35,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'pii.view.customer': "Opened a customer's record",
   'pii.view.order': 'Opened an order',
   'pii.view.support': 'Opened a support conversation',
+  'pii.view.enquiry': 'Opened an enquiry',
 
   // Catalog
   'product.create': 'Created a product',
@@ -109,6 +110,14 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'support.reopen': 'Reopened a support conversation',
   'support.cannedReply.save': 'Saved a saved reply',
   'support.cannedReply.delete': 'Deleted a saved reply',
+
+  // Enquiries
+  'enquiry.update': 'Updated an enquiry',
+
+  // Get a quote
+  'quoteMaterial.save': 'Linked a product to a quote material',
+  'quoteMaterial.delete': 'Removed a product from a quote material',
+  'quoteMaterial.reorder': 'Reordered a quote material',
 
   // Growth
   'discount.create': 'Created a discount',
@@ -255,6 +264,8 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   Page: 'Page',
   Setting: 'Setting',
   SupportTicket: 'Support conversation',
+  Enquiry: 'Enquiry',
+  QuoteMaterialOption: 'Quote material',
   Tag: 'Tag',
   TaxRate: 'Tax rate',
 };
@@ -297,6 +308,10 @@ export function linkForEntity(entityType: string, entityId: string): string | nu
       return `/incidents/${entityId}`;
     case 'SupportTicket':
       return `/support/${entityId}`;
+    case 'Enquiry':
+      return `/enquiries/${entityId}`;
+    case 'QuoteMaterialOption':
+      return '/quote-materials';
     case 'Order':
       return `/orders/${entityId}`;
     case 'ImportJob':

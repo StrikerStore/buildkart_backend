@@ -99,6 +99,8 @@ export async function resetDatabase() {
     'Media',
     'ServiceablePincode',
     'PincodeRequest',
+    'Enquiry',
+    'QuoteMaterialOption',
     'AdminAuditLog',
     'LoginAttempt',
     'AdminUser',

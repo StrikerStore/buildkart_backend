@@ -30,6 +30,7 @@ export const NOTIFICATION_EVENTS = [
   'customer.privacyUpdate',
   'customer.securityNotice',
   'shop.orderPlaced',
+  'shop.enquiryReceived',
   'shop.securityAlert',
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
@@ -68,6 +69,7 @@ export const NOTIFICATION_EVENT_KINDS: Record<NotificationEvent, NotificationKin
   // whatever they chose about updates.
   'customer.securityNotice': 'security',
   'shop.orderPlaced': 'shop',
+  'shop.enquiryReceived': 'shop',
   'shop.securityAlert': 'shop',
 };
 
@@ -88,6 +90,7 @@ export const NOTIFICATION_EVENT_LABELS: Record<NotificationEvent, string> = {
   'customer.privacyUpdate': 'Privacy request answered',
   'customer.securityNotice': 'Data breach notice',
   'shop.orderPlaced': 'New order alert',
+  'shop.enquiryReceived': 'New enquiry alert',
   'shop.securityAlert': 'Security alert',
 };
 
@@ -112,6 +115,8 @@ export const NOTIFICATION_EVENT_HINTS: Record<NotificationEvent, string> = {
     'Sent from Privacy → Incidents to everyone a breach affected. The law says what it must contain — keep every token in the message.',
   'shop.orderPlaced':
     'To the shop, not the customer: every new order, to each alert number saved with the WhatsApp provider.',
+  'shop.enquiryReceived':
+    'To the shop: a Contact us message or a rate request from the website, to each alert number saved with the WhatsApp provider.',
   'shop.securityAlert':
     'To the shop: repeated failed admin sign-ins, a change log that stopped writing, or a daily privacy clean-up that failed.',
 };
@@ -321,6 +326,18 @@ export const EVENT_TOKENS: Record<NotificationEvent, TokenSpec[]> = {
       sample: 'https://admin.buildkart.co/orders/clx123',
       note: 'The order in the admin. Needs ADMIN_URL set on the API server.',
     },
+  ],
+  'shop.enquiryReceived': [
+    ...COMMON_TOKENS,
+    { token: 'enquiryNumber', sample: 'E-1042' },
+    { token: 'enquiryKind', sample: 'Rate request' },
+    { token: 'customerPhone', sample: '+91 98260 00000' },
+    {
+      token: 'enquirySummary',
+      sample: 'Do you deliver sand to Vijay Nagar on Sundays?',
+      note: 'The first part of their message, on one line.',
+    },
+    { token: 'adminUrl', sample: 'https://admin.buildkart.co/enquiries/abc123' },
   ],
   'shop.securityAlert': [
     ...COMMON_TOKENS,

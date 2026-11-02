@@ -3,12 +3,12 @@
  * distance figures, and which warehouses a set of variants is routed from.
  *
  * Actor-less, like `findStockingWarehouses`: a cart and a catalogue page are
- * priced for a visitor who has not signed in, and none of this is anybody's
- * private business — every figure is a promise made to customers.
+ * priced for a visitor who has not signed in. That makes these server-side
+ * inputs, not a public read — the slabs and ranges are the shop's own pricing,
+ * and what reaches a customer is the final charge and the free threshold.
  */
 import { prisma } from '@buildkart/database';
 import {
-  deliveryFeeFor,
   parseSetting,
   type DeliveryChargeRules,
   type DistanceParams,
@@ -29,20 +29,12 @@ export async function loadDeliveryRules(): Promise<DeliveryChargeRules> {
 }
 
 /**
- * The terms an area advertises before there is a cart: the free threshold,
- * and — for clients still reading the old single figure — what the smallest
- * order next to the warehouse would pay. The real charge depends on the cart
- * and the distance, and the cart says it.
+ * The term an area advertises before there is a cart: the free threshold. The
+ * charge itself depends on the cart and the distance, and the cart says it.
  */
-export async function loadAreaTerms(): Promise<{
-  deliveryCharge: string;
-  freeAbove: string | null;
-}> {
+export async function loadAreaTerms(): Promise<{ freeAbove: string | null }> {
   const rules = await loadDeliveryRules();
-  return {
-    deliveryCharge: deliveryFeeFor({ cartTotal: '0.00', metres: 0, rules }).charge,
-    freeAbove: rules.freeAbove,
-  };
+  return { freeAbove: rules.freeAbove };
 }
 
 /**

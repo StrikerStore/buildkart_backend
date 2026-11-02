@@ -15,6 +15,8 @@ export * from './tax.ts';
 export * from './content.ts';
 export * from './checkout.ts';
 export * from './notification.ts';
+export * from './enquiry.ts';
+export * from './quote.ts';
 export * from './support.ts';
 export * from './storefront.ts';
 export * from './reviews.ts';

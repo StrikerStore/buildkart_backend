@@ -26,7 +26,6 @@ import {
   compareMoney,
   discountPercent,
   distanceAdditionFor,
-  metresToKm,
   nearestWarehouse,
   shiftMrp,
   shiftTierDtos,
@@ -1121,7 +1120,7 @@ export async function getProductPage(
   await pricer.prime([product, ...related]);
 
   const variants: StorefrontVariantDto[] = product.variants.map((variant) => {
-    const { addition, metres } = pricer.additionFor(product.pricingKind, variant);
+    const { addition } = pricer.additionFor(product.pricingKind, variant);
     return {
       id: variant.id,
       sku: variant.sku,
@@ -1139,8 +1138,6 @@ export async function getProductPage(
       stockQty: variant.inventoryTracked ? variant.stockQty : null,
       imageKey: variant.image?.media.r2Key ?? null,
       priceUpdatedAt: dateToIso(variant.priceUpdatedAt),
-      distanceAddition: addition,
-      roadKm: metres === null ? null : metresToKm(metres),
     };
   });
 
@@ -1678,12 +1675,11 @@ export async function listServiceableAreas(): Promise<StorefrontAreaDto[]> {
   ]);
 
   // The same terms for every area: the charge depends on the cart and the
-  // distance, not the pincode. `deliveryCharge` stays for older clients.
+  // distance, not the pincode.
   return rows.map((row) => ({
     pincode: row.pincode,
     areaName: row.areaNameEn,
     city: row.city,
-    deliveryCharge: rate.deliveryCharge,
     freeAbove: rate.freeAbove,
     promiseHours: row.promiseHours,
   }));

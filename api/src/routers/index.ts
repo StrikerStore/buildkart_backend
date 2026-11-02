@@ -2,6 +2,7 @@ import { router } from '../trpc.ts';
 import { authRouter } from './auth.ts';
 import { catalogRouter } from './catalog.ts';
 import { contentRouter } from './content.ts';
+import { enquiriesRouter } from './enquiries.ts';
 import { operationsRouter } from './operations.ts';
 import { ordersRouter } from './orders.ts';
 import { marketingRouter } from './marketing.ts';
@@ -44,6 +45,8 @@ export const appRouter = router({
    * together.
    */
   support: supportRouter,
+  /** The admin's inbox for the website's Contact us form and rate requests. */
+  enquiries: enquiriesRouter,
 });
 
 export type AppRouter = typeof appRouter;

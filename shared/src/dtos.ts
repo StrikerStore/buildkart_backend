@@ -69,7 +69,9 @@ import type { CheckoutOption, OnlineGateway } from './checkout-options.ts';
 import type { PartialCodRules } from './payments.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
 import type { ImportIssue, ParsedProduct } from './csv/index.ts';
-import type { DistanceChargePart, PricingKind } from './delivery-pricing.ts';
+import type { PricingKind } from './delivery-pricing.ts';
+import type { EnquiryKind, EnquiryStatus } from './enquiries.ts';
+import type { MaterialBaseUnit, QuoteMaterial } from './material-estimator.ts';
 import type { DeliveryBreakdown } from './schemas/order.ts';
 
 // from core/src/auth.ts
@@ -1034,13 +1036,11 @@ export type SettingsDto = {
   privacy: PrivacyContactDto;
   commerce: CommerceSettingsDto;
   /**
-   * The delivery-charge rules for flat-priced products.
-   *
-   * Public like the rest of this object, and for the same reason: every figure
-   * in it is a promise made to a customer — "free delivery over ₹10,000" — so
-   * the storefront is entitled to render it. It holds no secret.
+   * The one delivery term a customer is told in advance: "free over ₹10,000".
+   * The slabs and distance ranges are internal pricing, read by the admin
+   * through `operations.deliveryCharges`, because this object is public.
    */
-  deliveryCharges: DeliveryChargesDto;
+  deliveryCharges: PublicDeliveryTermsDto;
   /** The wallet and cashback rules — advertised on the product page and cart. */
   wallet: WalletRulesDto;
   /** The unloading service offered in the cart. */
@@ -1058,7 +1058,16 @@ export type SettingsDto = {
   };
 };
 
-/** The `delivery.charges` setting — see `DeliveryChargeRules` in `delivery-pricing.ts`. */
+/** What a customer may see of `delivery.charges`. */
+export type PublicDeliveryTermsDto = {
+  /** Free at or above this cart total, at any distance. Null is never. */
+  freeAbove: string | null;
+};
+
+/**
+ * The `delivery.charges` setting — see `DeliveryChargeRules` in
+ * `delivery-pricing.ts`. Admin only: see `PublicDeliveryTermsDto`.
+ */
 export type DeliveryChargesDto = {
   roadFactor: number;
   /** Cart-total slabs: from this amount up, this base charge. */
@@ -1979,13 +1988,6 @@ export type StorefrontVariantDto = {
   stockQty: number | null;
   imageKey: string | null;
   priceUpdatedAt: string | null;
-  /**
-   * The per-unit distance addition already inside `price` and every rung, for
-   * a distance-priced product. "0.00" on a flat-priced one.
-   */
-  distanceAddition: string;
-  /** Road km from the warehouse serving this variant. Null when not located. */
-  roadKm: number | null;
 };
 
 export type StorefrontProductDto = {
@@ -2035,12 +2037,6 @@ export type StorefrontAreaDto = {
   pincode: string;
   areaName: string;
   city: string;
-  /**
-   * @deprecated The flat-priced delivery charge depends on the cart and the
-   * distance now; this is the smallest it can be (first slab, first range).
-   * Show `freeAbove` instead. Removed in the next release.
-   */
-  deliveryCharge: string;
   /** Free delivery at or above this cart total. Null when the shop sets none. */
   freeAbove: string | null;
   promiseHours: number | null;
@@ -2112,10 +2108,6 @@ export type CartLineDto = {
    * FLAT: delivery is charged on the order.
    */
   pricingKind: PricingKind;
-  /** The per-unit distance addition inside `unitPrice`. "0.00" on a FLAT line. */
-  distanceAddition: string;
-  /** Road km from the warehouse serving this line. Null when not located. */
-  distanceKm: number | null;
 };
 
 /*
@@ -2127,9 +2119,11 @@ export type CartLineDto = {
 
 /*
  * The delivery charge covers the cart's flat-priced lines only: distance-priced
- * lines carry delivery in their price. It is the cart-total slab's base plus
- * the charge of every distance range passed through, and nothing at or above
- * the free threshold.
+ * lines carry delivery in their price.
+ *
+ * Only the final figure and the free threshold cross this boundary. How the
+ * charge was reached — the slab, the distance ranges, the road km — is the
+ * shop's own pricing, and stays in `DeliveryBreakdown` on the server.
  */
 export type CartDeliveryDto = {
   pincode: string;
@@ -2145,14 +2139,6 @@ export type CartDeliveryDto = {
   hasFlatLines: boolean;
   /** False when priced without a pin: distances are 0 km, and the charge an estimate. */
   located: boolean;
-  /** The cart-total slab's base. "0.00" when free. */
-  slabBase: string;
-  /** What the distance added. "0.00" when free. */
-  distanceCharge: string;
-  /** The ranges the distance passed through, for the breakdown. */
-  distanceParts: DistanceChargePart[];
-  /** Road km to the farthest warehouse the flat-priced lines ship from. */
-  roadKm: number | null;
   /** How much more for free delivery. Null with no threshold, or once it is met. */
   freeShortfall: string | null;
   /** @deprecated Always `PINCODE`. Removed in the next release. */
@@ -2503,6 +2489,16 @@ export type CustomerDataExportDto = {
     messages: Array<{ from: string; body: string; hasPhoto: boolean; at: string }>;
   }>;
   whatsappMessages: Array<{ event: string; status: string; at: string }>;
+  enquiries: Array<{
+    reference: string;
+    kind: string;
+    status: string;
+    name: string;
+    phone: string;
+    message: string | null;
+    materialList: unknown;
+    at: string;
+  }>;
   privacyRequests: MyPrivacyRequestDto[];
   /** Visits recorded with analytics consent in the last 90 days — the only ones still held individually. */
   recentVisitCount: number;
@@ -2877,8 +2873,6 @@ export type DeviceLocationDto = {
     pincode: string;
     areaName: string;
     city: string;
-    /** @deprecated See `StorefrontAreaDto.deliveryCharge`. */
-    deliveryCharge: string;
     /** Free delivery at or above this cart total. */
     freeAbove: string | null;
     promiseHours: number;
@@ -3422,4 +3416,145 @@ export type IncidentAudienceCountDto = {
   customers: number;
   /** Pasted numbers that belong to no account — sent to all the same. */
   withoutAccount: number;
+};
+
+// from core/src/read/enquiries.ts
+export type EnquiryRowDto = {
+  id: string;
+  enquiryNumber: string;
+  kind: EnquiryKind;
+  status: EnquiryStatus;
+  name: string;
+  phone: string;
+  preview: string;
+  createdAt: string;
+};
+
+export type EnquiryInboxDto = {
+  enquiries: EnquiryRowDto[];
+  total: number;
+  totalPages: number;
+  /** The queue, whichever tab is open. */
+  newCount: number;
+};
+
+export type EnquiryDetailDto = {
+  id: string;
+  enquiryNumber: string;
+  kind: EnquiryKind;
+  status: EnquiryStatus;
+  name: string;
+  /** As typed, not verified. */
+  phone: string;
+  message: string | null;
+  note: string | null;
+  customerId: string | null;
+  /** The material list, on a rate request. */
+  quote: QuoteSnapshot | null;
+  closedAt: string | null;
+  createdAt: string;
+};
+
+/**
+ * A rate request's material list, frozen when it was sent, in the server's own
+ * figures. Stored as JSON on the enquiry.
+ */
+export type QuoteSnapshot = {
+  jobs: string[];
+  lines: Array<{
+    material: QuoteMaterial;
+    /** "25 bags (1,250 kg)": what the job needs, whatever is in stock. */
+    needed: string;
+    status: QuoteLineStatus;
+    productName: string | null;
+    quantity: number | null;
+    unitLabel: string | null;
+    unitPrice: string | null;
+    lineTotal: string | null;
+  }>;
+  subtotal: string;
+  taxAddedTotal: string;
+  deliveryCharge: string;
+  grandTotal: string;
+  pincode: string | null;
+};
+
+// from core/src/read/quote.ts
+/** One product a material can be bought as. */
+export type QuoteOptionDto = {
+  variantId: string;
+  nameEn: string;
+  nameHi: string | null;
+  variantLabel: string | null;
+  unitLabelEn: string | null;
+  unitLabelHi: string | null;
+  baseUnitsPerSaleUnit: number;
+  inStock: boolean;
+};
+
+/**
+ * - `PRICED`: in the total, and can go in the cart.
+ * - `NO_PRODUCT`: nothing linked to this material. Ask for a rate.
+ * - `OVER_LIMIT`: more than one cart line can hold. Ask for a rate.
+ * - `OUT_OF_STOCK`: try another option, or ask for a rate.
+ * - `REMOVED`: the customer left it out, and can put it back.
+ */
+export type QuoteLineStatus = 'PRICED' | 'NO_PRODUCT' | 'OVER_LIMIT' | 'OUT_OF_STOCK' | 'REMOVED';
+
+export type QuoteLineDto = {
+  material: QuoteMaterial;
+  /** What the job needs, in the material's base unit. */
+  needed: number;
+  unit: MaterialBaseUnit;
+  status: QuoteLineStatus;
+  variantId: string | null;
+  nameEn: string | null;
+  nameHi: string | null;
+  variantLabel: string | null;
+  unitLabelEn: string | null;
+  unitLabelHi: string | null;
+  /** In sale units. */
+  quantity: number;
+  unitPrice: string | null;
+  lineTotal: string | null;
+  wasBulkPrice: boolean;
+  /** The most the shop can supply now, when that is less than asked for. */
+  availableQty: number | null;
+  options: QuoteOptionDto[];
+};
+
+/**
+ * Deliberately not `CartDto`: this reaches a customer's browser, so it has the
+ * final delivery charge and nothing about how it was reached.
+ */
+export type QuoteEstimateDto = {
+  lines: QuoteLineDto[];
+  subtotal: string;
+  taxAddedTotal: string;
+  deliveryCharge: string;
+  grandTotal: string;
+  /** Null when no area is set, or nothing could be priced. */
+  delivery: {
+    pincode: string;
+    areaName: string | null;
+    serviced: boolean;
+    hasFlatLines: boolean;
+    located: boolean;
+    freeShortfall: string | null;
+  } | null;
+};
+
+/** The admin's Quote materials screen. */
+export type QuoteMaterialsFormDto = {
+  options: Array<{
+    id: string;
+    material: QuoteMaterial;
+    variantId: string;
+    label: string;
+    unitLabel: string | null;
+    baseUnitsPerSaleUnit: number;
+    /** False when the product was archived or the variant switched off. */
+    live: boolean;
+  }>;
+  variants: Array<{ variantId: string; label: string; unitLabel: string | null }>;
 };

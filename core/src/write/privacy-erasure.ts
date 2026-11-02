@@ -150,6 +150,8 @@ export async function eraseCustomer(
     await tx.storefrontSession.deleteMany({ where: { customerId } });
     await tx.customerOtp.deleteMany({ where: { phone } });
     await tx.pincodeRequest.deleteMany({ where: { phone } });
+    // By phone as well: they may have written before signing in.
+    await tx.enquiry.deleteMany({ where: { OR: [{ customerId }, { phone }] } });
     await tx.marketingEvent.deleteMany({
       where: { OR: [{ orderId: { in: orderIds } }, { eventId: `register-${customerId}` }] },
     });
@@ -267,6 +269,7 @@ export async function eraseRecordsForPhone(
   const counts = await prisma.$transaction(async (tx) => {
     const otps = await tx.customerOtp.deleteMany({ where: { phone } });
     const areas = await tx.pincodeRequest.deleteMany({ where: { phone } });
+    const enquiries = await tx.enquiry.deleteMany({ where: { phone } });
     const messages = await tx.notificationMessage.updateMany({
       where: { phone },
       data: { phone: placeholder, userName: '', params: [] },
@@ -283,7 +286,12 @@ export async function eraseRecordsForPhone(
         },
       });
     }
-    return { otps: otps.count, areas: areas.count, messages: messages.count };
+    return {
+      otps: otps.count,
+      areas: areas.count,
+      enquiries: enquiries.count,
+      messages: messages.count,
+    };
   });
 
   await recordAudit(actor, {

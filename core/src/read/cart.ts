@@ -205,10 +205,6 @@ export async function priceCartWithBreakdown(
         promiseHours: area?.isActive ? area.promiseHours : null,
         hasFlatLines: false,
         located: destination !== null,
-        slabBase: '0.00',
-        distanceCharge: '0.00',
-        distanceParts: [],
-        roadKm: null,
         freeShortfall: null,
         mode: 'PINCODE',
         legs: [],
@@ -375,18 +371,11 @@ export async function priceCartWithBreakdown(
     unloadingCharge,
   });
 
-  const roadKm =
-    plan.located && plan.delivery.warehouse ? metresToKm(plan.delivery.metres) : null;
-
   if (delivery) {
     delivery.hasFlatLines = plan.delivery.needed;
     if (fee) {
       delivery.charge = pricing.deliveryCharge;
       delivery.freeAbove = rules.freeAbove;
-      delivery.slabBase = fee.slabBase;
-      delivery.distanceCharge = fee.distanceCharge;
-      delivery.distanceParts = fee.parts;
-      delivery.roadKm = roadKm;
       delivery.freeShortfall = waived ? null : freeDeliveryShortfall(afterDiscount, rules);
     }
   }
@@ -434,9 +423,6 @@ export async function priceCartWithBreakdown(
       variant.inventoryPolicy === 'DENY' &&
       variant.stockQty < quantity;
 
-    const planned = plan.lines.get(variant.id);
-    const isDistance = variant.product.pricingKind === 'DISTANCE';
-
     return {
       variantId: variant.id,
       handle: variant.product.handle,
@@ -461,9 +447,6 @@ export async function priceCartWithBreakdown(
       availableQty: short ? variant.stockQty : null,
       cashback: lineCashback.get(variant.id) ?? '0.00',
       pricingKind: variant.product.pricingKind,
-      distanceAddition: priced.distanceAddition,
-      distanceKm:
-        isDistance && plan.located && planned?.warehouse ? metresToKm(planned.metres) : null,
     };
   });
 

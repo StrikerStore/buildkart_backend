@@ -154,6 +154,12 @@ async function runRetention(now: Date) {
   ).count;
 
   const supportMessages = await clearClosedSupport(days(RETENTION.closedSupportDays));
+
+  // --- Contact us messages and rate requests ------------------------------
+  const enquiries = (
+    await prisma.enquiry.deleteMany({ where: { updatedAt: { lt: days(RETENTION.enquiryDays) } } })
+  ).count;
+
   const orders = await anonymiseOldOrders(orderRecordCutoff(now), now);
 
   return {
@@ -170,6 +176,7 @@ async function runRetention(now: Date) {
     pincodeRequests,
     attribution,
     supportMessages,
+    enquiries,
     orders,
   };
 }

@@ -90,7 +90,6 @@ export async function resolveDeviceLocation(input: {
         // is not.
         areaName: area.areaNameEn,
         city: area.city,
-        deliveryCharge: rate.deliveryCharge,
         freeAbove: rate.freeAbove,
         promiseHours: area.promiseHours,
       },

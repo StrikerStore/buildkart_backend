@@ -67,6 +67,11 @@ export const SETTING_SCHEMAS = {
     .object({ next: z.number().int().min(1) })
     .default({ next: 1001 }),
 
+  /** The next enquiry's number. See `allocateEnquiryNumber`. */
+  'enquiry.sequence': z
+    .object({ next: z.number().int().min(1) })
+    .default({ next: 1001 }),
+
   /*
    * Payment providers: one key each, holding the switch, the mode, the
    * customer-facing presentation and the credentials.

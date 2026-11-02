@@ -53,7 +53,9 @@ import {
   recordProductSignal,
   recordStorefrontVisit,
   requestOtp,
+  estimateQuote,
   requestPincode,
+  submitEnquiry,
   reorderLines,
   resolveCustomerSession,
   resolveDeviceLocation,
@@ -87,6 +89,7 @@ import {
   placeLocationSchema,
   placeSearchSchema,
   priceCartSchema,
+  quoteEstimateSchema,
   storefrontCardsByHandlesSchema,
   storefrontListQuerySchema,
   storefrontPointSchema,
@@ -247,6 +250,26 @@ export const storefrontRouter = router({
    * above, whose inputs come from a query string a stranger can edit.
    */
   requestArea: publicProcedure.input(z.unknown()).mutation(({ input }) => requestPincode(input)),
+
+  /*
+   * Get a quote: a list of jobs, priced. A read like `priceCart`, and bounded
+   * the same way: the schema caps the jobs and every size in them.
+   */
+  quoteEstimate: publicProcedure
+    .input(quoteEstimateSchema)
+    .query(({ input }) => estimateQuote(input)),
+
+  /*
+   * The Contact us form and rate requests. Public, so a guest can send one. The
+   * address and the signed-in customer come off the context: a caller must not
+   * be able to name its own, or attach a message to someone else's account.
+   */
+  submitEnquiry: publicProcedure.input(z.unknown()).mutation(({ ctx, input }) =>
+    submitEnquiry(input, {
+      clientIp: ctx.clientIp,
+      customerId: ctx.actor.kind === 'customer' ? ctx.actor.customerId : null,
+    }),
+  ),
 
   /*
    * A shopper viewed a product, opened it from search, or added it to the

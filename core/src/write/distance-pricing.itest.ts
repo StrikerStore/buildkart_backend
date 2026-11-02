@@ -269,7 +269,7 @@ test('the cart prices a distance-priced line for the pin, and says it delivers f
   const { variant: tile } = await seedProduct({ handle: 'tile', price: '1500.00' });
   await seedWarehouse({ code: 'A', from: HOME, roadKm: 7, variantIds: [cement.id, tile.id] });
 
-  const cart = await core.priceCart({
+  const { cart, deliveryBreakdown } = await core.priceCartWithBreakdown({
     lines: [
       { variantId: cement.id, quantity: 1 },
       { variantId: tile.id, quantity: 2 },
@@ -282,15 +282,64 @@ test('the cart prices a distance-priced line for the pin, and says it delivers f
   const cementLine = cart.lines.find((line) => line.variantId === cement.id)!;
   assert.equal(cementLine.pricingKind, 'DISTANCE');
   assert.equal(cementLine.unitPrice, '430.00');
-  assert.equal(cementLine.distanceAddition, '30.00');
 
   // 430 + 3,000 = 3,430: the ₹1,000+ slab plus both ranges.
   assert.equal(cart.delivery?.hasFlatLines, true);
   assert.equal(cart.delivery?.located, true);
   assert.equal(cart.deliveryCharge, '245.00');
-  assert.equal(cart.delivery?.slabBase, '200.00');
-  assert.equal(cart.delivery?.distanceCharge, '45.00');
+  assert.equal(deliveryBreakdown?.slabBase, '200.00');
+  assert.equal(deliveryBreakdown?.distanceCharge, '45.00');
   assert.equal(cart.delivery?.freeShortfall, '6570.00');
+});
+
+/*
+ * The slabs, ranges and km behind a delivery charge are the shop's own pricing.
+ * The customer is told the final charge and the free threshold, and these
+ * responses reach their browser, so nothing else may ride along.
+ */
+const INTERNAL_RATE_KEYS = [
+  'slabBase',
+  'distanceCharge',
+  'distanceParts',
+  'distanceAddition',
+  'distanceKm',
+  'roadKm',
+  'slabs',
+  'ranges',
+  'roadFactor',
+];
+
+function assertNoRateKeys(label: string, value: unknown) {
+  const json = JSON.stringify(value);
+  for (const key of INTERNAL_RATE_KEYS) {
+    assert.ok(!json.includes(`"${key}"`), `${label} exposes ${key}`);
+  }
+}
+
+test('public responses carry no delivery rate breakdown', async () => {
+  const { variant: cement } = await seedProduct({
+    handle: 'cement',
+    price: '400.00',
+    distance: CEMENT,
+  });
+  const { variant: tile } = await seedProduct({ handle: 'tile', price: '1500.00' });
+  await seedWarehouse({ code: 'A', from: HOME, roadKm: 7, variantIds: [cement.id, tile.id] });
+
+  const cart = await core.priceCart({
+    lines: [
+      { variantId: cement.id, quantity: 1 },
+      { variantId: tile.id, quantity: 2 },
+    ],
+    pincode: '452001',
+    latitude: HOME.latitude,
+    longitude: HOME.longitude,
+  });
+  assert.equal(cart.deliveryCharge, '245.00');
+  assertNoRateKeys('the cart', cart);
+
+  const settings = await core.getSettings();
+  assert.equal(settings.deliveryCharges.freeAbove, RULES.freeAbove);
+  assertNoRateKeys('the settings', settings);
 });
 
 test('without a pin the cart prices at the warehouse gate and says so', async () => {
@@ -303,7 +352,6 @@ test('without a pin the cart prices at the warehouse gate and says so', async ()
   });
 
   assert.equal(cart.lines[0]!.unitPrice, '420.00');
-  assert.equal(cart.lines[0]!.distanceKm, null);
   assert.equal(cart.delivery?.located, false);
   assert.equal(cart.deliveryCharge, '0.00');
 });

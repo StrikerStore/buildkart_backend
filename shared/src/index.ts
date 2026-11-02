@@ -25,6 +25,8 @@ export * from './checkout-options.ts';
 export * from './tax.ts';
 export * from './checkout.ts';
 export * from './notifications.ts';
+export * from './enquiries.ts';
+export * from './material-estimator.ts';
 export * from './support.ts';
 export * from './secrets.ts';
 export * from './audit-actions.ts';

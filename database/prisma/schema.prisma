@@ -692,6 +692,7 @@ model ProductVariant {
   orderItems     OrderItem[]
   tiers          VariantPriceTier[]
   warehouseStock WarehouseStock[]
+  quoteOption    QuoteMaterialOption?
 
   @@unique([productId, matrixKey])
   /// Scoped to the product, not global. Shopify does not enforce global SKU
@@ -986,6 +987,7 @@ model Customer {
   orders          Order[]
   redemptions     DiscountRedemption[]
   supportTickets  SupportTicket[]
+  enquiries       Enquiry[]
   walletLots      WalletLot[]
   walletEntries   WalletEntry[]
   paymentSessions PaymentSession[]
@@ -2928,4 +2930,77 @@ model PrivacyIncident {
   updatedAt   DateTime @updatedAt
 
   @@index([createdAt])
+}
+
+/// A message from the website's Contact us form, or a request for a better rate
+/// on a material list. A separate table from SupportTicket because a ticket
+/// needs a customer behind it, and most people sending these have not signed in.
+model Enquiry {
+  id String @id @default(cuid())
+
+  /// "E-1001", from a Setting counter inside the create transaction, the same
+  /// mechanism as SupportTicket.ticketNumber.
+  enquiryNumber String @unique @db.VarChar(32)
+
+  /// Matches ENQUIRY_KINDS and ENQUIRY_STATUSES in @buildkart/shared. VarChar
+  /// plus a zod union, on the same reasoning as SupportTicket.topic.
+  kind   String @db.VarChar(16)
+  status String @default("NEW") @db.VarChar(16)
+
+  name  String @db.VarChar(191)
+  /// As typed, not verified. Never send anything to it automatically.
+  phone String @db.VarChar(20)
+
+  message String? @db.Text
+  /// The material list a rate was asked for, worked out by the server when the
+  /// request was sent, so a forged price cannot reach staff. See QuoteSnapshot.
+  quote   Json?
+  /// The staff's own note. Never shown to the person who sent this.
+  note    String? @db.Text
+
+  /// From the session when they were signed in, never from what they sent.
+  customerId String?
+  /// A keyed hash of the address, for counting. Never the address itself.
+  ipHash     String? @db.VarChar(64)
+
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  /// The inbox, newest first in each tab.
+  @@index([status, createdAt])
+  /// The per-phone limit, and erasure by phone.
+  @@index([phone, createdAt])
+  /// The per-address limit.
+  @@index([ipHash, createdAt])
+  @@index([customerId])
+}
+
+/// Which products the Get a quote calculator can offer for a material, and what
+/// one sale unit covers. The catalogue has no pack size to read ("50 kg" only
+/// exists inside a name), so the admin says it here. A material with no row is
+/// shown with its quantity and "ask for a rate".
+model QuoteMaterialOption {
+  id String @id @default(cuid())
+
+  /// Matches QUOTE_MATERIALS in @buildkart/shared.
+  material  String @db.VarChar(32)
+  /// Unique: a variant belongs to one material.
+  variantId String @unique
+
+  /// In the material's base unit: 50 for a 50 kg bag of cement, 100 for a brass
+  /// of sand in cft, 1 for steel sold per kg.
+  baseUnitsPerSaleUnit Decimal @db.Decimal(10, 3)
+
+  /// The first in stock is what the calculator offers by default.
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([material, position])
 }

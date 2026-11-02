@@ -234,7 +234,7 @@ export function slabFor(total: string, slabs: readonly DeliverySlab[]): Delivery
   return match;
 }
 
-/** One line of a distance charge, for the breakdown the shopper and the owner see. */
+/** One line of a distance charge. Internal: customers see only the final charge. */
 export type DistanceChargePart = {
   fromKm: number;
   toKm: number;

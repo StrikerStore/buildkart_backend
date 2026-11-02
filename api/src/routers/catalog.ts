@@ -22,7 +22,11 @@ import {
   deleteProduct,
   deleteTag,
   duplicateProduct,
+  deleteQuoteMaterialOption,
   getCategoryForForm,
+  getQuoteMaterialsForm,
+  reorderQuoteMaterialOptions,
+  saveQuoteMaterialOption,
   getCategoryFormOptions,
   getCategoryName,
   getMetafieldDefinitionForForm,
@@ -111,6 +115,18 @@ export const catalogRouter = router({
   reorderTaxRates: adminProcedure
     .input(payload)
     .mutation(({ ctx, input }) => reorderTaxRates(ctx.actor, input)),
+  // --- Get a quote: which products each material can be bought as ---------
+  quoteMaterials: adminProcedure.query(({ ctx }) => getQuoteMaterialsForm(ctx.actor)),
+  saveQuoteMaterial: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => saveQuoteMaterialOption(ctx.actor, input)),
+  deleteQuoteMaterial: adminProcedure
+    .input(z.object({ id }))
+    .mutation(({ ctx, input }) => deleteQuoteMaterialOption(ctx.actor, input.id)),
+  reorderQuoteMaterial: adminProcedure
+    .input(payload)
+    .mutation(({ ctx, input }) => reorderQuoteMaterialOptions(ctx.actor, input)),
+
   categoryForm: adminProcedure
     .input(z.object({ id }))
     .query(({ ctx, input }) => getCategoryForForm(ctx.actor, input.id)),

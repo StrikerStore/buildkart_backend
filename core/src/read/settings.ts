@@ -9,8 +9,16 @@
  */
 import { prisma } from '@buildkart/database';
 import { SETTINGS_DTO_KEYS, parseSetting } from '@buildkart/shared';
-import type { AppConfigDto, CommerceSettingsDto, SettingsDto, StoreProfileDto } from '@buildkart/shared';
+import type {
+  AppConfigDto,
+  CommerceSettingsDto,
+  DeliveryChargesDto,
+  SettingsDto,
+  StoreProfileDto,
+} from '@buildkart/shared';
 export type { CommerceSettingsDto, SettingsDto, StoreProfileDto };
+import { assertPermission, type Actor } from '../actor.ts';
+import { loadDeliveryRules } from './delivery-charges.ts';
 import { toWalletRulesDto } from './wallet.ts';
 
 
@@ -75,15 +83,9 @@ export async function getSettings(): Promise<SettingsDto> {
       cutoffTime: promise.cutoffTime,
       nextMorningBy: promise.nextMorningBy,
     },
-    // Field by field like everything else here, though this key holds nothing
-    // sensitive: the rule is what keeps a future secret from riding along on a
-    // spread somebody added without thinking about this function.
-    deliveryCharges: {
-      roadFactor: charges.roadFactor,
-      slabs: charges.slabs.map((slab) => ({ from: slab.from, base: slab.base })),
-      ranges: charges.ranges.map((range) => ({ upToKm: range.upToKm, addition: range.addition })),
-      freeAbove: charges.freeAbove,
-    },
+    // Only the threshold. The slabs and ranges are internal pricing and this
+    // object is public — the admin reads them through `getDeliveryChargesForForm`.
+    deliveryCharges: { freeAbove: charges.freeAbove },
     wallet: toWalletRulesDto(parseSetting('rewards.wallet', byKey.get('rewards.wallet'))),
     unloading: toUnloadingDto(parseSetting('delivery.unloading', byKey.get('delivery.unloading'))),
     marketing: toPublicMarketing(parseSetting('marketing.meta', byKey.get('marketing.meta'))),
@@ -146,5 +148,18 @@ export async function getAppConfig(): Promise<AppConfigDto> {
       android: config.androidStoreUrl || null,
       ios: config.iosStoreUrl || null,
     },
+  };
+}
+
+/** The full delivery rules, for the admin's Delivery charges form. */
+export async function getDeliveryChargesForForm(actor: Actor): Promise<DeliveryChargesDto> {
+  assertPermission(actor, 'delivery:write');
+
+  const rules = await loadDeliveryRules();
+  return {
+    roadFactor: rules.roadFactor,
+    slabs: rules.slabs.map((slab) => ({ from: slab.from, base: slab.base })),
+    ranges: rules.ranges.map((range) => ({ upToKm: range.upToKm, addition: range.addition })),
+    freeAbove: rules.freeAbove,
   };
 }

@@ -99,12 +99,13 @@ function alertAuditFailure(action: string, error: unknown): void {
 // ---------------------------------------------------------------------------
 
 /** The records holding someone's personal data whose opening is logged. */
-export type AccessKind = 'customer' | 'order' | 'support';
+export type AccessKind = 'customer' | 'order' | 'support' | 'enquiry';
 
 const ACCESS_ENTITY: Record<AccessKind, string> = {
   customer: 'Customer',
   order: 'Order',
   support: 'SupportTicket',
+  enquiry: 'Enquiry',
 };
 
 /** Recently logged views, so a page that polls costs no query at all. */

@@ -24,6 +24,7 @@
 import { prisma, Prisma } from '@buildkart/database';
 import {
   NOTIFICATION_EVENT_KINDS,
+  ENQUIRY_KIND_LABELS,
   PAYMENT_METHOD_LABELS,
   lineProgress,
   formatAmount,
@@ -36,6 +37,7 @@ import {
   toPositional,
   toWhatsappNumber,
   whatsappParam,
+  type EnquiryKind,
   type NotificationEvent,
 } from '@buildkart/shared';
 import { AisensyError, sendAisensyCampaign, type CampaignMessage } from './aisensy.ts';
@@ -576,6 +578,54 @@ export function notifyShopSecurityAlert(alert: {
       });
     }
   })().catch((error: unknown) => console.error('[notify] security alert', error));
+}
+
+/**
+ * Tells the shop about a Contact us message or a rate request.
+ *
+ * Only ever to the shop's own numbers. The person's number is typed, not
+ * verified, so sending to it could message a stranger.
+ */
+export function notifyShopOfEnquiry(enquiry: {
+  id: string;
+  enquiryNumber: string;
+  kind: EnquiryKind;
+  name: string;
+  phone: string;
+  summary: string;
+}): void {
+  void (async () => {
+    const row = await prisma.setting.findUnique({ where: { key: 'notifications.whatsapp' } });
+    const phones = parseSetting('notifications.whatsapp', row?.value).alertPhones;
+    if (phones.length === 0) return;
+
+    const event: NotificationEvent = 'shop.enquiryReceived';
+    const values: Record<string, string> = {
+      ...(await commonTokens(null)),
+      customerName: enquiry.name,
+      customerPhone: `+91 ${enquiry.phone}`,
+      enquiryNumber: enquiry.enquiryNumber,
+      enquiryKind: ENQUIRY_KIND_LABELS[enquiry.kind],
+      enquirySummary: enquiry.summary.slice(0, 200),
+      adminUrl: adminUrl(`/enquiries/${enquiry.id}`),
+    };
+
+    for (const phone of phones) {
+      await notify({
+        event,
+        recipient: {
+          customerId: null,
+          name: `${values.storeName ?? 'Shop'} team`,
+          phone,
+          locale: 'en',
+          optedIn: true,
+          marketingOptedIn: false,
+        },
+        values,
+        dedupeKey: `${event}:${enquiry.id}:${phone}`,
+      });
+    }
+  })().catch((error: unknown) => console.error('[notify] enquiry alert', error));
 }
 
 /**

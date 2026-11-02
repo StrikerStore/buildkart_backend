@@ -38,6 +38,7 @@ export async function buildCustomerDataExport(customerId: string): Promise<Custo
     orders,
     walletEntries,
     tickets,
+    enquiries,
     messages,
     requests,
     recentVisitCount,
@@ -69,6 +70,11 @@ export async function buildCustomerDataExport(customerId: string): Promise<Custo
       where: { customerId },
       orderBy: { createdAt: 'asc' },
       include: { messages: { orderBy: { createdAt: 'asc' } } },
+    }),
+    // By phone as well: they may have written before signing in.
+    prisma.enquiry.findMany({
+      where: { OR: [{ customerId }, { phone: customer.phone }] },
+      orderBy: { createdAt: 'asc' },
     }),
     prisma.notificationMessage.findMany({
       where: { customerId },
@@ -183,6 +189,16 @@ export async function buildCustomerDataExport(customerId: string): Promise<Custo
     whatsappMessages: messages.map((row) => ({
       event: row.event,
       status: row.status,
+      at: iso(row.createdAt),
+    })),
+    enquiries: enquiries.map((row) => ({
+      reference: row.enquiryNumber,
+      kind: row.kind,
+      status: row.status,
+      name: row.name,
+      phone: row.phone,
+      message: row.message,
+      materialList: row.quote ?? null,
       at: iso(row.createdAt),
     })),
     privacyRequests: requests.map((row) => ({
