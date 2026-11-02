@@ -988,7 +988,17 @@ export type RuleCategoryDto = {
 };
 
 export type ProductFormOptionsDto = {
-  categories: Array<{ id: string; nameEn: string; parentName: string | null }>;
+  categories: Array<{
+    id: string;
+    nameEn: string;
+    parentName: string | null;
+    /** "Price changes daily": its products are on Today's Rates without their own flag. */
+    isRateVolatile: boolean;
+  }>;
+  /** Active warehouses, for stock per warehouse on the form. */
+  warehouses: Array<{ id: string; name: string; code: string }>;
+  /** Whether this admin may change stock per warehouse (`delivery:write`). */
+  canEditWarehouseStock: boolean;
   brandSuggestions: string[];
   metafieldDefinitions: MetafieldDefinitionDto[];
   tagSuggestions: string[];
@@ -3550,6 +3560,7 @@ export type QuoteMaterialsFormDto = {
     id: string;
     material: QuoteMaterial;
     variantId: string;
+    productId: string;
     label: string;
     unitLabel: string | null;
     baseUnitsPerSaleUnit: number;

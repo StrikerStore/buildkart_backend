@@ -19,8 +19,8 @@ import {
   type ProductListQuery,
   toStoreInputValue,
 } from '@buildkart/shared';
-import type { ProductFormInitialDto } from '@buildkart/shared';
-import { assertPermission, type Actor } from '../actor.ts';
+import type { ProductFormInitialDto, QuoteMaterial } from '@buildkart/shared';
+import { actorCan, assertPermission, type Actor } from '../actor.ts';
 import { tagRuleWhere, type CategoryRuleSet } from '../membership.ts';
 import { loadRuleSets } from '../category-rule-sets.ts';
 import { decimalToString, toProductListItemDto } from '../dto.ts';
@@ -253,12 +253,14 @@ export async function getProductName(id: string): Promise<string | null> {
 export async function getProductFormOptions(actor: Actor): Promise<ProductFormOptionsDto> {
   assertPermission(actor, 'catalog:write');
 
-  const [categoryRows, brands, tags, metafieldDefinitions] = await Promise.all([
+  const [categoryRows, brands, tags, metafieldDefinitions, warehouses] = await Promise.all([
     prisma.category.findMany({
       orderBy: [{ position: 'asc' }, { nameEn: 'asc' }],
       select: {
         id: true,
         nameEn: true,
+        // So the form can say a category already puts the product on Today's Rates.
+        isRateVolatile: true,
         parent: { select: { nameEn: true } },
         autoMatch: true,
         // Slug-keyed: the form holds tag *names*, slugifies them, and evaluates
@@ -269,6 +271,11 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
     prisma.brand.findMany({ orderBy: { nameEn: 'asc' }, take: 200, select: { nameEn: true } }),
     prisma.tag.findMany({ orderBy: { nameEn: 'asc' }, take: 200, select: { nameEn: true } }),
     listProductMetafieldDefinitions(),
+    prisma.warehouse.findMany({
+      where: { isActive: true },
+      orderBy: [{ name: 'asc' }],
+      select: { id: true, name: true, code: true },
+    }),
   ]);
 
   // Only the rates still on offer, plus which one a new product starts on.
@@ -303,7 +310,10 @@ export async function getProductFormOptions(actor: Actor): Promise<ProductFormOp
       id: category.id,
       nameEn: category.nameEn,
       parentName: category.parent?.nameEn ?? null,
+      isRateVolatile: category.isRateVolatile,
     })),
+    warehouses,
+    canEditWarehouseStock: actorCan(actor, 'delivery:write'),
     brandSuggestions: brands.map((brand) => brand.nameEn),
     metafieldDefinitions,
     tagSuggestions: tags.map((tag) => tag.nameEn),
@@ -354,7 +364,11 @@ export async function getProductForForm(
       options: { orderBy: { position: 'asc' }, include: { values: true } },
       variants: {
         orderBy: { position: 'asc' },
-        include: { tiers: { orderBy: { position: 'asc' } } },
+        include: {
+          tiers: { orderBy: { position: 'asc' } },
+          quoteOption: { select: { material: true, baseUnitsPerSaleUnit: true } },
+          warehouseStock: { select: { warehouseId: true, quantity: true } },
+        },
       },
       _count: { select: { orderItems: true } },
     },
@@ -397,6 +411,8 @@ export async function getProductForForm(
       unitLabelEn: variant.unitLabelEn ?? '',
       unitLabelHi: variant.unitLabelHi ?? '',
       stockQty: String(variant.stockQty),
+      // What the form started from, so saving applies only the change.
+      stockQtyLoaded: String(variant.stockQty),
       lowStockThreshold: String(variant.lowStockThreshold),
       inventoryPolicy: variant.inventoryPolicy,
       inventoryTracked: variant.inventoryTracked,
@@ -407,8 +423,19 @@ export async function getProductForForm(
       // Trailing zeros trimmed, like the tax rate: "5", not "5.00".
       distanceBlockKm: String(Number(variant.distanceBlockKm)),
       distancePerBlockAddition: normalizeMoney(variant.distancePerBlockAddition.toString()),
+      quoteCoverage: variant.quoteOption
+        ? String(Number(variant.quoteOption.baseUnitsPerSaleUnit))
+        : '',
+      warehouseStock: Object.fromEntries(
+        variant.warehouseStock.map((row) => [row.warehouseId, String(row.quantity)]),
+      ),
     }),
   );
+
+  // One material for the product: the one its live variants are linked as.
+  const quoteMaterial =
+    (product.variants.find((variant) => variant.isActive && variant.quoteOption)?.quoteOption
+      ?.material as QuoteMaterial | undefined) ?? null;
 
   // Values return to the form as the same raw cell text the form submits, so
   // the round trip goes through one formatter and one parser.
@@ -448,12 +475,14 @@ export async function getProductForForm(
     taxInclusive: product.taxInclusive,
     hsnCode: product.hsnCode ?? '',
     isRateVolatile: product.isRateVolatile,
+    quoteMaterial,
     bulkTierBasis: product.bulkTierBasis,
     pricingKind: product.pricingKind,
     searchKeywords: product.searchKeywords ?? '',
     seoTitle: product.seoTitle ?? '',
     seoDescriptionEn: product.seoDescriptionEn ?? '',
     orderItemCount: product._count.orderItems,
+    updatedAt: product.updatedAt.toISOString(),
     metafieldValues,
     axes,
     variants: variants.length > 0 ? variants : [emptyVariantDraft()],

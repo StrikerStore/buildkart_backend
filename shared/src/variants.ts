@@ -81,6 +81,20 @@ export type VariantDraft = {
   distanceBaseAddition: string;
   distanceBlockKm: string;
   distancePerBlockAddition: string;
+  /**
+   * The stock count when the form was opened, for a variant that already
+   * exists. The save applies the difference rather than the number, so an
+   * order placed while the form was open is not undone. Null for a new row.
+   */
+  stockQtyLoaded: string | null;
+  /**
+   * For Get a quote: how much of the product's material one sale unit covers,
+   * in the material's base unit ("50" for a 50 kg bag of cement). Blank when the
+   * product is not used in quotes.
+   */
+  quoteCoverage: string;
+  /** Quantity held per warehouse, keyed by warehouse id. Routing only. */
+  warehouseStock: Record<string, string>;
 };
 
 export function matrixKeyOf(values: readonly string[]): string {
@@ -114,6 +128,9 @@ export function emptyVariantDraft(overrides: Partial<VariantDraft> = {}): Varian
     distanceBaseAddition: '0.00',
     distanceBlockKm: '5',
     distancePerBlockAddition: '0.00',
+    stockQtyLoaded: null,
+    quoteCoverage: '',
+    warehouseStock: {},
     ...overrides,
   };
 }

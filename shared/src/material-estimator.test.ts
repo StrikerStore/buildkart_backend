@@ -5,6 +5,7 @@ import {
   describeQuoteJob,
   estimateMaterials,
   saleUnitsFor,
+  suggestCoverage,
   type EstimatedMaterial,
   type QuoteJob,
 } from './material-estimator.ts';
@@ -272,4 +273,41 @@ test('a wall must be bigger than its openings, and thick enough for its block', 
     false,
   );
   assert.ok(quoteJobSchema.safeParse({ ...WALL, masonry: 'BLOCK_AAC', thicknessMm: 200 }).success);
+});
+
+// --- the product form's coverage suggestion ---------------------------------
+
+test('a bag of cement covers the weight in its name', () => {
+  assert.equal(suggestCoverage('CEMENT', 'per bag', 'UltraTech Cement OPC 53 Grade, 50 kg'), '50');
+  assert.equal(suggestCoverage('CEMENT', 'per bag', 'ACC Suraksha PPC Cement 25kg'), '25');
+  assert.equal(suggestCoverage('TILE_ADHESIVE', 'per bag', 'Tile Adhesive, 20 kg'), '20');
+  // The size can sit on the variant rather than the product.
+  assert.equal(suggestCoverage('CEMENT', 'per bag', 'Ambuja Plus PPC', '40 kg'), '40');
+});
+
+test('steel follows its unit, not numbers in the name', () => {
+  assert.equal(suggestCoverage('STEEL', 'per kg', 'Tata Tiscon 550SD TMT Sariya, 12mm'), '1');
+  assert.equal(suggestCoverage('STEEL', 'per quintal', 'JSW Neosteel'), '100');
+  assert.equal(suggestCoverage('STEEL', 'per tonne', 'JSW Neosteel'), '1000');
+});
+
+test('sand and aggregate by the cft, the brass or the cubic metre', () => {
+  assert.equal(suggestCoverage('SAND', 'per cft', 'River sand'), '1');
+  assert.equal(suggestCoverage('SAND', 'per brass', 'River sand'), '100');
+  assert.equal(suggestCoverage('AGGREGATE', 'per cum', '20mm gitti'), '35.315');
+  assert.equal(suggestCoverage('SAND', 'per bag', 'M-sand bag, 1.5 cft'), '1.5');
+});
+
+test('bricks, blocks and tiles', () => {
+  assert.equal(suggestCoverage('BRICK', 'per piece', 'Red clay brick'), '1');
+  assert.equal(suggestCoverage('BRICK', 'per thousand', 'Red clay brick'), '1000');
+  assert.equal(suggestCoverage('TILE', 'per sq ft', 'Vitrified tile 2x2'), '1');
+  assert.equal(suggestCoverage('TILE', 'per box', 'Kajaria vitrified, box of 4 (15.5 sq ft)'), '15.5');
+});
+
+test('no guess when nothing says', () => {
+  assert.equal(suggestCoverage('CEMENT', 'per bag', 'UltraTech Cement OPC 53 Grade'), null);
+  assert.equal(suggestCoverage('SAND', 'per tractor', 'River sand'), null);
+  assert.equal(suggestCoverage('BRICK', '', 'Fly ash brick'), null);
+  assert.equal(suggestCoverage('TILE', 'per box', 'Vitrified tile'), null);
 });

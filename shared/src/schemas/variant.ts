@@ -91,6 +91,40 @@ export const variantRowSchema = z.object({
     .transform((v) => (v === '' || v === undefined ? null : v)),
   isActive: z.boolean().default(true),
   ...variantDistanceFields,
+  /**
+   * The count the form was showing when it opened. Present, the save applies
+   * `stockQty - stockQtyLoaded` to whatever is stored now; absent (an import, a
+   * new row), `stockQty` is written as it is.
+   */
+  stockQtyLoaded: z.coerce.number().int().min(0).max(1_000_000).nullish(),
+  /**
+   * What one sale unit covers for Get a quote, in the material's base unit.
+   * Blank is "not used". Read only when the product names a quote material.
+   */
+  quoteCoverage: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((v) => (v === undefined || String(v).trim() === '' ? undefined : Number(v)))
+    .refine((v) => v === undefined || (Number.isFinite(v) && v > 0 && v <= 1_000_000), {
+      message: 'Enter how much one unit covers',
+    })
+    // Decimal(10,3): anything finer would be stored rounded and then disagree.
+    .refine((v) => v === undefined || Math.round(v * 1000) === v * 1000, {
+      message: 'At most three decimal places',
+    }),
+  /**
+   * Stock per warehouse, for routing. Absent leaves the stored rows alone, and
+   * only the warehouses listed are touched: 0 removes the row.
+   */
+  warehouseStock: z
+    .array(
+      z.object({
+        warehouseId: z.string().trim().min(1).max(64),
+        quantity: z.coerce.number().int().min(0).max(9_999_999),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 export const saveVariantsSchema = z

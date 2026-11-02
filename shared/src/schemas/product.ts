@@ -4,6 +4,7 @@ import { optionAxisSchema, variantRowSchema } from './variant.ts';
 import { metafieldValuesSchema } from './metafield.ts';
 import { productTaxFields } from './tax.ts';
 import { PRICING_KINDS } from '../delivery-pricing.ts';
+import { QUOTE_MATERIALS } from '../material-estimator.ts';
 import {
   BULK_TIER_BASES,
   MATRIX_SEPARATOR,
@@ -113,6 +114,12 @@ export const productInputSchema = z
     ...productDeliveryPricingFields,
 
     isRateVolatile: z.boolean().default(false),
+    /**
+     * Which Get a quote material this product is sold as, with each variant's
+     * `quoteCoverage`. Null takes it out of quotes; absent (an import) leaves
+     * the stored links alone.
+     */
+    quoteMaterial: z.enum(QUOTE_MATERIALS).nullish(),
     /** How this product's bulk ladders are read. One choice for the product. */
     bulkTierBasis: z.enum(BULK_TIER_BASES).default('QUANTITY'),
     searchKeywords: optionalText(1000),

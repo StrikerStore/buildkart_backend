@@ -9,7 +9,7 @@
  * moves sellable stock, and nothing here can stop a sale: that remains
  * `ProductVariant.stockQty` and the `InventoryAdjustment` ledger, untouched.
  */
-import { prisma } from '@buildkart/database';
+import { prisma, type Prisma } from '@buildkart/database';
 import {
   actionError,
   actionErrorFromZod,
@@ -115,6 +115,45 @@ export async function deleteWarehouse(actor: Actor, input: unknown): Promise<Act
 }
 
 /**
+ * Writes stock-per-warehouse rows: above 0 is kept, 0 removes the row.
+ *
+ * Shared by the warehouse screen and the product form so the two cannot
+ * disagree about what a zero means. Callers check the permission and that the
+ * warehouses and variants exist; this only writes.
+ */
+export async function applyWarehouseStock(
+  tx: Prisma.TransactionClient,
+  entries: Array<{ warehouseId: string; variantId: string; quantity: number }>,
+): Promise<{ held: number; cleared: number }> {
+  const byWarehouse = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const list = byWarehouse.get(entry.warehouseId) ?? [];
+    list.push(entry);
+    byWarehouse.set(entry.warehouseId, list);
+  }
+
+  let held = 0;
+  let cleared = 0;
+  for (const [warehouseId, rows] of byWarehouse) {
+    const zero = rows.filter((row) => row.quantity === 0).map((row) => row.variantId);
+    if (zero.length > 0) {
+      cleared += (
+        await tx.warehouseStock.deleteMany({ where: { warehouseId, variantId: { in: zero } } })
+      ).count;
+    }
+    for (const row of rows.filter((entry) => entry.quantity > 0)) {
+      await tx.warehouseStock.upsert({
+        where: { warehouseId_variantId: { warehouseId, variantId: row.variantId } },
+        create: { warehouseId, variantId: row.variantId, quantity: row.quantity },
+        update: { quantity: row.quantity },
+      });
+      held += 1;
+    }
+  }
+  return { held, cleared };
+}
+
+/**
  * Records what a warehouse holds.
  *
  * Quantity zero deletes the row rather than storing a zero. The routing query
@@ -153,31 +192,21 @@ export async function saveWarehouseStock(
   const usable = rows.filter((row) => live.has(row.variantId));
   if (usable.length === 0) return actionError('None of those products still exist.');
 
-  const cleared = usable.filter((row) => row.quantity === 0).map((row) => row.variantId);
-  const held = usable.filter((row) => row.quantity > 0);
+  const cleared = usable.filter((row) => row.quantity === 0).length;
+  const held = usable.length - cleared;
 
-  await prisma.$transaction([
-    ...(cleared.length > 0
-      ? [
-          prisma.warehouseStock.deleteMany({
-            where: { warehouseId, variantId: { in: cleared } },
-          }),
-        ]
-      : []),
-    ...held.map((row) =>
-      prisma.warehouseStock.upsert({
-        where: { warehouseId_variantId: { warehouseId, variantId: row.variantId } },
-        create: { warehouseId, variantId: row.variantId, quantity: row.quantity },
-        update: { quantity: row.quantity },
-      }),
+  await prisma.$transaction((tx) =>
+    applyWarehouseStock(
+      tx,
+      usable.map((row) => ({ warehouseId, variantId: row.variantId, quantity: row.quantity })),
     ),
-  ]);
+  );
 
   await recordAudit(actor, {
     action: 'delivery.warehouse.stock',
     entityType: 'Warehouse',
     entityId: warehouse.id,
-    diff: { warehouse: warehouse.name, updated: held.length, removed: cleared.length },
+    diff: { warehouse: warehouse.name, updated: held, removed: cleared },
   });
 
   return actionOk({ saved: usable.length });

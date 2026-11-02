@@ -31,8 +31,9 @@ import {
   type VariantRowInput,
   parseStoreDateTime,
 } from '@buildkart/shared';
-import { adminIdOf, assertPermission, type Actor } from '../actor.ts';
+import { actorCan, adminIdOf, assertPermission, type Actor } from '../actor.ts';
 import { recordAudit } from '../audit.ts';
+import { applyWarehouseStock } from './warehouses.ts';
 
 async function takenHandles(excludeId?: string): Promise<Set<string>> {
   const rows = await prisma.product.findMany({
@@ -283,6 +284,9 @@ function tiersEqual(
   });
 }
 
+/** What a product save changed besides the product itself, for its audit entry. */
+type VariantSideEffects = { stockMoves: number; quoteLinks: number | null; warehouseRows: number | null };
+
 async function persistVariants(
   tx: Prisma.TransactionClient,
   productId: string,
@@ -297,7 +301,9 @@ async function persistVariants(
   }>,
   deletableIds: string[],
   deactivateIds: string[],
-) {
+  /** The caller has checked `delivery:write`; without it the rows are left alone. */
+  options: { writeWarehouseStock: boolean },
+): Promise<VariantSideEffects> {
   const basis = data.bulkTierBasis;
   await tx.productOption.deleteMany({ where: { productId } });
   for (const [index, axis] of data.axes.entries()) {
@@ -312,6 +318,10 @@ async function persistVariants(
   }
 
   const byKey = new Map(existing.map((v) => [v.matrixKey, v]));
+  /** Every saved row's id by its combination, for the links written after. */
+  const idByKey = new Map<string, string>();
+  /** Stock-ledger entries, so Inventory's history explains every count. */
+  const stockMoves: Array<{ variantId: string; delta: number; note: string }> = [];
   const priceChanges: Array<{
     variantId: string;
     price: string;
@@ -322,14 +332,44 @@ async function persistVariants(
     const found = byKey.get(row.matrixKey);
 
     if (found) {
+      idByKey.set(row.matrixKey, found.id);
       const tiers = tierRowsFor(basis, row.tiers);
       const changed =
         found.price.toString() !== row.price || !tiersEqual(found.tiers, tiers);
 
+      /*
+       * Stock from the form is a change, not a number. The form says what it
+       * showed when it opened; applying the difference to what is stored *now*
+       * keeps an order placed in between. A caller that sends no starting count
+       * (an import) still writes the number as given.
+       */
+      const { stockQty, ...scalars } = variantScalars(row);
+      let stock: { stockQty?: number } = { stockQty };
+      if (row.stockQtyLoaded !== undefined && row.stockQtyLoaded !== null) {
+        const change = stockQty - row.stockQtyLoaded;
+        stock = {};
+        if (change !== 0) {
+          const current = await tx.productVariant.findUniqueOrThrow({
+            where: { id: found.id },
+            select: { stockQty: true },
+          });
+          const next = Math.max(0, current.stockQty + change);
+          stock = { stockQty: next };
+          if (next !== current.stockQty) {
+            stockMoves.push({
+              variantId: found.id,
+              delta: next - current.stockQty,
+              note: 'Changed on the product page',
+            });
+          }
+        }
+      }
+
       await tx.productVariant.update({
         where: { id: found.id },
         data: {
-          ...variantScalars(row),
+          ...scalars,
+          ...stock,
           ...optionColumnsFor(row.matrixKey),
           position: index,
           imageId: row.imageMediaId,
@@ -366,6 +406,10 @@ async function persistVariants(
         },
         select: { id: true },
       });
+      idByKey.set(row.matrixKey, created.id);
+      if (row.inventoryTracked && row.stockQty > 0) {
+        stockMoves.push({ variantId: created.id, delta: row.stockQty, note: 'Opening stock' });
+      }
       const tiers = tierRowsFor(basis, row.tiers);
       if (tiers.length > 0) {
         await tx.variantPriceTier.createMany({
@@ -400,6 +444,123 @@ async function persistVariants(
       })),
     });
   }
+
+  if (stockMoves.length > 0) {
+    await tx.inventoryAdjustment.createMany({
+      data: stockMoves.map((move) => ({ ...move, reason: 'MANUAL' as const })),
+    });
+  }
+
+  return {
+    stockMoves: stockMoves.length,
+    quoteLinks: await persistQuoteLinks(tx, data, idByKey),
+    warehouseRows: options.writeWarehouseStock
+      ? await persistWarehouseStock(tx, data, idByKey)
+      : null,
+  };
+}
+
+/**
+ * The product's Get a quote links: which material it is sold as, and what one of
+ * each variant covers.
+ *
+ * Only when the save names a material, or null for none: an import that says
+ * nothing leaves the links the Quote materials screen made. A variant left blank,
+ * or switched off, is taken out. A new link goes to the end of its material's
+ * list, so the brand the shop already offers first stays first.
+ */
+async function persistQuoteLinks(
+  tx: Prisma.TransactionClient,
+  data: ProductInput,
+  idByKey: Map<string, string>,
+): Promise<number | null> {
+  if (data.quoteMaterial === undefined) return null;
+  const material = data.quoteMaterial;
+
+  const wanted = new Map<string, number>();
+  if (material !== null) {
+    for (const row of data.variants) {
+      const variantId = idByKey.get(row.matrixKey);
+      if (variantId && row.isActive && row.quoteCoverage !== undefined) {
+        wanted.set(variantId, row.quoteCoverage);
+      }
+    }
+  }
+
+  const stored = await tx.quoteMaterialOption.findMany({
+    where: { variantId: { in: [...idByKey.values()] } },
+    select: { variantId: true, material: true },
+  });
+  const gone = stored.filter((row) => !wanted.has(row.variantId)).map((row) => row.variantId);
+  if (gone.length > 0) {
+    await tx.quoteMaterialOption.deleteMany({ where: { variantId: { in: gone } } });
+  }
+  if (material === null || wanted.size === 0) return 0;
+
+  const storedMaterial = new Map(stored.map((row) => [row.variantId, row.material]));
+  let position =
+    (
+      await tx.quoteMaterialOption.aggregate({
+        where: { material },
+        _max: { position: true },
+      })
+    )._max.position ?? -1;
+
+  for (const [variantId, baseUnitsPerSaleUnit] of wanted) {
+    if (storedMaterial.get(variantId) === material) {
+      await tx.quoteMaterialOption.update({
+        where: { variantId },
+        data: { baseUnitsPerSaleUnit },
+      });
+    } else {
+      position += 1;
+      await tx.quoteMaterialOption.upsert({
+        where: { variantId },
+        create: { material, variantId, baseUnitsPerSaleUnit, position },
+        update: { material, baseUnitsPerSaleUnit, position },
+      });
+    }
+  }
+  return wanted.size;
+}
+
+/** Stock per warehouse, for the variants and warehouses the form sent. */
+async function persistWarehouseStock(
+  tx: Prisma.TransactionClient,
+  data: ProductInput,
+  idByKey: Map<string, string>,
+): Promise<number | null> {
+  const entries: Array<{ warehouseId: string; variantId: string; quantity: number }> = [];
+  for (const row of data.variants) {
+    const variantId = idByKey.get(row.matrixKey);
+    if (!variantId || !row.warehouseStock) continue;
+    for (const held of row.warehouseStock) entries.push({ ...held, variantId });
+  }
+  if (entries.length === 0) return null;
+
+  // A warehouse deleted while the form was open would fail the whole save on a
+  // foreign key; it simply has nothing to hold any more.
+  const known = new Set(
+    (
+      await tx.warehouse.findMany({
+        where: { id: { in: [...new Set(entries.map((entry) => entry.warehouseId))] } },
+        select: { id: true },
+      })
+    ).map((warehouse) => warehouse.id),
+  );
+  const { held } = await applyWarehouseStock(
+    tx,
+    entries.filter((entry) => known.has(entry.warehouseId)),
+  );
+  return held;
+}
+
+/** Stock per warehouse needs `delivery:write`; staff may save everything else. */
+function warehouseStockRefusal(actor: Actor, data: ProductInput): string | null {
+  const sends = data.variants.some((row) => row.warehouseStock !== undefined);
+  return sends && !actorCan(actor, 'delivery:write')
+    ? 'Only the owner can change where a product ships from. Reload the page and save again.'
+    : null;
 }
 
 /**
@@ -519,6 +680,8 @@ export async function createProduct(actor: Actor, input: unknown): Promise<Actio
 
   const problems = validate(data);
   if (problems.length > 0) return actionError(problems);
+  const refusal = warehouseStockRefusal(actor, data);
+  if (refusal) return actionError(refusal);
 
   const handleBase = data.handle ?? slugify(data.nameEn);
   if (!handleBase) {
@@ -545,16 +708,24 @@ export async function createProduct(actor: Actor, input: unknown): Promise<Actio
       select: { id: true },
     });
 
-    await persistVariants(tx, product.id, data, adminId, [], [], []);
+    const effects = await persistVariants(tx, product.id, data, adminId, [], [], [], {
+      writeWarehouseStock: true,
+    });
     await persistMetafields(tx, product.id, data.metafields);
-    return product;
+    return { ...product, effects };
   });
 
   await recordAudit(actor, {
     action: 'product.create',
     entityType: 'Product',
     entityId: created.id,
-    diff: { handle, nameEn: data.nameEn, status: data.status, variants: data.variants.length },
+    diff: {
+      handle,
+      nameEn: data.nameEn,
+      status: data.status,
+      variants: data.variants.length,
+      ...created.effects,
+    },
   });
 
   return actionOk({ id: created.id });
@@ -574,6 +745,8 @@ export async function updateProduct(
 
   const problems = validate(data);
   if (problems.length > 0) return actionError(problems);
+  const refusal = warehouseStockRefusal(actor, data);
+  if (refusal) return actionError(refusal);
 
   const existing = await prisma.product.findUnique({
     where: { id },
@@ -614,7 +787,7 @@ export async function updateProduct(
   const goneIds = existing.variants.filter((v) => !incomingKeys.has(v.matrixKey)).map((v) => v.id);
   const { deletableIds, deactivateIds } = await partitionRemoved(goneIds);
 
-  await prisma.$transaction(async (tx) => {
+  const effects = await prisma.$transaction(async (tx) => {
     await tx.product.update({
       where: { id },
       data: {
@@ -643,8 +816,18 @@ export async function updateProduct(
       });
     }
 
-    await persistVariants(tx, id, data, adminId, existing.variants, deletableIds, deactivateIds);
+    const result = await persistVariants(
+      tx,
+      id,
+      data,
+      adminId,
+      existing.variants,
+      deletableIds,
+      deactivateIds,
+      { writeWarehouseStock: true },
+    );
     await persistMetafields(tx, id, data.metafields);
+    return result;
   });
 
   await recordAudit(actor, {
@@ -657,6 +840,7 @@ export async function updateProduct(
       variants: data.variants.length,
       deleted: deletableIds.length,
       deactivated: deactivateIds.length,
+      ...effects,
     },
   });
 

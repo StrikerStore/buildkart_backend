@@ -367,6 +367,63 @@ export function saleUnitsFor(baseQuantity: number, baseUnitsPerSaleUnit: number)
   return Math.ceil(Number((baseQuantity / baseUnitsPerSaleUnit).toFixed(6)));
 }
 
+/** "50", "35.315": no trailing zeros, at most three places like the stored column. */
+const coverageText = (value: number) => String(Math.round(value * 1000) / 1000);
+
+/** The first "<number> <unit>" in the text, for a unit pattern. */
+function amountIn(text: string, unit: RegExp): number | null {
+  const match = text.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:${unit.source})\\b`, 'i'));
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * A first guess at what one sale unit covers, for the product form to fill in.
+ *
+ * Only ever a suggestion the admin confirms: it reads the unit label first
+ * ("per kg" is 1, "per quintal" is 100) and falls back to a size in the name
+ * ("UltraTech OPC 53, 50 kg" sold "per bag" is 50). Null when neither says,
+ * rather than a guess that would quietly sell the wrong quantity.
+ */
+export function suggestCoverage(
+  material: QuoteMaterial,
+  unitLabelEn: string,
+  productName: string,
+  variantLabel = '',
+): string | null {
+  const unit = unitLabelEn.toLowerCase().replace(/^per\s+/, '').trim();
+  const text = `${productName} ${variantLabel}`;
+  const base = QUOTE_MATERIAL_UNITS[material];
+
+  if (base === 'kg') {
+    if (/^(kg|kgs|kilo|kilogram)s?$/.test(unit)) return '1';
+    if (/^quintals?$/.test(unit)) return '100';
+    if (/^(tonnes?|tons?|mt)$/.test(unit)) return '1000';
+    const kg = amountIn(text, /kgs?|kilos?|kilograms?/);
+    return kg !== null && kg > 0 ? coverageText(kg) : null;
+  }
+
+  if (base === 'cft') {
+    if (/^(cft|cu\.? ?ft|cubic f(oo|ee)t)$/.test(unit)) return '1';
+    if (/^brass$/.test(unit)) return '100';
+    if (/^(cum|cu\.? ?m|m3|cubic met(re|er))$/.test(unit)) return coverageText(CFT_PER_M3);
+    const cft = amountIn(text, /cft|cu\.? ?ft/);
+    return cft !== null && cft > 0 ? coverageText(cft) : null;
+  }
+
+  if (base === 'sqft') {
+    if (/^(sq\.? ?ft|sqft|square f(oo|ee)t)$/.test(unit)) return '1';
+    if (/^(sq\.? ?m|sqm|square met(re|er))$/.test(unit)) return coverageText(SQFT_PER_M2);
+    const sqft = amountIn(text, /sq\.? ?ft|sqft/);
+    return sqft !== null && sqft > 0 ? coverageText(sqft) : null;
+  }
+
+  // Pieces.
+  if (/^(piece|pieces|pc|pcs|nos|no|number|unit)$/.test(unit)) return '1';
+  if (/^(thousand|1000)$/.test(unit)) return '1000';
+  if (/^(hundred|100)$/.test(unit)) return '100';
+  return null;
+}
+
 // --- saying it back ----------------------------------------------------------
 
 type Lang = 'en' | 'hi';

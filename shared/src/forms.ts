@@ -10,6 +10,7 @@
  * screens drifting — they are the same shape, built once.
  */
 import type { CategoryMatch, TagSlugRule } from './category-rules.ts';
+import type { QuoteMaterial } from './material-estimator.ts';
 import type { BulkTierBasis } from './variants.ts';
 import type { PricingKind } from './delivery-pricing.ts';
 import type { MediaImageDto } from './media-context.ts';
@@ -126,6 +127,8 @@ export type ProductFormInitialDto = {
   taxInclusive: boolean;
   hsnCode: string;
   isRateVolatile: boolean;
+  /** The Get a quote material, or null when the product is not used in quotes. */
+  quoteMaterial: QuoteMaterial | null;
   /** How this product's bulk ladders are read. */
   bulkTierBasis: BulkTierBasis;
   /**
@@ -137,6 +140,11 @@ export type ProductFormInitialDto = {
   seoTitle: string;
   seoDescriptionEn: string;
   orderItemCount: number;
+  /**
+   * When it was last saved. The edit page keys the form on it, so a save
+   * remounts the form from what was stored rather than from what was typed.
+   */
+  updatedAt: string | null;
   metafieldValues: Record<string, string>;
   axes: Array<{ id: string; name: string; values: string[] }>;
   variants: ReturnType<typeof emptyVariantDraft>[];
@@ -169,12 +177,14 @@ export function emptyProductForm(): ProductFormInitialDto {
     taxInclusive: true,
     hsnCode: '',
     isRateVolatile: false,
+    quoteMaterial: null,
     bulkTierBasis: 'QUANTITY',
     pricingKind: 'FLAT',
     searchKeywords: '',
     seoTitle: '',
     seoDescriptionEn: '',
     orderItemCount: 0,
+    updatedAt: null,
     metafieldValues: {},
     axes: [],
     // No axes yet, but one variant row exists from the start: a product without

@@ -87,6 +87,17 @@ export function isAdmin(actor: Actor): actor is Extract<Actor, { kind: 'admin' }
 }
 
 /**
+ * Whether this actor holds a permission, without throwing.
+ *
+ * For a write whose *parts* need different permissions: the product save needs
+ * `catalog:write`, and its stock-per-warehouse part needs `delivery:write`
+ * as well, so the caller asks rather than refusing the whole save.
+ */
+export function actorCan(actor: Actor, permission: Permission): boolean {
+  return isAdmin(actor) && can(actor.role, permission);
+}
+
+/**
  * The admin's id, or null when a storefront or a job is acting.
  *
  * Columns like `changedByAdminId` and `recordedByAdminId` are nullable for

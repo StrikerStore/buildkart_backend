@@ -29,7 +29,13 @@ export async function duplicateProduct(
     where: { id: productId },
     include: {
       options: { include: { values: true }, orderBy: { position: 'asc' } },
-      variants: { orderBy: { position: 'asc' } },
+      variants: {
+        orderBy: { position: 'asc' },
+        include: {
+          tiers: { orderBy: { position: 'asc' } },
+          quoteOption: { select: { material: true, baseUnitsPerSaleUnit: true } },
+        },
+      },
       images: { orderBy: { position: 'asc' } },
       tags: true,
     },
@@ -65,6 +71,8 @@ export async function duplicateProduct(
         taxInclusive: source.taxInclusive,
         hsnCode: source.hsnCode,
         isRateVolatile: source.isRateVolatile,
+        // The ladders below are read against this, so it comes with them.
+        bulkTierBasis: source.bulkTierBasis,
         // Likewise distance pricing: the copy must cost what the original does.
         // The figures are per variant, copied below.
         pricingKind: source.pricingKind,
@@ -100,8 +108,23 @@ export async function duplicateProduct(
       });
     }
 
+    // Get a quote links go to the end of their material's list, like any new one.
+    const nextPosition = new Map<string, number>();
+    async function quotePosition(material: string): Promise<number> {
+      if (!nextPosition.has(material)) {
+        const last = await tx.quoteMaterialOption.aggregate({
+          where: { material },
+          _max: { position: true },
+        });
+        nextPosition.set(material, (last._max.position ?? -1) + 1);
+      }
+      const position = nextPosition.get(material)!;
+      nextPosition.set(material, position + 1);
+      return position;
+    }
+
     for (const variant of source.variants) {
-      await tx.productVariant.create({
+      const copied = await tx.productVariant.create({
         data: {
           productId: copy.id,
           // SKUs are unique per product, and a duplicate carrying the original's
@@ -131,8 +154,33 @@ export async function duplicateProduct(
           isActive: variant.isActive,
           position: variant.position,
           priceUpdatedAt: new Date(),
+          // A duplicate is usually the same goods in another brand or size, sold
+          // on the same bulk terms; losing the ladder meant retyping every rung.
+          tiers: {
+            create: variant.tiers.map((tier) => ({
+              basis: tier.basis,
+              minQuantity: tier.minQuantity,
+              minAmount: tier.minAmount,
+              unitPrice: tier.unitPrice,
+              position: tier.position,
+            })),
+          },
         },
+        select: { id: true },
       });
+
+      // The same pack covers the same amount. Stock and warehouses are the
+      // copy's own to set, and its setup checklist says so.
+      if (variant.quoteOption) {
+        await tx.quoteMaterialOption.create({
+          data: {
+            material: variant.quoteOption.material,
+            variantId: copied.id,
+            baseUnitsPerSaleUnit: variant.quoteOption.baseUnitsPerSaleUnit,
+            position: await quotePosition(variant.quoteOption.material),
+          },
+        });
+      }
     }
 
     return copy;
