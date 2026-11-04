@@ -72,6 +72,7 @@ import type { ImportIssue, ParsedProduct } from './csv/index.ts';
 import type { PricingKind } from './delivery-pricing.ts';
 import type { EnquiryKind, EnquiryStatus } from './enquiries.ts';
 import type { MaterialBaseUnit, QuoteMaterial } from './material-estimator.ts';
+import type { PurchaseMeasurementDto } from './purchase-measurement.ts';
 import type { DeliveryBreakdown } from './schemas/order.ts';
 
 // from core/src/auth.ts
@@ -2658,6 +2659,12 @@ export type MyOrderDetailDto = {
   delivery: DeliveryPromiseDto | null;
   /** Its loads, oldest first, cancelled ones left out. */
   shipments: MyOrderShipmentDto[];
+  /**
+   * The order as a purchase for Google Ads and GA4, decided here rather than in
+   * the browser. Optional because an API older than contract 0.39 does not
+   * send it, and a page that finds none reports no purchase.
+   */
+  measurement?: PurchaseMeasurementDto;
   /** What has not gone out yet, for an order sent in loads. */
   stillToCome: Array<{
     nameEn: string;

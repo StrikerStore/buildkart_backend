@@ -44,7 +44,8 @@ notice read it:
 | Razorpay, PayU | Online payments | Name, phone, email |
 | Google Maps, Mapbox, OpenStreetMap | Maps and address search | Coordinates and searches, no name or number |
 | Meta | Ad measurement — **consent only** | Hashed phone, email, name, city, pincode; IP; pages and purchases |
-| Google (Google Ads) | Ad measurement — **consent only**, and only for a yes given on notice 2026-11 or later | Pages viewed and ad clicks through its own cookies; IP and browser details. No name, phone or email |
+| Google (Google Ads) | Ad measurement — **consent only**, and only for a yes given on notice 2026-11 or later | Pages viewed, ad clicks, and orders placed (order number and value) through its own cookies; IP and browser details. No name, phone or email |
+| Google (Google Analytics 4) | Site analytics — **consent only**, and only for an analytics yes given on notice 2026-11.2 or later | Pages viewed; products viewed, added to the cart and bought, with order number and value; through its own cookies (`_ga`, `_ga_…`); IP and browser details. No name, phone or email. Kept up to 14 months (GA4 data retention setting) |
 
 **Owner task:** accept or sign each processor's data-processing terms and keep a copy. Rule 6(1)(f)
 needs the contracts to require them to keep data safe.

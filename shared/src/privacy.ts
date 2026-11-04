@@ -24,7 +24,7 @@ import { parseStoreDateTime } from './time.ts';
  * changes what is collected or why, so every consent recorded afterwards says
  * which wording it was given against.
  */
-export const NOTICE_VERSION = '2026-11';
+export const NOTICE_VERSION = '2026-11.2';
 
 export const PRIVACY_NOTICE_PATH = '/pages/privacy-policy';
 export const TERMS_PATH = '/pages/terms-and-conditions';
@@ -244,7 +244,15 @@ export const PROCESSORS: ReadonlyArray<{
   {
     name: 'Google (Google Ads)',
     purpose: 'Ad measurement',
-    receives: 'Pages viewed and ad clicks, through its own cookies; IP address and browser details',
+    receives:
+      'Pages viewed, ad clicks, and orders placed (order number and value), through its own cookies; IP address and browser details',
+    consentOnly: true,
+  },
+  {
+    name: 'Google (Google Analytics)',
+    purpose: 'Site analytics',
+    receives:
+      'Pages viewed; products viewed, added to the cart and bought, with order number and value; through its own cookies; IP address and browser details',
     consentOnly: true,
   },
 ];

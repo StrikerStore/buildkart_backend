@@ -22,6 +22,7 @@ import {
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
+  purchaseMeasurement,
   type MyActiveDeliveryDto,
   type MyInvoiceDto,
   type MyOrderDetailDto,
@@ -217,6 +218,7 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
           orderedQuantity: true,
           unitPrice: true,
           lineTotal: true,
+          taxableAmount: true,
           product: {
             select: {
               handle: true,
@@ -225,6 +227,10 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
                 take: 1,
                 select: { media: { select: { r2Key: true } } },
               },
+              // For the purchase report's items, in English like every
+              // other id Google receives.
+              category: { select: { nameEn: true } },
+              brand: { select: { nameEn: true } },
             },
           },
         },
@@ -326,6 +332,34 @@ export async function getMyOrder(actor: Actor, orderId: string): Promise<MyOrder
     })),
     delivery,
     ...myShipments(order),
+    measurement: purchaseMeasurement(
+      {
+        orderNumber: order.orderNumber,
+        status: order.status,
+        paymentMethod: order.paymentMethod,
+        paymentStatus: order.paymentStatus,
+        amountPaid: decimalToString(order.amountPaid),
+        placedAt: order.placedAt,
+        taxTotal: decimalToString(order.taxTotal),
+        deliveryCharge: decimalToString(order.deliveryCharge),
+        unloadingCharge: decimalToString(order.unloadingCharge),
+        walletApplied: decimalToString(order.walletApplied),
+        discountCode: order.discountCode,
+        lines: order.items.map((item) => {
+          const snapshot = parseVariantSnapshot(item.variantSnapshot);
+          return {
+            handle: item.product?.handle ?? null,
+            name: snapshot.nameEn,
+            variant: snapshot.optionValues.length > 0 ? snapshot.optionValues.join(' / ') : null,
+            category: item.product?.category?.nameEn ?? null,
+            brand: item.product?.brand?.nameEn ?? null,
+            quantity: item.quantity,
+            taxableAmount: decimalToString(item.taxableAmount),
+          };
+        }),
+      },
+      new Date(),
+    ),
     closedShort: order.closedShortAt
       ? { at: dateToIso(order.closedShortAt), reason: order.closedShortReason }
       : null,

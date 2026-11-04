@@ -436,6 +436,18 @@ A new top-level **Analytics** entry in `admin/components/shell/nav-config.ts` (p
 
 ---
 
+## Google Ads and Google Analytics 4 ✅ built (contract 0.39.0)
+
+> Built from `BuildKart_Google_Ads_GA4_Developer_Integration_Plan.md` (4 November 2026).
+> - **One loader.** `<GoogleTag>` (`website/components/analytics/google-tag.tsx`) loads one `gtag.js` and configures Google Ads (`GOOGLE_TAG_ID`, `AW-18554607980`) and GA4 (`GA4_MEASUREMENT_ID`, `G-…`) on it. Both are read per request; an unset id is that destination switched off, and with neither set nothing is loaded. There is no GTM container and no second base tag.
+> - **Consent per destination** (`website/lib/google-tag.ts`). Google Ads needs a marketing yes given on notice 2026-11 or later; GA4 an analytics yes on 2026-11.2 or later. A destination without its yes is never configured, so it gets nothing, not even cookieless pings, and consent mode v2 (`ad_storage`, `ad_user_data`, `ad_personalization`, `analytics_storage`) says the same. An older yes re-opens the banner, only for a Google product the site runs. Taking a yes back updates consent, sets GA4's `ga-disable-<id>` and deletes `_ga`, `_ga_*` or the `_gcl_*` cookies.
+> - **Page views.** Google Ads: `config`, then one `page_view` per client navigation. GA4: `config`, then GA4's own enhanced measurement ("Page changes based on browser history events", on by default), so keep that setting on and nothing else sends GA4 page views.
+> - **Funnel events (GA4 only):** `view_item_list` and `select_item` (category, collection and search listings), `view_item`, `add_to_cart` and `remove_from_cart` (every quantity control), `view_cart`, `begin_checkout`, `add_shipping_info`, `add_payment_info` and `search`. Item ids are product handles, as for Meta. Prices are shelf prices with GST; revenue comes only from `purchase`.
+> - **Purchase.** The API decides it: `purchaseMeasurement` (`shared/src/purchase-measurement.ts`), returned as `MyOrderDetailDto.measurement`. It counts an order that is not cancelled, whose payment is not failed or refunded, that has money paid if it is online (COD counts once accepted), and that was placed in the last 24 hours. Its value is the goods after coupons and wallet credit (the wallet only holds promotional money), without GST, delivery or unloading, with per-item prices from each line's `taxableAmount`. The order page sends a Google Ads `conversion` (`GOOGLE_PURCHASE_CONVERSION`) and a GA4 `purchase` with the same order number and value, once per browser (`gt:purchase:<id>`). Google de-duplicates by `transaction_id` too.
+> - **Not built:** refunds and cancellations sent back to Google (needs GA4's Measurement Protocol and Google Ads conversion adjustments, both server-side with their own credentials), enhanced conversions, and `view_item_list` for the home page's product rails.
+
+---
+
 ## Order of work
 
 | # | Phase | Repos | Depends on | Size |
