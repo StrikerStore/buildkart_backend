@@ -44,6 +44,7 @@ notice read it:
 | Razorpay, PayU | Online payments | Name, phone, email |
 | Google Maps, Mapbox, OpenStreetMap | Maps and address search | Coordinates and searches, no name or number |
 | Meta | Ad measurement — **consent only** | Hashed phone, email, name, city, pincode; IP; pages and purchases |
+| Google (Google Ads) | Ad measurement — **consent only**, and only for a yes given on notice 2026-11 or later | Pages viewed and ad clicks through its own cookies; IP and browser details. No name, phone or email |
 
 **Owner task:** accept or sign each processor's data-processing terms and keep a copy. Rule 6(1)(f)
 needs the contracts to require them to keep data safe.

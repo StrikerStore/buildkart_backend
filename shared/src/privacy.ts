@@ -241,6 +241,12 @@ export const PROCESSORS: ReadonlyArray<{
     receives: 'Hashed phone, email, name, city and pincode; IP address; pages and purchases',
     consentOnly: true,
   },
+  {
+    name: 'Google (Google Ads)',
+    purpose: 'Ad measurement',
+    receives: 'Pages viewed and ad clicks, through its own cookies; IP address and browser details',
+    consentOnly: true,
+  },
 ];
 
 // ---------------------------------------------------------------------------
