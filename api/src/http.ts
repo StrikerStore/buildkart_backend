@@ -25,6 +25,8 @@ import {
   getImportIssuesForCsv,
   isScheduledJobName,
   loadExportProducts,
+  loadLiveAnalytics,
+  ForbiddenError,
   runJobNow,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
@@ -155,6 +157,22 @@ export async function handleHttpRoute(
     const run = await runJobNow(cronJob);
     if (run.status === 'busy') return (json(res, 409, { error: 'Already running.' }), true);
     json(res, 200, { ok: true, ...run.result });
+    return true;
+  }
+
+  // --- live analytics ----------------------------------------------------
+  // Plain JSON rather than tRPC, so the admin's Analytics page can poll it
+  // every few seconds without a contract release. Same two-token check.
+  if (path === '/analytics/live') {
+    const actor = await requireAdminActor(req);
+    if (!actor) return (json(res, 401, { error: 'Not signed in.' }), true);
+    try {
+      json(res, 200, await loadLiveAnalytics(actor));
+    } catch (error) {
+      if (error instanceof ForbiddenError) return (json(res, 403, { error: 'Not allowed.' }), true);
+      console.error('[analytics] live', error);
+      json(res, 500, { error: 'Could not read live analytics.' });
+    }
     return true;
   }
 

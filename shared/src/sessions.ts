@@ -9,7 +9,12 @@
 import { z } from 'zod';
 import { attributionTouchSchema } from './attribution.ts';
 
-export const VISIT_EVENTS = ['page_view', 'product_view', 'add_to_cart', 'checkout_start'] as const;
+/**
+ * `heartbeat` is the storefront saying "still here" every 30 seconds while a
+ * tab is open and visible. It only keeps an existing session's `lastSeenAt`
+ * fresh, for the live count; it never starts a session or moves the funnel.
+ */
+export const VISIT_EVENTS = ['page_view', 'product_view', 'add_to_cart', 'checkout_start', 'heartbeat'] as const;
 export type VisitEvent = (typeof VISIT_EVENTS)[number];
 
 export const DEVICES = ['MOBILE', 'TABLET', 'DESKTOP'] as const;

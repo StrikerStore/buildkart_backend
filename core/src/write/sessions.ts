@@ -36,6 +36,7 @@ const FLAG_FOR_EVENT = {
   product_view: 'viewedProduct',
   add_to_cart: 'addedToCart',
   checkout_start: 'reachedCheckout',
+  heartbeat: null,
 } as const;
 
 /** A DATE column: midnight UTC of the store day's key is that date exactly. */
@@ -68,6 +69,17 @@ export async function recordStorefrontVisit(
   if (isBotUserAgent(visit.userAgent)) return actionOk();
 
   const now = new Date();
+
+  // Only keeps a session the shopper is still in fresh for the live count:
+  // never starts one, so a heartbeat outliving its session is simply dropped.
+  if (visit.event === 'heartbeat') {
+    await prisma.storefrontSession.updateMany({
+      where: { id: visit.sessionId, visitorId: visit.visitorId },
+      data: { lastSeenAt: now },
+    });
+    return actionOk();
+  }
+
   const customerId = actor.kind === 'customer' ? actor.customerId : undefined;
   const flag = FLAG_FOR_EVENT[visit.event];
   const city = await visitCity(visit);
