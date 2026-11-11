@@ -74,7 +74,8 @@ needs the contracts to require them to keep data safe.
 | Breach records (`PrivacyIncident`) | kept — they are the proof the duties were met |
 | Consent records | kept, without the phone after erasure — proof under §6(10) |
 
-**The cron must run daily.** Railway → the API service → Cron: `GET <api>/cron/privacy` with header
+**It runs nightly at 02:00 IST** on the API's own scheduler (`core/src/schedule.ts`), with up to two
+retries the same night if it fails. To run it by hand: `POST <api>/cron/privacy` with header
 `Authorization: Bearer <CRON_SECRET>`. The Privacy page in the admin shows when it last finished and
 turns amber after 36 hours. A run that fails sends a "Privacy clean-up failed" WhatsApp to the shop.
 

@@ -16,7 +16,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "npm run dev --workspace @buildkart/api",
-    "start": "npm run db:generate && npm run db:deploy && npm run db:seed && npm run start --workspace @buildkart/api",
+    "start": "npm run start --workspace @buildkart/api",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
@@ -26,6 +26,7 @@
     "db:generate": "npm run generate --workspace @buildkart/database",
     "db:migrate": "npm run migrate --workspace @buildkart/database",
     "db:deploy": "npm run deploy --workspace @buildkart/database",
+    "db:prepare": "npm run db:generate && npm run db:deploy && npm run db:seed",
     "db:studio": "npm run studio --workspace @buildkart/database",
     "db:seed": "npm run seed --workspace @buildkart/database",
     "db:seed:demo": "npm run seed:demo --workspace @buildkart/database",

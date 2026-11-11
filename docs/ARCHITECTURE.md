@@ -481,7 +481,8 @@ login. It has no database credentials, no R2 credentials, and does not need them
   how it is going, which is what that page already did.
 - **Cron moved to the API.** Railway should now call `POST /cron/media-gc` and
   `/cron/publish-scheduled` on the API service, not the admin. Verified: 200 with the bearer
-  secret, 401 without it.
+  secret, 401 without it. *(Later: the API now runs every job on its own scheduler —
+  `core/src/scheduler.ts` — so no Railway cron is needed; the endpoints run a job by hand.)*
 
 **Deployment changes this phase requires.** `SERVICE_TOKEN` must be set on all three
 services and must match. `API_URL` goes on the admin. `DATABASE_URL`, the R2 credentials,

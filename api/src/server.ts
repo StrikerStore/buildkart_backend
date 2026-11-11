@@ -19,7 +19,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { createHTTPHandler } from '@trpc/server/adapters/standalone';
-import { autoConfirmOrders, isSecretsKeyConfigured } from '@buildkart/core';
+import {
+  autoConfirmOrders,
+  isSecretsKeyConfigured,
+  SCHEDULED_JOB_NAMES,
+  schedulerEnabled,
+  startScheduler,
+} from '@buildkart/core';
 import { createAppContext, createContext } from './context.ts';
 import { verifyAdminSession } from './auth/verifier.ts';
 import { verifyCustomerSession } from './auth/customer-verifier.ts';
@@ -185,5 +191,18 @@ server.listen(PORT, '0.0.0.0', () => {
             'backend/.env.example has the command that generates a valid one.'
         : '[api] SETTINGS_ENCRYPTION_KEY is not set — payment and notification credentials cannot be saved.',
     );
+  }
+
+  /*
+   * The scheduled jobs — payment reconciliation, WhatsApp retries, the
+   * analytics summary, the nightly clean-ups. The API runs them itself; nothing
+   * outside has to call `/cron/*`. Off on a laptop unless asked for, because a
+   * local run would re-send real WhatsApp messages. See `core/src/schedule.ts`.
+   */
+  if (schedulerEnabled(process.env)) {
+    startScheduler();
+    console.log(`[cron] scheduler on (${SCHEDULED_JOB_NAMES.length} jobs)`);
+  } else {
+    console.log('[cron] scheduler off — set CRON_SCHEDULER=on to run scheduled jobs here');
   }
 });

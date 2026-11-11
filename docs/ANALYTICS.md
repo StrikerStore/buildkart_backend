@@ -50,7 +50,7 @@ Nothing stores UTM parameters, `fbclid`, the referrer or the landing page. **An 
 > **As built.** The plan below held, with these differences:
 > - **Log table:** `MarketingEvent` (not `MarketingEventLog`), with plain ids and no foreign keys, like `NotificationMessage`. `status` is a VARCHAR.
 > - **Code:** `core/src/marketing/meta-capi.ts`, credentials in `core/src/marketing/config.ts`, admin procedures in `read/marketing.ts` and `write/marketing.ts`, router `marketing.*`.
-> - **Cron:** `/cron/marketing`, every 10 minutes. It retries failed events (up to 6 attempts, inside Meta's 7-day window), reports any customer order from the last 48 hours that has no event, and clears `OrderAttribution.ipAddress` after 10 days.
+> - **Schedule:** every 10 minutes, on the API's own scheduler (`core/src/schedule.ts`); `/cron/marketing` runs it by hand. It retries failed events (up to 6 attempts, inside Meta's 7-day window), reports any customer order from the last 48 hours that has no event, and clears `OrderAttribution.ipAddress` after 10 days.
 > - **Missing user agent:** `action_source` is `website` when the order carries the shopper's user agent, else `system_generated`.
 > - **Not stored:** `adAccountId` and `insightsToken` are left for Phase 5.
 > - **Admin:** Settings → Marketing (`admin/app/(dashboard)/settings/marketing`), with the form, a "Send test event" button, an attribution summary and the last 25 events.
@@ -218,7 +218,7 @@ Use **ids, not names**. Names get edited; ids are what Phase 5 joins on. Optiona
 > - **Model:** `StorefrontSession` → `AnalyticsDaily` (day × channel × device). There are no per-day orders or revenue columns, because those are read live from `Order` and `OrderAttribution`.
 > - **Funnel steps are cumulative:** each counts sessions that got at least that far, so no step can exceed the one before it.
 > - **Conversion:** `OrderAttribution.sessionId` (the `bk_sid` at checkout) links an order to its session, and `recordOrderAttribution` marks that session converted.
-> - **Cron:** `/cron/analytics`, hourly, rebuilds the last 3 days and deletes raw sessions after 90 days.
+> - **Schedule:** hourly, on the API's own scheduler (`core/src/schedule.ts`). It rebuilds the last 3 days and deletes raw sessions after 90 days. `/cron/analytics` runs it by hand.
 
 **Why:** Shopify's headline metric is **online store conversion rate** = sessions that converted ÷ sessions, with the funnel *sessions → added to cart → reached checkout → converted*. We can't compute it without first-party sessions. GA would give a number, but not one joined to our orders.
 
@@ -279,7 +279,7 @@ model AnalyticsDaily {
 > - **Config:** `marketing.meta` gains `adAccountId` and `insightsTokenEnc`. If no Insights token is set, the CAPI token is tried. Sync status is kept in `marketing.metaInsightsSync`.
 > - **Pull:** `core/src/marketing/meta-insights.ts` pulls ad-level daily rows for the last 7 days (today included), follows paging, and replaces those days in `AdSpendDaily`.
 > - **Purchase counting:** `omni_purchase` > `purchase` > pixel purchase, so a sale is never counted under two overlapping types. Unit-tested.
-> - **When it runs:** `/cron/meta-insights` every 6 hours, plus a "Sync now" button in Settings → Marketing.
+> - **When it runs:** every 6 hours (at :15) on the API's own scheduler, plus a "Sync now" button in Settings → Marketing. `/cron/meta-insights` runs it by hand.
 > - **Metrics** (`core/src/read/marketing-analytics.ts`): ROAS from our own orders vs Meta-reported ROAS; MER; CAC (customers whose first ever order came from `PAID_SOCIAL`); and per campaign spend, CTR, CPM, orders, revenue, ROAS and CPA.
 > - **Tagging problems are surfaced:** paid-social orders with no campaign tag are counted and flagged. A tag that matches no campaign id (usually a name used instead of an id) gets its own row.
 

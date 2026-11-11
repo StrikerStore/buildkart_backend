@@ -8,8 +8,9 @@
  *     parsed on the other side, and re-encoded — holding it twice in memory to
  *     produce bytes we already had. So it stays a plain GET the browser can be
  *     pointed at.
- *   - **Cron.** Railway's scheduler has no session and no tRPC client. It
- *     presents a bearer secret, which is a different kind of caller entirely.
+ *   - **Cron.** A job run by hand (the API runs them all on its own timer).
+ *     The caller has no session and no tRPC client; it presents a bearer
+ *     secret, which is a different kind of caller entirely.
  *   - **Health.** A platform probe has no credentials at all.
  *   - **Webhooks.** A payment gateway signs its own requests and knows nothing
  *     of our tokens. The signature is checked over the raw bytes, which is
@@ -21,17 +22,10 @@ import {
   GatewayConfigError,
   handlePayuReturn,
   handleRazorpayWebhook,
-  reconcilePaymentSessions,
-  collectMediaGarbage,
   getImportIssuesForCsv,
+  isScheduledJobName,
   loadExportProducts,
-  publishScheduledProducts,
-  retryQueuedNotifications,
-  pullMetaInsights,
-  runAnalyticsJobs,
-  runPrivacyJobs,
-  runMarketingJobs,
-  runWalletJobs,
+  runJobNow,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
 import { buildProductRows, storeDateStamp } from '@buildkart/shared';
@@ -146,56 +140,21 @@ export async function handleHttpRoute(
   }
 
   // --- cron --------------------------------------------------------------
-  if (
-    path === '/cron/media-gc' ||
-    path === '/cron/publish-scheduled' ||
-    path === '/cron/wallet' ||
-    path === '/cron/payment-sessions' ||
-    path === '/cron/notifications' ||
-    path === '/cron/marketing' ||
-    path === '/cron/analytics' ||
-    path === '/cron/meta-insights' ||
-    path === '/cron/privacy'
-  ) {
+  /*
+   * One job, run now, by hand. The API already runs every one of these on its
+   * own timer (`core/src/scheduler.ts`, times in `core/src/schedule.ts`); this
+   * is for running one sooner. It takes the same lock as the timer, so it
+   * answers 409 rather than start a second copy of a run already going.
+   */
+  const cronJob = path.startsWith('/cron/') ? path.slice('/cron/'.length) : null;
+  if (cronJob !== null && isScheduledJobName(cronJob)) {
     const auth = cronAuthorised(req);
     if (auth === 'unset') return (json(res, 503, { error: 'CRON_SECRET is not set.' }), true);
     if (auth === 'denied') return (json(res, 401, { error: 'Unauthorized.' }), true);
 
-    // `/cron/wallet` pays out cashback whose hold has passed and expires old
-    // credit. Hourly is plenty: nothing is promised to the minute.
-    // `/cron/payment-sessions` is the net under the payment webhooks: every
-    // five minutes, so a payment whose webhook never came still becomes an
-    // order well before the customer gives up waiting.
-    // `/cron/notifications` re-sends WhatsApp messages that hit a transient
-    // failure. Every five minutes: a delivery update an hour late is barely news.
-    // `/cron/marketing` retries Conversions API events Meta did not take,
-    // reports any recent order that has none, and clears client IPs once no
-    // event could still use them. Every ten minutes is plenty.
-    // `/cron/analytics` rebuilds the last three days of the session summary
-    // and drops raw sessions after 90 days. Hourly.
-    // `/cron/meta-insights` re-pulls the last seven days of Meta ad spend.
-    // Every six hours: Meta itself updates spend a few times a day.
-    // `/cron/privacy` runs account deletions whose cooling-off week is up and
-    // clears personal data past its retention period. Daily.
-    const result =
-      path === '/cron/media-gc'
-        ? await collectMediaGarbage()
-        : path === '/cron/wallet'
-          ? await runWalletJobs()
-          : path === '/cron/payment-sessions'
-            ? await reconcilePaymentSessions()
-            : path === '/cron/notifications'
-              ? await retryQueuedNotifications()
-              : path === '/cron/marketing'
-                ? await runMarketingJobs()
-                : path === '/cron/analytics'
-                  ? await runAnalyticsJobs()
-                  : path === '/cron/meta-insights'
-                    ? await pullMetaInsights()
-                    : path === '/cron/privacy'
-                      ? await runPrivacyJobs()
-                      : await publishScheduledProducts();
-    json(res, 200, { ok: true, ...result });
+    const run = await runJobNow(cronJob);
+    if (run.status === 'busy') return (json(res, 409, { error: 'Already running.' }), true);
+    json(res, 200, { ok: true, ...run.result });
     return true;
   }
 

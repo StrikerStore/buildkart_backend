@@ -170,6 +170,29 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+/// One row per job the API runs on its own timer (core/src/scheduler.ts): the
+/// time slot it last claimed, the lease that stops two processes running it at
+/// once, and how the last run went.
+model ScheduledJob {
+  name        String    @id @db.VarChar(40)
+  /// Start of the schedule slot last claimed. Null until the first run.
+  slot        DateTime?
+  /// Runs started in that slot, the first included.
+  attempts    Int       @default(0)
+  /// While in the future, a run is going. Expires on its own if the process died.
+  lockedUntil DateTime?
+  lockedBy    String?   @db.VarChar(64)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  /// Null while a run is going, or when its process died before finishing.
+  lastOk      Boolean?
+  lastOkAt    DateTime?
+  lastError   String?   @db.VarChar(500)
+  /// What the last successful run returned, for the record.
+  lastResult  Json?
+  updatedAt   DateTime  @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Media
 // ---------------------------------------------------------------------------

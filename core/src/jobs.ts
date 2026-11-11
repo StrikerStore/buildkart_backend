@@ -4,9 +4,9 @@
  * These run on a timer, not on behalf of a person, so they take no `Actor` and
  * make no permission check — which makes them the one place in core where the
  * authorisation rule does not apply. **Their callers must therefore be trusted
- * transports only**: a cron endpoint behind a shared secret today, the API's own
- * scheduler later. Never expose one on a user-facing surface, because there is
- * nothing inside them that would refuse.
+ * transports only**: the API's own scheduler (`scheduler.ts`), and the cron
+ * endpoint behind a shared secret that runs one by hand. Never expose one on a
+ * user-facing surface, because there is nothing inside them that would refuse.
  */
 import { prisma } from '@buildkart/database';
 import { deleteObjects } from './r2.ts';

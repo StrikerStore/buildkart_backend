@@ -236,6 +236,11 @@ Three services, each pointing at its own repo with **Root Directory `/`**.
 | **admin** | `npm ci && npm run build` | `cd .next/standalone && node server.js` | `API_URL`, `SERVICE_TOKEN`, `NODE_AUTH_TOKEN` |
 | **website** | `npm ci && npm run build` | `cd .next/standalone && node server.js` | `API_URL`, `SERVICE_TOKEN`, `NODE_AUTH_TOKEN` |
 
+**The backend's start applies migrations itself.** The API's `prestart` runs the
+root `db:prepare` (Prisma generate, `migrate deploy`, seed) before the server
+starts, so `npm start` and `npm run start --workspace @buildkart/api` both
+migrate, exactly once. Nothing has to be run by hand after a deploy.
+
 Two things changed from the monorepo deploy:
 
 - **The admin no longer needs `npm run db:generate`.** Its type chain reached
@@ -248,8 +253,8 @@ Two things changed from the monorepo deploy:
 (`http://backend-api.railway.internal:3002`) — it keeps traffic off the public
 internet and avoids billable egress.
 
-Cron points at the **backend**: `GET /cron/media-gc` and
-`/cron/publish-scheduled`, with the bearer secret.
+No Railway cron is needed: the **backend** runs every scheduled job itself
+(`core/src/scheduler.ts`). `/cron/<name>` with the bearer secret runs one by hand.
 
 ---
 

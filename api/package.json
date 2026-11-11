@@ -11,6 +11,7 @@
   },
   "scripts": {
     "dev": "node --experimental-strip-types --watch src/server.ts",
+    "prestart": "npm run db:prepare --prefix ..",
     "start": "node --experimental-strip-types src/server.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
