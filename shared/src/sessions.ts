@@ -9,16 +9,14 @@
 import { z } from 'zod';
 import { attributionTouchSchema } from './attribution.ts';
 
-export const VISIT_EVENTS = ['page_view', 'product_view', 'add_to_cart', 'checkout_start'] as const;
-export type VisitEvent = (typeof VISIT_EVENTS)[number];
-
 /**
- * "Still here": sent every 30 seconds while a tab is visible, so the live view
- * knows who is on the site between clicks. It only moves `lastSeenAt` of a
- * session that already exists — it never starts one, and never renews the
- * 30-minute idle rule, which only a real event does.
+ * `heartbeat` is the storefront saying "still here" every 30 seconds while a
+ * tab is open and visible. It only keeps an existing session's `lastSeenAt`
+ * fresh, for the live count; it never starts a session or moves the funnel,
+ * and never renews the 30-minute idle rule — only a real event does.
  */
-export const HEARTBEAT_EVENT = 'heartbeat';
+export const VISIT_EVENTS = ['page_view', 'product_view', 'add_to_cart', 'checkout_start', 'heartbeat'] as const;
+export type VisitEvent = (typeof VISIT_EVENTS)[number];
 
 export const DEVICES = ['MOBILE', 'TABLET', 'DESKTOP'] as const;
 export type Device = (typeof DEVICES)[number];
@@ -38,7 +36,7 @@ const cookieId = z
 export const storefrontVisitSchema = z.object({
   sessionId: cookieId,
   visitorId: cookieId,
-  event: z.enum([...VISIT_EVENTS, HEARTBEAT_EVENT]),
+  event: z.enum(VISIT_EVENTS),
   path: z
     .string()
     .trim()

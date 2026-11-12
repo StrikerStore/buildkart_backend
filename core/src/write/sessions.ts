@@ -45,6 +45,7 @@ const FLAG_FOR_EVENT = {
   product_view: 'viewedProduct',
   add_to_cart: 'addedToCart',
   checkout_start: 'reachedCheckout',
+  heartbeat: null,
 } as const;
 
 /**
@@ -72,8 +73,9 @@ export async function recordStorefrontVisit(
   if (isBotUserAgent(visit.userAgent)) return actionOk();
 
   const now = new Date();
-  // Still here: the session exists, or nothing happens. Matched on the
-  // visitor too, as below.
+  // Still here: keeps an open session fresh for the live count. Never starts
+  // one, so a heartbeat outliving its session is simply dropped. Matched on
+  // the visitor too, as below.
   if (visit.event === 'heartbeat') {
     await prisma.storefrontSession.updateMany({
       where: { id: visit.sessionId, visitorId: visit.visitorId },

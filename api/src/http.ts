@@ -163,13 +163,20 @@ export async function handleHttpRoute(
   }
 
   // --- live visitors -----------------------------------------------------
+  // Plain JSON rather than tRPC, so the admin's Analytics page can poll it
+  // every few seconds without a contract release. Same two-token check.
   if (path === '/analytics/live' && req.method === 'GET') {
     const actor = await requireAdminActor(req);
     if (!actor) return (json(res, 401, { error: 'Not signed in.' }), true);
     // Checked here so a staff role without it gets a 403, not a 500 from
     // the reader's own check.
     if (!can(actor.role, 'orders:read')) return (json(res, 403, { error: 'Not allowed.' }), true);
-    json(res, 200, await loadLiveAnalytics(actor));
+    try {
+      json(res, 200, await loadLiveAnalytics(actor));
+    } catch (error) {
+      console.error('[analytics] live', error);
+      json(res, 500, { error: 'Could not read live analytics.' });
+    }
     return true;
   }
 
