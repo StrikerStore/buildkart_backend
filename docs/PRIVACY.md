@@ -33,6 +33,14 @@ here", a name, number and message from the Contact us form or a rate request (`E
 receivers' names and numbers on orders. An enquiry's number is typed, not verified, so nothing is ever
 sent to it automatically; it holds a keyed hash of the sender's IP for rate limiting, never the IP.
 
+**Counted, but about no one:** a visit from a browser without an analytics yes adds one to
+`AnonymousVisitDaily` — a count per store day and kind of device (phone, tablet, computer). No id,
+cookie, IP, page, referrer or source is stored or even sent for it (`website/app/api/v/route.ts`), so no
+row is about a person: it is not a consent purpose and is not in the export, erasure or retention
+schedule. The Privacy Notice says so in §10 (notice 2026-11.3); a notice already
+published at 2026-11.2 is updated in place on deploy (`npm run db:content`). If that count ever gains a field that
+could tell visits apart, it becomes analytics and needs the yes like everything else.
+
 **Processors** — `PROCESSORS` in `shared/src/privacy.ts` is the single list; the data export and the
 notice read it:
 

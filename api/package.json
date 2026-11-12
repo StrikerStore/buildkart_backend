@@ -13,6 +13,7 @@
     "dev": "node --experimental-strip-types --watch src/server.ts",
     "prestart": "npm run db:prepare --prefix ..",
     "start": "node --experimental-strip-types src/server.ts",
+    "content:update": "node --experimental-strip-types src/scripts/update-content.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\"",

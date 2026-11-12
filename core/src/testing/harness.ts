@@ -106,6 +106,10 @@ export async function resetDatabase() {
     'AdminUser',
     'Setting',
     'ScheduledJob',
+    'StorefrontSession',
+    'AnalyticsDaily',
+    'AnonymousVisitDaily',
+    'Page',
   ];
 
   await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 0');

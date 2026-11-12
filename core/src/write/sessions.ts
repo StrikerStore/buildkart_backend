@@ -7,6 +7,10 @@
  * after that — a flag set is never unset — so a replayed or out-of-order
  * beacon cannot make the funnel go backwards.
  *
+ * A browser that has not said yes to analytics sends none of that. Its visit
+ * is one more on a bare daily tally instead (`recordAnonymousVisit`), through
+ * the storefront's separate `/api/v` route.
+ *
  * Fire and forget from the shopper's side: every path here answers `ok`, and
  * a malformed event is dropped rather than reported, because there is nobody
  * waiting on it.
@@ -14,6 +18,7 @@
 import { prisma } from '@buildkart/database';
 import {
   actionOk,
+  anonymousVisitSchema,
   deriveChannel,
   deviceFromUserAgent,
   isBotUserAgent,
@@ -24,10 +29,14 @@ import {
   type ActionResult,
 } from '@buildkart/shared';
 import type { Actor } from '../actor.ts';
+import {
+  rawSessionsFrom,
+  SESSION_RETENTION_DAYS,
+  storeDay,
+  summariseRawSessions,
+} from '../read/session-summary.ts';
 
 const DAY_MS = 86_400_000;
-/** Raw sessions are kept this long; the daily summary is kept for good. */
-const SESSION_RETENTION_DAYS = 90;
 /** Days rebuilt by each rollup — a session can convert the morning after. */
 const ROLLUP_DAYS = 3;
 
@@ -37,11 +46,6 @@ const FLAG_FOR_EVENT = {
   add_to_cart: 'addedToCart',
   checkout_start: 'reachedCheckout',
 } as const;
-
-/** A DATE column: midnight UTC of the store day's key is that date exactly. */
-function storeDay(at: Date): Date {
-  return new Date(`${storeDayKey(at)}T00:00:00.000Z`);
-}
 
 /**
  * The city of the delivery area the shopper chose: the cookie's own city when
@@ -68,6 +72,16 @@ export async function recordStorefrontVisit(
   if (isBotUserAgent(visit.userAgent)) return actionOk();
 
   const now = new Date();
+  // Still here: the session exists, or nothing happens. Matched on the
+  // visitor too, as below.
+  if (visit.event === 'heartbeat') {
+    await prisma.storefrontSession.updateMany({
+      where: { id: visit.sessionId, visitorId: visit.visitorId },
+      data: { lastSeenAt: now },
+    });
+    return actionOk();
+  }
+
   const customerId = actor.kind === 'customer' ? actor.customerId : undefined;
   const flag = FLAG_FOR_EVENT[visit.event];
   const city = await visitCity(visit);
@@ -130,78 +144,95 @@ export async function recordStorefrontVisit(
   return actionOk();
 }
 
-/*
- * What MySQL hands back: COUNT(*) as a BigInt, SUM(...) as a DECIMAL (a
- * Prisma Decimal), either possibly null. `Number()` reads all of them.
- */
-type Counted = bigint | number | { toString(): string } | null;
-type RollupRow = {
-  day: Date;
-  channel: string;
-  device: string;
-  city: string;
-  sessions: Counted;
-  returningSessions: Counted;
-  productSessions: Counted;
-  cartSessions: Counted;
-  checkoutSessions: Counted;
-  convertedSessions: Counted;
-};
 
 /**
- * Rebuilds `AnalyticsDaily` for the last few store days from the raw
- * sessions.
+ * A visit from a browser that has not said yes to analytics: one more on the
+ * day's tally for its kind of device, or one fewer when the shopper said yes
+ * on the same page and is now counted as a session instead.
  *
- * The steps are **cumulative** — a session that reached checkout counts as
- * having added to cart and viewed a product, even if the beacon for those
- * steps was lost or the cart was filled in an earlier visit. That is what
- * makes it a funnel: each bar is "got at least this far", so no step can show
- * more sessions than the one before it.
+ * The tally is all there is. No row says anything about one visit, so there
+ * is nothing to tie to a person — which is what lets it run without asking.
+ * Fire and forget, like the session beacon: every path answers `ok`.
  */
-export async function rollupAnalyticsDaily(days = ROLLUP_DAYS): Promise<{ days: number; rows: number }> {
-  const from = storeDay(new Date(Date.now() - (days - 1) * DAY_MS));
+export async function recordAnonymousVisit(input: unknown): Promise<ActionResult<void>> {
+  const parsed = anonymousVisitSchema.safeParse(input);
+  if (!parsed.success) return actionOk();
+  const visit = parsed.data;
+  if (isBotUserAgent(visit.userAgent)) return actionOk();
 
-  const rows = await prisma.$queryRaw<RollupRow[]>`
-    SELECT
-      \`day\`,
-      \`channel\`,
-      \`device\`,
-      COALESCE(\`city\`, '') AS city,
-      COUNT(*) AS sessions,
-      SUM(\`isReturning\`) AS returningSessions,
-      SUM(\`viewedProduct\` OR \`addedToCart\` OR \`reachedCheckout\` OR \`orderId\` IS NOT NULL) AS productSessions,
-      SUM(\`addedToCart\` OR \`reachedCheckout\` OR \`orderId\` IS NOT NULL) AS cartSessions,
-      SUM(\`reachedCheckout\` OR \`orderId\` IS NOT NULL) AS checkoutSessions,
-      SUM(\`orderId\` IS NOT NULL) AS convertedSessions
-    FROM \`StorefrontSession\`
-    WHERE \`day\` >= ${from}
-    GROUP BY \`day\`, \`channel\`, \`device\`, COALESCE(\`city\`, '')
+  const now = new Date();
+  // A retraction belongs to the day its visit was counted on — but only a
+  // recent one: a page left open for days is not worth a guess.
+  const countedAt =
+    visit.event === 'retract' && visit.at && visit.at <= now.getTime() && now.getTime() - visit.at < DAY_MS
+      ? new Date(visit.at)
+      : now;
+  const device = deviceFromUserAgent(visit.userAgent);
+
+  if (visit.event === 'retract') {
+    await prisma.anonymousVisitDaily.updateMany({
+      where: { day: storeDay(countedAt), device, visits: { gt: 0 } },
+      data: { visits: { decrement: 1 } },
+    });
+    return actionOk();
+  }
+
+  // One statement, so the day's first visits cannot race each other to create
+  // its row: whichever lands second adds to the row the first one made.
+  await prisma.$executeRaw`
+    INSERT INTO \`AnonymousVisitDaily\` (\`day\`, \`device\`, \`visits\`, \`updatedAt\`)
+    VALUES (${storeDayKey(countedAt)}, ${device}, 1, ${now})
+    ON DUPLICATE KEY UPDATE \`visits\` = \`visits\` + 1, \`updatedAt\` = ${now}
   `;
+  return actionOk();
+}
 
-  const n = (value: Counted) => Number(String(value ?? 0));
-  const data = rows.map((row) => ({
-    day: row.day,
-    channel: row.channel,
-    device: row.device,
-    city: row.city,
-    sessions: n(row.sessions),
-    returningSessions: n(row.returningSessions),
-    productSessions: n(row.productSessions),
-    cartSessions: n(row.cartSessions),
-    checkoutSessions: n(row.checkoutSessions),
-    convertedSessions: n(row.convertedSessions),
-  }));
+/**
+ * Rebuilds `AnalyticsDaily` from the raw sessions — the record of each day
+ * that outlives them.
+ *
+ * Every report counts the last 90 days live (`read/session-summary.ts`), so
+ * the summary matters only once a day's raw sessions are deleted. Each run
+ * rebuilds the last few days, and any older day still kept whole that was
+ * never summarised — from before the scheduler ran, say — so no day is lost
+ * when its raw sessions go.
+ */
+export async function rollupAnalyticsDaily(
+  days = ROLLUP_DAYS,
+): Promise<{ days: number; rows: number; backfilled: number }> {
+  const now = new Date();
+  const recentFrom = storeDay(new Date(now.getTime() - (days - 1) * DAY_MS));
+  const keptFrom = rawSessionsFrom(now);
+
+  const older = { gte: keptFrom, lt: recentFrom };
+  const [rawDays, summarisedDays] = await Promise.all([
+    prisma.storefrontSession.groupBy({ by: ['day'], where: { day: older } }),
+    prisma.analyticsDaily.groupBy({ by: ['day'], where: { day: older } }),
+  ]);
+  const summarised = new Set(summarisedDays.map((row) => row.day.getTime()));
+  const missing = rawDays.map((row) => row.day).filter((day) => !summarised.has(day.getTime()));
+
+  const [recent, backfill] = await Promise.all([
+    summariseRawSessions({ from: recentFrom }),
+    summariseRawSessions({ days: missing }),
+  ]);
+  const data = [...recent, ...backfill];
 
   await prisma.$transaction([
-    prisma.analyticsDaily.deleteMany({ where: { day: { gte: from } } }),
+    prisma.analyticsDaily.deleteMany({
+      where: { OR: [{ day: { gte: recentFrom } }, ...(missing.length > 0 ? [{ day: { in: missing } }] : [])] },
+    }),
     prisma.analyticsDaily.createMany({ data }),
   ]);
 
-  return { days, rows: data.length };
+  return { days, rows: data.length, backfilled: missing.length };
 }
 
-/** `/cron/analytics`, hourly: refresh the summary, then forget old raw sessions. */
-export async function runAnalyticsJobs(): Promise<{ rollup: { days: number; rows: number }; purged: number }> {
+/** The hourly `analytics` job: refresh the summary, then forget old raw sessions. */
+export async function runAnalyticsJobs(): Promise<{
+  rollup: { days: number; rows: number; backfilled: number };
+  purged: number;
+}> {
   const rollup = await rollupAnalyticsDaily();
   const purged = (
     await prisma.storefrontSession.deleteMany({

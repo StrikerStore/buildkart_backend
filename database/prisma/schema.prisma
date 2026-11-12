@@ -1504,6 +1504,21 @@ model AnalyticsDaily {
   @@id([day, channel, device, city])
 }
 
+/// Visits from browsers that have not said yes to analytics: a tally per store
+/// day and kind of device, and nothing else. No row is ever about one visit —
+/// there is no id, address, page or source to keep — so there is nothing here
+/// to delete, export or tie to anyone. Kept for good, like `AnalyticsDaily`.
+model AnonymousVisitDaily {
+  day    DateTime @db.Date
+  /// MOBILE, TABLET or DESKTOP, from the user agent.
+  device String   @db.VarChar(10)
+  visits Int      @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@id([day, device])
+}
+
 /// Ad spend and delivery per ad per day, pulled from Meta's Insights API by
 /// `/cron/meta-insights`. The last seven days are re-pulled every run because
 /// Meta restates recent days as late conversions arrive.

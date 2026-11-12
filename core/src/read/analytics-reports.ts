@@ -10,7 +10,7 @@
  * in paise. Nothing here writes.
  *
  * Cities: a session's is the delivery area the shopper chose on the storefront
- * (`StorefrontSession.city`, summarised into `AnalyticsDaily`); an order's is
+ * (`StorefrontSession.city`, counted live — see `session-summary.ts`); an order's is
  * the city on its frozen delivery address. Both go through `normalizeCity`, so
  * they meet under one name.
  */
@@ -40,12 +40,10 @@ import {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { paiseOf } from '../marketing/meta-capi.ts';
-import { dayBounds } from './marketing-analytics.ts';
+import { dayBounds, loadSessionSummary, SESSION_RETENTION_DAYS } from './session-summary.ts';
 
 const SOLD = { status: { not: 'CANCELLED' } } as const;
 const DAY_MS = 86_400_000;
-/** How long raw sessions are kept — see `write/sessions.ts`. */
-const SESSION_RETENTION_DAYS = 90;
 const COHORT_MONTHS = 12;
 
 const ratio = (part: number, whole: number) => (whole > 0 ? part / whole : null);
@@ -185,19 +183,17 @@ export function buildCityRows(
   }));
 }
 
-/** Sessions per city from the daily summary, optionally for one channel. */
+/** Sessions per city, live where the raw sessions are kept, optionally for one channel. */
 async function citySessions(window: Window, channel?: string): Promise<CitySessions[]> {
-  const groups = await prisma.analyticsDaily.groupBy({
-    by: ['city'],
-    where: { day: dayBounds(window), ...(channel ? { channel } : {}) },
-    _sum: { sessions: true, cartSessions: true, convertedSessions: true },
-  });
-  return groups.map((group) => ({
-    city: group.city,
-    sessions: group._sum.sessions ?? 0,
-    cartSessions: group._sum.cartSessions ?? 0,
-    convertedSessions: group._sum.convertedSessions ?? 0,
-  }));
+  const byCity = new Map<string, CitySessions>();
+  for (const row of await loadSessionSummary(window, { channel })) {
+    const entry = byCity.get(row.city) ?? { city: row.city, sessions: 0, cartSessions: 0, convertedSessions: 0 };
+    entry.sessions += row.sessions;
+    entry.cartSessions += row.cartSessions;
+    entry.convertedSessions += row.convertedSessions;
+    byCity.set(row.city, entry);
+  }
+  return [...byCity.values()];
 }
 
 /** The delivery city an order went to, as written on it. */

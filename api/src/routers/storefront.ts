@@ -51,6 +51,7 @@ import {
   placeLocation,
   priceCart,
   recordProductSignal,
+  recordAnonymousVisit,
   recordStorefrontVisit,
   requestOtp,
   estimateQuote,
@@ -290,6 +291,16 @@ export const storefrontRouter = router({
   recordVisit: publicProcedure
     .input(z.unknown())
     .mutation(({ ctx, input }) => recordStorefrontVisit(ctx.actor, input)),
+
+  /*
+   * A visit from a browser that has not said yes to analytics, forwarded by
+   * the website's `/api/v` route: one more (or, on `retract`, one fewer) on a
+   * daily tally. Public, and deliberately blind to the actor — the website
+   * sends it without the customer's session, and nothing here would use it.
+   */
+  recordAnonymousVisit: publicProcedure
+    .input(z.unknown())
+    .mutation(({ input }) => recordAnonymousVisit(input)),
 
   /*
    * The cookie banner's answer, for the record. Public: the answer has to be

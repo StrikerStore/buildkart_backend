@@ -1,8 +1,11 @@
 /**
  * The endpoints that are not tRPC, and should not be.
  *
- * Three kinds live here, for three different reasons:
+ * Five kinds live here, each for its own reason:
  *
+ *   - **The live visitor count.** Polled every ten seconds by the admin's
+ *     "Live now" card through its own proxy route; plain JSON, so the card
+ *     needed no contract release.
  *   - **Downloads.** A CSV export is a stream with a `Content-Disposition`
  *     header. Behind tRPC the whole catalogue would be serialised to JSON,
  *     parsed on the other side, and re-encoded — holding it twice in memory to
@@ -25,10 +28,11 @@ import {
   getImportIssuesForCsv,
   isScheduledJobName,
   loadExportProducts,
+  loadLiveAnalytics,
   runJobNow,
   EXPORT_PAGE_SIZE,
 } from '@buildkart/core';
-import { buildProductRows, storeDateStamp } from '@buildkart/shared';
+import { buildProductRows, can, storeDateStamp } from '@buildkart/shared';
 import { checkDatabaseHealth } from '@buildkart/database';
 import { createContext } from './context.ts';
 import { verifyAdminSession } from './auth/verifier.ts';
@@ -155,6 +159,17 @@ export async function handleHttpRoute(
     const run = await runJobNow(cronJob);
     if (run.status === 'busy') return (json(res, 409, { error: 'Already running.' }), true);
     json(res, 200, { ok: true, ...run.result });
+    return true;
+  }
+
+  // --- live visitors -----------------------------------------------------
+  if (path === '/analytics/live' && req.method === 'GET') {
+    const actor = await requireAdminActor(req);
+    if (!actor) return (json(res, 401, { error: 'Not signed in.' }), true);
+    // Checked here so a staff role without it gets a 403, not a 500 from
+    // the reader's own check.
+    if (!can(actor.role, 'orders:read')) return (json(res, 403, { error: 'Not allowed.' }), true);
+    json(res, 200, await loadLiveAnalytics(actor));
     return true;
   }
 

@@ -24,7 +24,7 @@ import { parseStoreDateTime } from './time.ts';
  * changes what is collected or why, so every consent recorded afterwards says
  * which wording it was given against.
  */
-export const NOTICE_VERSION = '2026-11.2';
+export const NOTICE_VERSION = '2026-11.3';
 
 export const PRIVACY_NOTICE_PATH = '/pages/privacy-policy';
 export const TERMS_PATH = '/pages/terms-and-conditions';

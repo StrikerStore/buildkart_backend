@@ -12,6 +12,14 @@ import { attributionTouchSchema } from './attribution.ts';
 export const VISIT_EVENTS = ['page_view', 'product_view', 'add_to_cart', 'checkout_start'] as const;
 export type VisitEvent = (typeof VISIT_EVENTS)[number];
 
+/**
+ * "Still here": sent every 30 seconds while a tab is visible, so the live view
+ * knows who is on the site between clicks. It only moves `lastSeenAt` of a
+ * session that already exists — it never starts one, and never renews the
+ * 30-minute idle rule, which only a real event does.
+ */
+export const HEARTBEAT_EVENT = 'heartbeat';
+
 export const DEVICES = ['MOBILE', 'TABLET', 'DESKTOP'] as const;
 export type Device = (typeof DEVICES)[number];
 
@@ -30,7 +38,7 @@ const cookieId = z
 export const storefrontVisitSchema = z.object({
   sessionId: cookieId,
   visitorId: cookieId,
-  event: z.enum(VISIT_EVENTS),
+  event: z.enum([...VISIT_EVENTS, HEARTBEAT_EVENT]),
   path: z
     .string()
     .trim()
@@ -59,6 +67,29 @@ export const storefrontVisitSchema = z.object({
     .catch(undefined),
 });
 export type StorefrontVisitInput = z.infer<typeof storefrontVisitSchema>;
+
+/**
+ * A visit from a browser that has not said yes to analytics — forwarded by the
+ * storefront's `/api/v` route, which reads no cookie but the consent one.
+ *
+ * All it can say is that a visit happened. `visit` adds one to the day's tally;
+ * `retract` takes it back, when the shopper says yes later on the same page
+ * and is about to be counted as a session instead. `at` is when the visit was
+ * counted, so a retraction lands on that day even just after midnight.
+ *
+ * Deliberately no id, page, referrer or source: there is nothing here that
+ * could tell two people apart, or one person's visits from another's.
+ */
+export const anonymousVisitSchema = z.object({
+  event: z.enum(['visit', 'retract']),
+  at: z.number().int().positive().optional().catch(undefined),
+  userAgent: z
+    .string()
+    .transform((value) => value.slice(0, 500))
+    .optional()
+    .catch(undefined),
+});
+export type AnonymousVisitInput = z.infer<typeof anonymousVisitSchema>;
 
 /**
  * One spelling per city, so "indore", " Indore " and "INDORE" are one row in a

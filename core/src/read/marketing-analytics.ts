@@ -4,8 +4,9 @@
  * shop's own orders.
  *
  * Three sources, each the authority for its own half:
- *   - `AnalyticsDaily` for sessions — summarised hourly from the storefront's
- *     own beacon, so it is up to an hour behind;
+ *   - the storefront's own sessions, counted live for the last 90 days and
+ *     from the daily summary before that (`session-summary.ts`), with the
+ *     anonymous tally of visits from browsers that did not say yes beside them;
  *   - `Order` + `OrderAttribution` for orders and revenue — live, and the same
  *     "not cancelled" rule as the Home dashboard, so the two pages agree;
  *   - `AdSpendDaily` for spend and what Meta claims it caused.
@@ -25,7 +26,6 @@ import {
   parseSetting,
   percentChange,
   previousWindow,
-  storeDayKey,
   type AcquisitionChannel,
   type AnalyticsQuery,
   type CampaignPerformanceDto,
@@ -36,27 +36,28 @@ import {
 } from '@buildkart/shared';
 import { assertPermission, type Actor } from '../actor.ts';
 import { paiseOf } from '../marketing/meta-capi.ts';
+import {
+  dayBounds,
+  loadAnonymousVisits,
+  loadSessionSummary,
+  type SessionSummaryRow,
+} from './session-summary.ts';
+
+export { dayBounds };
 
 const SOLD = { status: { not: 'CANCELLED' } } as const;
-
-/** The DATE-column bounds of a window: first day inclusive, day after the last exclusive. */
-export function dayBounds(window: Window) {
-  return {
-    gte: new Date(`${storeDayKey(window.from)}T00:00:00.000Z`),
-    lt: new Date(`${storeDayKey(window.to)}T00:00:00.000Z`),
-  };
-}
 
 const ratio = (part: number, whole: number) => (whole > 0 ? part / whole : null);
 const money = (paise: number) => fromPaise(Math.max(0, Math.round(paise)));
 
-async function sessionTotals(window: Window) {
-  const sum = await prisma.analyticsDaily.aggregate({
-    where: { day: dayBounds(window) },
-    _sum: { sessions: true, convertedSessions: true },
-  });
-  return { sessions: sum._sum.sessions ?? 0, converted: sum._sum.convertedSessions ?? 0 };
+function sessionTotals(rows: SessionSummaryRow[]) {
+  return rows.reduce(
+    (acc, row) => ({ sessions: acc.sessions + row.sessions, converted: acc.converted + row.convertedSessions }),
+    { sessions: 0, converted: 0 },
+  );
 }
+
+const visitTotal = (rows: Array<{ visits: number }>) => rows.reduce((sum, row) => sum + row.visits, 0);
 
 async function orderTotals(window: Window) {
   const rows = await prisma.order.findMany({
@@ -86,24 +87,26 @@ export async function loadMarketingAnalytics(
   const days = dayBounds(window);
 
   const [
-    sessionsNow,
-    sessionsBefore,
+    daily,
+    dailyBefore,
+    anonymousRows,
+    anonymousBefore,
     ordersNow,
     ordersBefore,
     spendNow,
     spendBefore,
-    daily,
     attributed,
     spendRows,
     settingsRows,
   ] = await Promise.all([
-    sessionTotals(window),
-    sessionTotals(previous),
+    loadSessionSummary(window),
+    loadSessionSummary(previous),
+    loadAnonymousVisits(window),
+    loadAnonymousVisits(previous),
     orderTotals(window),
     orderTotals(previous),
     spendPaise(window),
     spendPaise(previous),
-    prisma.analyticsDaily.findMany({ where: { day: days } }),
     prisma.order.findMany({
       where: { ...SOLD, placedAt: { gte: window.from, lt: window.to } },
       select: {
@@ -117,6 +120,11 @@ export async function loadMarketingAnalytics(
     prisma.adSpendDaily.findMany({ where: { platform: 'META', day: days } }),
     prisma.setting.findMany({ where: { key: { in: ['marketing.meta', 'marketing.metaInsightsSync'] } } }),
   ]);
+
+  const sessionsNow = sessionTotals(daily);
+  const sessionsBefore = sessionTotals(dailyBefore);
+  const anonymousNow = visitTotal(anonymousRows);
+  const anonymousThen = visitTotal(anonymousBefore);
 
   // --- which orders were a customer's first -------------------------------
   /*
@@ -302,6 +310,11 @@ export async function loadMarketingAnalytics(
     entry.converted += row.convertedSessions;
     sessionsByDay.set(key, entry);
   }
+  const anonymousByDay = new Map<string, number>();
+  for (const row of anonymousRows) {
+    const key = row.day.toISOString().slice(0, 10);
+    anonymousByDay.set(key, (anonymousByDay.get(key) ?? 0) + row.visits);
+  }
   const ordersByDay = new Map(
     bucketDaily(
       attributed.map((order) => ({ at: order.placedAt, amount: order.grandTotal.toFixed(2) })),
@@ -317,9 +330,15 @@ export async function loadMarketingAnalytics(
       day,
       sessions: sessionsByDay.get(day)?.sessions ?? 0,
       convertedSessions: sessionsByDay.get(day)?.converted ?? 0,
+      anonymousVisits: anonymousByDay.get(day) ?? 0,
       orders: ordersByDay.get(day)?.orders ?? 0,
       revenue: ordersByDay.get(day)?.revenue ?? '0.00',
     })),
+    visits: {
+      value: sessionsNow.sessions + anonymousNow,
+      change: percentChange(sessionsNow.sessions + anonymousNow, sessionsBefore.sessions + anonymousThen),
+    },
+    anonymousVisits: { value: anonymousNow, change: percentChange(anonymousNow, anonymousThen) },
     sessions: { value: sessionsNow.sessions, change: percentChange(sessionsNow.sessions, sessionsBefore.sessions) },
     conversionRate: {
       value: ratio(sessionsNow.converted, sessionsNow.sessions),

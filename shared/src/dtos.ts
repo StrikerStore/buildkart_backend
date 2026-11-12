@@ -3156,6 +3156,14 @@ export type MarketingAnalyticsDto = {
   to: string;
   /** Sessions, orders and revenue per store day, for the trend charts. */
   daily: OverviewPointDto[];
+  /** Every visit: the sessions below, plus the anonymous ones. */
+  visits: { value: number; change: number | null };
+  /**
+   * Visits from browsers that did not say yes to analytics — a bare count,
+   * with no source, city, funnel or order behind it.
+   */
+  anonymousVisits: { value: number; change: number | null };
+  /** Sessions from browsers that said yes to analytics: the ones followed through the funnel. */
   sessions: { value: number; change: number | null };
   conversionRate: { value: number | null; change: number | null };
   returningRate: number | null;
@@ -3197,6 +3205,8 @@ export type OverviewPointDto = {
   day: string;
   sessions: number;
   convertedSessions: number;
+  /** Visits counted without consent that day — not in `sessions`. */
+  anonymousVisits: number;
   orders: number;
   revenue: string;
 };

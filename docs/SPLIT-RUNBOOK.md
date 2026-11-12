@@ -237,9 +237,13 @@ Three services, each pointing at its own repo with **Root Directory `/`**.
 | **website** | `npm ci && npm run build` | `cd .next/standalone && node server.js` | `API_URL`, `SERVICE_TOKEN`, `NODE_AUTH_TOKEN` |
 
 **The backend's start applies migrations itself.** The API's `prestart` runs the
-root `db:prepare` (Prisma generate, `migrate deploy`, seed) before the server
-starts, so `npm start` and `npm run start --workspace @buildkart/api` both
-migrate, exactly once. Nothing has to be run by hand after a deploy.
+root `db:prepare` (Prisma generate, `migrate deploy`, seed, then `db:content`)
+before the server starts, so `npm start` and `npm run start --workspace @buildkart/api`
+both migrate, exactly once. `db:content` brings stored content up to date with
+the code — today, new Privacy Notice wording (`core/src/write/notice-updates.ts`),
+applied only to a notice at the version it was written for, and never blocking
+the start. Nothing has to be run by hand after a deploy; a notice it could not
+update says so in the log, with what to paste instead.
 
 Two things changed from the monorepo deploy:
 
