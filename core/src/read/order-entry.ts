@@ -13,6 +13,9 @@ import {
   actionErrorFromZod,
   actionOk,
   customerLookupSchema,
+  distanceQuoteSchema,
+  metresToKm,
+  planDistance,
   variantSearchSchema,
   type ActionResult,
 } from '@buildkart/shared';
@@ -22,11 +25,18 @@ import { TIER_SELECT, toTierDtos } from '../tiers.ts';
 import {
   distanceParamsOf,
   loadDeliveryRules,
+  loadRouting,
+  plannedLineOf,
   PRICING_KIND_SELECT,
   VARIANT_DISTANCE_SELECT,
 } from './delivery-charges.ts';
-import type { CustomerLookupResult, PincodeQuote, VariantSearchResult } from '@buildkart/shared';
-export type { CustomerLookupResult, PincodeQuote, VariantSearchResult };
+import type {
+  CustomerLookupResult,
+  DistanceQuote,
+  PincodeQuote,
+  VariantSearchResult,
+} from '@buildkart/shared';
+export type { CustomerLookupResult, DistanceQuote, PincodeQuote, VariantSearchResult };
 
 
 
@@ -159,6 +169,8 @@ export async function lookupCustomer(
           city: true,
           state: true,
           pincode: true,
+          latitude: true,
+          longitude: true,
           isDefault: true,
         },
       },
@@ -182,7 +194,12 @@ export async function lookupCustomer(
     name: customer.name,
     isBlocked: customer.isBlocked,
     totalOrders: customer.totalOrders,
-    addresses: customer.addresses,
+    addresses: customer.addresses.map((address) => ({
+      ...address,
+      // Decimal on the row; a string on the wire, like every other coordinate.
+      latitude: address.latitude?.toString() ?? null,
+      longitude: address.longitude?.toString() ?? null,
+    })),
   });
 }
 
@@ -216,4 +233,70 @@ export async function lookupPincode(
   }
 
   return actionOk({ serviced: true, areaName: area.areaNameEn, rules });
+}
+
+/**
+ * What a dropped pin does to these items' prices, for the counter's preview.
+ *
+ * `createOrder` prices distance from the order's pin and nothing else, so this
+ * runs the very same routing and planning on the very same rows: nearest
+ * stocking warehouse per line, road factor, the shop's blocks. The counter then
+ * prices the lines with the shared `priceOrder`, as it already does, and the
+ * total it shows is the one the order is written at.
+ *
+ * An unknown variant is left out rather than failing the quote: the item list
+ * is still being edited, and `createOrder` is where a missing one is refused.
+ */
+export async function quoteDistance(
+  actor: Actor,
+  input: unknown,
+): Promise<ActionResult<DistanceQuote>> {
+  assertPermission(actor, 'orders:write');
+
+  const parsed = distanceQuoteSchema.safeParse(input);
+  if (!parsed.success) return actionErrorFromZod(parsed.error);
+
+  const variantIds = [...new Set(parsed.data.variantIds)];
+  const destination = { latitude: parsed.data.latitude, longitude: parsed.data.longitude };
+
+  const [variants, rules, routing] = await Promise.all([
+    prisma.productVariant.findMany({
+      where: { id: { in: variantIds } },
+      select: {
+        id: true,
+        ...VARIANT_DISTANCE_SELECT,
+        product: { select: { ...PRICING_KIND_SELECT } },
+      },
+    }),
+    loadDeliveryRules(),
+    loadRouting(destination, variantIds),
+  ]);
+
+  const plan = planDistance({
+    destination,
+    roadFactor: rules.roadFactor,
+    lines: variants.map((variant) =>
+      plannedLineOf(variant.id, variant.product.pricingKind, variant),
+    ),
+    stockedBy: routing.stockedBy,
+    fallback: routing.fallback,
+  });
+
+  return actionOk({
+    lines: variants.map((variant) => {
+      const planned = plan.lines.get(variant.id);
+      return {
+        variantId: variant.id,
+        addition: planned?.addition ?? '0.00',
+        roadKm: metresToKm(planned?.metres ?? 0),
+        warehouseCode: planned?.warehouse?.code ?? null,
+      };
+    }),
+    delivery: {
+      needed: plan.delivery.needed,
+      metres: plan.delivery.metres,
+      roadKm: metresToKm(plan.delivery.metres),
+      warehouseCode: plan.delivery.warehouse?.code ?? null,
+    },
+  });
 }

@@ -507,6 +507,18 @@ export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 /** Look-ups the create form makes as it is filled in. */
 export const customerLookupSchema = z.object({ phone: phoneSchema });
 
+/**
+ * What the counter's dropped pin does to the price, before the order exists.
+ *
+ * The same planning `createOrder` runs, so the total the operator reads out on
+ * the phone is the total the order is written at.
+ */
+export const distanceQuoteSchema = z.object({
+  latitude: z.coerce.number().min(6).max(38),
+  longitude: z.coerce.number().min(68).max(98),
+  variantIds: z.array(z.string().trim().min(1).max(64)).min(1).max(100),
+});
+
 export const variantSearchSchema = z.object({
   q: z.string().trim().max(191),
   limit: z.coerce.number().int().min(1).max(50).default(20),

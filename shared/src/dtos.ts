@@ -917,8 +917,27 @@ export type CustomerLookupResult = {
     city: string;
     state: string;
     pincode: string;
+    /** The pin dropped on it, so picking it for a new order brings the pin too. */
+    latitude: string | null;
+    longitude: string | null;
     isDefault: boolean;
   }>;
+};
+
+// from core/src/read/order-entry.ts
+export type DistanceQuote = {
+  /**
+   * Per variant: what the distance adds to one unit — `0.00` for a flat-priced
+   * line — and where it is routed from.
+   */
+  lines: Array<{
+    variantId: string;
+    addition: string;
+    roadKm: number;
+    warehouseCode: string | null;
+  }>;
+  /** The flat-priced lines' shared delivery, which the delivery charge is measured on. */
+  delivery: { needed: boolean; metres: number; roadKm: number; warehouseCode: string | null };
 };
 
 // from core/src/read/order-entry.ts

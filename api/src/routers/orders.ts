@@ -27,6 +27,7 @@ import {
   listOrders,
   lookupCustomer,
   lookupPincode,
+  quoteDistance,
   recordPaymentTransaction,
   saveOrderNote,
   searchVariants,
@@ -101,6 +102,9 @@ export const ordersRouter = router({
   lookupPincode: adminProcedure
     .input(z.object({ pincode: z.string() }))
     .query(({ ctx, input }) => lookupPincode(ctx.actor, input.pincode)),
+  quoteDistance: adminProcedure
+    .input(payload)
+    .query(({ ctx, input }) => quoteDistance(ctx.actor, input)),
 
   // --- customers ---------------------------------------------------------
   customerList: adminProcedure
