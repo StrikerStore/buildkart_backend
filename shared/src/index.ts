@@ -28,6 +28,7 @@ export * from './notifications.ts';
 export * from './enquiries.ts';
 export * from './material-estimator.ts';
 export * from './support.ts';
+export * from './app-notifications.ts';
 export * from './secrets.ts';
 export * from './audit-actions.ts';
 export * from './order-pricing.ts';

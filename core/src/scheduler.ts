@@ -25,6 +25,7 @@ import { reconcilePaymentSessions } from './write/payment-session.ts';
 import { runPrivacyJobs } from './write/privacy-retention.ts';
 import { runAnalyticsJobs } from './write/sessions.ts';
 import { runWalletJobs } from './write/wallet-jobs.ts';
+import { runAlertJob } from './write/app-notifications.ts';
 import {
   currentSlot,
   dueAttempt,
@@ -44,6 +45,7 @@ const RUNNERS: Record<ScheduledJobName, () => Promise<object>> = {
   'meta-insights': () => pullMetaInsights(),
   privacy: () => runPrivacyJobs(),
   'media-gc': () => collectMediaGarbage(),
+  'app-alerts': () => runAlertJob(),
 };
 
 const MINUTE_MS = 60_000;

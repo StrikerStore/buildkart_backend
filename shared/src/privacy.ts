@@ -236,6 +236,11 @@ export const PROCESSORS: ReadonlyArray<{
     receives: 'Map coordinates and address searches, without your name or number',
   },
   {
+    name: 'Expo and Google Firebase Cloud Messaging',
+    purpose: 'Notifications on the mobile app, when you turn them on',
+    receives: 'Your phone’s notification address and the notification’s words, without your name or number',
+  },
+  {
     name: 'Meta (Facebook, Instagram)',
     purpose: 'Ad measurement',
     receives: 'Hashed phone, email, name, city and pincode; IP address; pages and purchases',

@@ -44,6 +44,23 @@ import {
   listMyActiveDeliveries,
   listMyAddresses,
   listMyOrders,
+  listMySiteOrders,
+  listMySites,
+  listMySavedLists,
+  getMySavedList,
+  createMySavedList,
+  renameMySavedList,
+  deleteMySavedList,
+  setMySavedListItem,
+  registerMyDevice,
+  unregisterMyDevice,
+  listMyNotifications,
+  markMyNotificationsRead,
+  listMyAlerts,
+  saveMyAlert,
+  deleteMyAlert,
+  listStorefrontRates,
+  getStorefrontRateHistory,
   listMyWalletEntries,
   listServiceableAreas,
   placeCustomerOrder,
@@ -85,12 +102,15 @@ import {
 // API's public input surface, and a client naming one must not have to depend
 // on the package that reaches the database.
 import {
+  appNotificationsQuerySchema,
   cartCouponsSchema,
   deviceLocationSchema,
+  mySiteOrdersSchema,
   placeLocationSchema,
   placeSearchSchema,
   priceCartSchema,
   quoteEstimateSchema,
+  rateHistorySchema,
   storefrontCardsByHandlesSchema,
   storefrontListQuerySchema,
   storefrontPointSchema,
@@ -443,6 +463,86 @@ export const storefrontRouter = router({
     .mutation(({ ctx, input }) => removeSavedCard(ctx.actor, input)),
 
   myOrders: customerProcedure.query(({ ctx }) => listMyOrders(ctx.actor)),
+
+  // --- the mobile app's extras --------------------------------------------
+
+  /*
+   * Today's rates: every rate-volatile variant with today's list price, the
+   * previous store day's and a 30-day series — read from the price ledger.
+   * Public, like the catalogue it summarises.
+   */
+  rates: publicProcedure.query(() => listStorefrontRates()),
+
+  /** One rate's daily closes over 7, 30 or 90 store days; null off sale. */
+  rateHistory: publicProcedure.input(rateHistorySchema).query(({ input }) => getStorefrontRateHistory(input)),
+
+  /*
+   * The address book as sites: each address with what has been ordered to it,
+   * matched by pincode and pin. Read-only — no order row points at an address.
+   */
+  mySites: customerProcedure.query(({ ctx }) => listMySites(ctx.actor)),
+
+  mySiteOrders: customerProcedure
+    .input(mySiteOrdersSchema)
+    .query(({ ctx, input }) => listMySiteOrders(ctx.actor, input)),
+
+  /*
+   * Saved lists. Ids and quantities only — the app prices a list with
+   * `priceCart` when it shows it, so a list is always at today's rates.
+   */
+  myLists: customerProcedure.query(({ ctx }) => listMySavedLists(ctx.actor)),
+
+  myList: customerProcedure.input(z.unknown()).query(({ ctx, input }) => getMySavedList(ctx.actor, input)),
+
+  createList: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => createMySavedList(ctx.actor, input)),
+
+  renameList: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => renameMySavedList(ctx.actor, input)),
+
+  deleteList: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => deleteMySavedList(ctx.actor, input)),
+
+  setListItem: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => setMySavedListItem(ctx.actor, input)),
+
+  /*
+   * App notifications. A phone registers its Expo push token after sign-in and
+   * drops it on sign-out; the inbox holds what was sent, read or not.
+   */
+  registerDevice: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => registerMyDevice(ctx.actor, input)),
+
+  unregisterDevice: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => unregisterMyDevice(ctx.actor, input)),
+
+  myNotifications: customerProcedure
+    .input(appNotificationsQuerySchema.optional())
+    .query(({ ctx, input }) => listMyNotifications(ctx.actor, input)),
+
+  markNotificationsRead: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => markMyNotificationsRead(ctx.actor, input)),
+
+  /*
+   * Price and stock alerts. Checked every ten minutes by the app-alerts job
+   * against the price and stock the shop already keeps.
+   */
+  myAlerts: customerProcedure.query(({ ctx }) => listMyAlerts(ctx.actor)),
+
+  saveAlert: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => saveMyAlert(ctx.actor, input)),
+
+  deleteAlert: customerProcedure
+    .input(z.unknown())
+    .mutation(({ ctx, input }) => deleteMyAlert(ctx.actor, input)),
 
   /*
    * The orders still on their way, with their countdowns — polled by the home

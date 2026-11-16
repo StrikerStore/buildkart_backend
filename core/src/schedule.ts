@@ -23,6 +23,7 @@ export const SCHEDULED_JOB_NAMES = [
   'meta-insights',
   'privacy',
   'media-gc',
+  'app-alerts',
 ] as const;
 export type ScheduledJobName = (typeof SCHEDULED_JOB_NAMES)[number];
 
@@ -68,6 +69,8 @@ export const JOB_TIMINGS: Record<ScheduledJobName, JobTiming> = {
   'meta-insights': { schedule: { every: 360, offset: 15 }, leaseMinutes: 30 },
   privacy: { schedule: { dailyAt: '02:00' }, leaseMinutes: 30 },
   'media-gc': { schedule: { dailyAt: '03:00' }, leaseMinutes: 30 },
+  // Price and stock alerts for the mobile app: ten minutes is "soon" for a rate.
+  'app-alerts': { schedule: { every: 10, offset: 3 }, leaseMinutes: 10 },
 };
 
 export function isScheduledJobName(value: string): value is ScheduledJobName {

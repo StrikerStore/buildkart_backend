@@ -42,6 +42,10 @@ export async function buildCustomerDataExport(customerId: string): Promise<Custo
     messages,
     requests,
     recentVisitCount,
+    savedLists,
+    priceAlerts,
+    appNotifications,
+    pushDevices,
   ] = await Promise.all([
     prisma.setting.findMany({ where: { key: { in: ['store.profile', 'privacy.contact'] } } }),
     prisma.consentRecord.findMany({ where: { customerId }, orderBy: { createdAt: 'asc' } }),
@@ -85,6 +89,38 @@ export async function buildCustomerDataExport(customerId: string): Promise<Custo
     prisma.storefrontSession.count({
       where: { customerId, startedAt: { gte: new Date(Date.now() - 90 * DAY_MS) } },
     }),
+    prisma.savedList.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        name: true,
+        createdAt: true,
+        items: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            quantity: true,
+            variant: { select: { sku: true, option1Value: true, option2Value: true, product: { select: { nameEn: true } } } },
+          },
+        },
+      },
+    }),
+    prisma.priceAlert.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        kind: true,
+        targetPrice: true,
+        isActive: true,
+        createdAt: true,
+        variant: { select: { option1Value: true, product: { select: { nameEn: true } } } },
+      },
+    }),
+    prisma.appNotification.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      select: { titleEn: true, bodyEn: true, createdAt: true, readAt: true },
+    }),
+    prisma.pushDevice.count({ where: { customerId } }),
   ]);
 
   const byKey = new Map(settingsRows.map((row) => [row.key, row.value]));
@@ -184,6 +220,31 @@ export async function buildCustomerDataExport(customerId: string): Promise<Custo
         body: message.body,
         hasPhoto: Boolean(message.attachmentR2Key),
         at: iso(message.createdAt),
+      })),
+    })),
+    priceAlerts: priceAlerts.map((alert) => ({
+      product: [alert.variant.product.nameEn, alert.variant.option1Value].filter(Boolean).join(' — '),
+      kind: alert.kind,
+      targetPrice: alert.targetPrice ? alert.targetPrice.toFixed(2) : null,
+      active: alert.isActive,
+      createdAt: iso(alert.createdAt),
+    })),
+    appNotifications: appNotifications.map((row) => ({
+      title: row.titleEn,
+      body: row.bodyEn,
+      createdAt: iso(row.createdAt),
+      read: row.readAt !== null,
+    })),
+    pushDevices,
+    savedLists: savedLists.map((list) => ({
+      name: list.name,
+      createdAt: iso(list.createdAt),
+      items: list.items.map((item) => ({
+        product: [item.variant.product.nameEn, item.variant.option1Value, item.variant.option2Value]
+          .filter(Boolean)
+          .join(' — '),
+        sku: item.variant.sku,
+        quantity: item.quantity,
       })),
     })),
     whatsappMessages: messages.map((row) => ({

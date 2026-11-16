@@ -146,6 +146,12 @@ export async function eraseCustomer(
     });
 
     await tx.address.deleteMany({ where: { customerId } });
+    // Saved lists are the customer's own words ("Sharma ji site"); items cascade.
+    await tx.savedList.deleteMany({ where: { customerId } });
+    // The app: phones, inbox and alerts.
+    await tx.pushDevice.deleteMany({ where: { customerId } });
+    await tx.appNotification.deleteMany({ where: { customerId } });
+    await tx.priceAlert.deleteMany({ where: { customerId } });
     await tx.customerGatewayAccount.deleteMany({ where: { customerId } });
     await tx.storefrontSession.deleteMany({ where: { customerId } });
     await tx.customerOtp.deleteMany({ where: { phone } });

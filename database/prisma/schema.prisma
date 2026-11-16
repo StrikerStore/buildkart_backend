@@ -715,6 +715,8 @@ model ProductVariant {
   orderItems     OrderItem[]
   tiers          VariantPriceTier[]
   warehouseStock WarehouseStock[]
+  savedListItems SavedListItem[]
+  priceAlerts    PriceAlert[]
   quoteOption    QuoteMaterialOption?
 
   @@unique([productId, matrixKey])
@@ -1015,6 +1017,10 @@ model Customer {
   walletEntries   WalletEntry[]
   paymentSessions PaymentSession[]
   gatewayAccounts CustomerGatewayAccount[]
+  savedLists      SavedList[]
+  pushDevices     PushDevice[]
+  appNotifications AppNotification[]
+  priceAlerts     PriceAlert[]
 
   @@index([createdAt])
   @@index([lastOrderAt])
@@ -1052,6 +1058,110 @@ model Address {
 
   @@index([customerId])
   @@index([pincode])
+}
+
+/// A customer's own list of materials — "Ground floor slab", "Every month" —
+/// kept to reorder or share in one tap (the mobile app's Saved lists).
+///
+/// Quantities and variant ids only, like a cart. Nothing here is a price: a
+/// list is priced when it is shown, at that day's rates, the same way a cart is.
+model SavedList {
+  id         String   @id @default(cuid())
+  customerId String
+  name       String   @db.VarChar(80)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items    SavedListItem[]
+
+  @@index([customerId, updatedAt])
+}
+
+/// One line of a saved list. A variant appears once per list; adding it again
+/// changes the quantity. Goes with the variant if the variant is ever deleted.
+model SavedListItem {
+  id        String   @id @default(cuid())
+  listId    String
+  variantId String
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  list    SavedList      @relation(fields: [listId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([listId, variantId])
+  @@index([variantId])
+}
+
+/// A phone that may receive app notifications for a customer: its Expo push
+/// token. One row per token — a phone that signs in to another account moves to
+/// it. Dropped on sign-out, when Expo reports the token dead, and on erasure.
+model PushDevice {
+  id         String   @id @default(cuid())
+  customerId String
+  token      String   @unique @db.VarChar(255)
+  /// "android" or "ios".
+  platform   String   @db.VarChar(16)
+  appVersion String?  @db.VarChar(32)
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+/// One entry in a customer's in-app inbox, and what was pushed to their phones.
+///
+/// Its own table rather than a channel on NotificationMessage: the copy is
+/// bilingual here and written by code, the inbox needs a read state, and the
+/// WhatsApp log stays exactly as it is. `dedupeKey` makes every source safe to
+/// run twice — an order event or an alert produces one entry, not two.
+model AppNotification {
+  id         String    @id @default(cuid())
+  customerId String
+  /// ORDER, SUPPORT, RATE or STOCK — the icon in the inbox.
+  kind       String    @db.VarChar(16)
+  titleEn    String    @db.VarChar(191)
+  titleHi    String?   @db.VarChar(191)
+  bodyEn     String    @db.VarChar(500)
+  bodyHi     String?   @db.VarChar(500)
+  /// Where tapping it goes in the app: "/orders/<id>".
+  href       String?   @db.VarChar(255)
+  dedupeKey  String    @unique @db.VarChar(191)
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+}
+
+/// "Tell me when the price drops below ₹___", "any change", or "back in
+/// stock" for one variant. Checked by the app-alerts job against the price
+/// and stock the shop already keeps, so no write path changes for it.
+model PriceAlert {
+  id                String    @id @default(cuid())
+  customerId        String
+  variantId         String
+  /// DROP_BELOW, ANY_CHANGE or BACK_IN_STOCK.
+  kind              String    @db.VarChar(16)
+  targetPrice       Decimal?  @db.Decimal(10, 2)
+  isActive          Boolean   @default(true)
+  /// The price when last told (or set), so "any change" fires once per change.
+  lastNotifiedPrice Decimal?  @db.Decimal(10, 2)
+  lastNotifiedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  variant  ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, variantId, kind])
+  @@index([isActive])
+  @@index([variantId])
 }
 
 model Order {

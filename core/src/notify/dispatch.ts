@@ -22,6 +22,8 @@
  * order that then rolled back is worse than no message.
  */
 import { prisma, Prisma } from '@buildkart/database';
+import { pushCopyFor } from './push-copy.ts';
+import { pushInBackground } from './push.ts';
 import {
   NOTIFICATION_EVENT_KINDS,
   ENQUIRY_KIND_LABELS,
@@ -129,6 +131,7 @@ async function loadSender(): Promise<WhatsappSender | null> {
  * everyone else ignores it.
  */
 export async function notify(input: NotifyInput, override: DeliveryOverride = {}): Promise<NotifyOutcome> {
+  pushOrderEvent(input);
   try {
     return await deliver(input, override);
   } catch (error) {
@@ -138,6 +141,25 @@ export async function notify(input: NotifyInput, override: DeliveryOverride = {}
 }
 
 /** Fire and forget, for the domain writes: they must not wait on WhatsApp. */
+/**
+ * The app notification for an order event, when there is one: the customer's
+ * own order, and an event `pushCopyFor` has words for. Fire-and-forget, so the
+ * WhatsApp message below never waits on it or fails because of it.
+ */
+function pushOrderEvent(input: NotifyInput): void {
+  const customerId = input.recipient.customerId;
+  if (!customerId || !input.orderId) return;
+  const copy = pushCopyFor(input.event, input.values);
+  if (!copy) return;
+  pushInBackground({
+    customerId,
+    kind: 'ORDER',
+    ...copy,
+    href: `/orders/${input.orderId}`,
+    dedupeKey: `push:${input.dedupeKey}`,
+  });
+}
+
 export function notifyInBackground(input: NotifyInput | Promise<NotifyInput | null>): void {
   void Promise.resolve(input)
     .then((resolved) => (resolved ? notify(resolved) : 'off'))

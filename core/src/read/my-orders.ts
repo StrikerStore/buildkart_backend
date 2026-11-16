@@ -19,6 +19,7 @@ import {
   fromPaise,
   lineProgress,
   toPaise,
+  mySiteOrdersSchema,
   parseAddressSnapshot,
   parseTaxBreakdown,
   parseVariantSnapshot,
@@ -28,6 +29,7 @@ import {
   type MyOrderDetailDto,
   type MyOrderListItemDto,
   type OrderStatus,
+  type AddressSnapshot,
 } from '@buildkart/shared';
 import { ForbiddenError, type Actor } from '../actor.ts';
 import { orderDeliveryPromise } from './delivery-promise.ts';
@@ -67,6 +69,8 @@ const LIST_SELECT = {
   },
 } satisfies Prisma.OrderSelect;
 
+type ListRow = Prisma.OrderGetPayload<{ select: typeof LIST_SELECT }>;
+
 export async function listMyOrders(actor: Actor): Promise<MyOrderListItemDto[]> {
   const customerId = customerIdOf(actor);
 
@@ -79,7 +83,76 @@ export async function listMyOrders(actor: Actor): Promise<MyOrderListItemDto[]> 
     select: LIST_SELECT,
   });
 
-  return rows.map((order) => ({
+  return rows.map(toListItem);
+}
+
+/**
+ * Whether an order went to a saved address: the same pincode and the same pin.
+ *
+ * An order placed from the address book copies the address's coordinate into
+ * its snapshot exactly, so equality to a millionth of a degree (about 10 cm)
+ * is a match and anything else is a different spot. An order with no pin —
+ * placed at the counter, or before pins existed — matches no site.
+ */
+export function sameSpot(
+  snapshot: Pick<AddressSnapshot, 'pincode' | 'latitude' | 'longitude'>,
+  address: { pincode: string; latitude: string | null; longitude: string | null },
+): boolean {
+  if (snapshot.pincode !== address.pincode) return false;
+  if (snapshot.latitude == null || snapshot.longitude == null) return false;
+  if (address.latitude === null || address.longitude === null) return false;
+  return (
+    Math.abs(snapshot.latitude - Number(address.latitude)) < 1e-6 &&
+    Math.abs(snapshot.longitude - Number(address.longitude)) < 1e-6
+  );
+}
+
+/** Where each of a customer's orders went, newest first — the raw material for sites. */
+export async function myOrderSpots(actor: Actor) {
+  const customerId = customerIdOf(actor);
+  const rows = await prisma.order.findMany({
+    where: { customerId },
+    orderBy: { placedAt: 'desc' },
+    take: 500,
+    select: { id: true, status: true, grandTotal: true, placedAt: true, addressSnapshot: true },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    grandTotal: decimalToString(row.grandTotal),
+    placedAt: row.placedAt,
+    spot: parseAddressSnapshot(row.addressSnapshot),
+  }));
+}
+
+/** The customer's orders that went to one of their own saved addresses. */
+export async function listMySiteOrders(actor: Actor, input: unknown): Promise<MyOrderListItemDto[]> {
+  const customerId = customerIdOf(actor);
+  const { addressId } = mySiteOrdersSchema.parse(input ?? {});
+  const address = await prisma.address.findFirst({
+    where: { id: addressId, customerId },
+    select: { pincode: true, latitude: true, longitude: true },
+  });
+  if (!address) return [];
+
+  const pin = {
+    pincode: address.pincode,
+    latitude: address.latitude === null ? null : address.latitude.toString(),
+    longitude: address.longitude === null ? null : address.longitude.toString(),
+  };
+  const ids = (await myOrderSpots(actor)).filter((order) => sameSpot(order.spot, pin)).map((order) => order.id);
+  if (ids.length === 0) return [];
+
+  const rows = await prisma.order.findMany({
+    where: { customerId, id: { in: ids.slice(0, 100) } },
+    orderBy: { placedAt: 'desc' },
+    select: LIST_SELECT,
+  });
+  return rows.map(toListItem);
+}
+
+function toListItem(order: ListRow): MyOrderListItemDto {
+  return {
     id: order.id,
     orderNumber: order.orderNumber,
     status: order.status,
@@ -98,7 +171,7 @@ export async function listMyOrders(actor: Actor): Promise<MyOrderListItemDto[]> 
         imageKey: item.product?.images[0]?.media.r2Key ?? null,
       };
     }),
-  }));
+  };
 }
 
 /**

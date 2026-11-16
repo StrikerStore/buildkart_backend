@@ -25,7 +25,7 @@ This is the operating manual. The customer-facing promises are in the Privacy No
 
 **Held about customers:** phone number (the account), name, email, GSTIN, delivery addresses and map
 pins, orders and invoices, payments (gateway references, never full card numbers), wallet credit, support
-conversations and photos, WhatsApp message log, consents, nominee, and — only with consent — visit
+conversations and photos, saved lists of materials (the app's Lists), WhatsApp message log, consents, nominee, and — only with consent — visit
 analytics and Meta ad measurement.
 
 **Held about people without an account:** a phone number and pincode for "tell me when you deliver
@@ -51,6 +51,7 @@ notice read it:
 | AiSensy (Meta WhatsApp Business) | WhatsApp messages | Phone, name, message contents |
 | Razorpay, PayU | Online payments | Name, phone, email |
 | Google Maps, Mapbox, OpenStreetMap | Maps and address search | Coordinates and searches, no name or number |
+| Expo, Google Firebase Cloud Messaging | Mobile app notifications, once the customer turns them on | The phone's push token and the notification's words, no name or number |
 | Meta | Ad measurement — **consent only** | Hashed phone, email, name, city, pincode; IP; pages and purchases |
 | Google (Google Ads) | Ad measurement — **consent only**, and only for a yes given on notice 2026-11 or later | Pages viewed, ad clicks, and orders placed (order number and value) through its own cookies; IP and browser details. No name, phone or email |
 | Google (Google Analytics 4) | Site analytics — **consent only**, and only for an analytics yes given on notice 2026-11.2 or later | Pages viewed; products viewed, added to the cart and bought, with order number and value; through its own cookies (`_ga`, `_ga_…`); IP and browser details. No name, phone or email. Kept up to 14 months (GA4 data retention setting) |
@@ -93,7 +94,8 @@ turns amber after 36 hours. A run that fails sends a "Privacy clean-up failed" W
 
 Customers serve themselves from **Account → Privacy and data**: download their data, change their
 choices, correct their email, name a nominee, delete their account (code-confirmed, 7-day cooling-off),
-and file a correction or complaint. Anything that arrives another way — a call, an email, a letter, someone
+and file a correction or complaint. The download includes their saved lists, price alerts and app inbox, and deleting the account
+deletes those, and the phones registered for notifications, with the addresses (`write/privacy-erasure.ts`). Anything that arrives another way — a call, an email, a letter, someone
 without an account — is recorded with **Privacy → Record a request**.
 
 | Step | What |

@@ -11,6 +11,12 @@ import {
   ORDER_STATUS_LABELS,
   mediaContext,
   type AppConfigDto,
+  type AppNotificationsPageDto,
+  type MySiteDto,
+  type PriceAlertDto,
+  type SavedListSummaryDto,
+  type StorefrontRateHistoryDto,
+  type StorefrontRatesDto,
   type AppRouter,
   type MobileRouter,
   type OrderDetailDto,
@@ -54,6 +60,15 @@ const mobile = createTRPCClient<MobileRouter>({
 export async function proveMobileInference() {
   const config: AppConfigDto = await mobile.content.appConfig.query();
   const status: 'required' | 'available' | 'current' = appUpdateStatus('1.0.0', config);
+
+  // The app's own extras (0.42): rates, sites and saved lists.
+  const rates: StorefrontRatesDto = await mobile.storefront.rates.query();
+  const history: StorefrontRateHistoryDto | null = await mobile.storefront.rateHistory.query({ variantId: 'v', days: 30 });
+  const sites: MySiteDto[] = await mobile.storefront.mySites.query();
+  const lists: SavedListSummaryDto[] = await mobile.storefront.myLists.query();
+  const inbox: AppNotificationsPageDto = await mobile.storefront.myNotifications.query({ limit: 30 });
+  const alerts: PriceAlertDto[] = await mobile.storefront.myAlerts.query();
+  void [rates, history, sites, lists, inbox, alerts];
 
   // @ts-expect-error — the admin's login is not on the mobile router.
   await mobile.auth.login.mutate({});

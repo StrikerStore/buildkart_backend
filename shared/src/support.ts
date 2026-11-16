@@ -13,7 +13,12 @@
  * the storefront — the admin has to render the same word the customer chose.
  */
 
-export const SUPPORT_TOPICS = ['ORDER', 'DELIVERY', 'PAYMENT', 'PRODUCT', 'OTHER'] as const;
+/*
+ * Appended, never reordered: an installed app holds this list. QUOTE is the
+ * mobile app's "send a photo of your material list" — a chat like any other,
+ * so the inbox answers it with the tools it already has.
+ */
+export const SUPPORT_TOPICS = ['ORDER', 'DELIVERY', 'PAYMENT', 'PRODUCT', 'OTHER', 'QUOTE'] as const;
 export type SupportTopic = (typeof SUPPORT_TOPICS)[number];
 
 /**
@@ -27,6 +32,7 @@ export const SUPPORT_TOPIC_LABELS: Record<SupportTopic, { en: string; hi: string
   PAYMENT: { en: 'Payment or refund', hi: 'पेमेंट या रिफंड' },
   PRODUCT: { en: 'Product question', hi: 'प्रोडक्ट के बारे में' },
   OTHER: { en: 'Something else', hi: 'कुछ और' },
+  QUOTE: { en: 'Price quote', hi: 'भाव / कोटेशन' },
 };
 
 export const SUPPORT_TICKET_STATUSES = ['OPEN', 'WAITING_ON_CUSTOMER', 'RESOLVED'] as const;

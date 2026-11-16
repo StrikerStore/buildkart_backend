@@ -14,6 +14,7 @@
  * see.
  */
 import { prisma, type Prisma } from '@buildkart/database';
+import { pushInBackground } from '../notify/push.ts';
 import { ulid } from 'ulid';
 import {
   actionError,
@@ -319,16 +320,17 @@ export async function postAdminReply(actor: Actor, input: unknown): Promise<Acti
 
   const ticket = await prisma.supportTicket.findUnique({
     where: { id: ticketId },
-    select: { id: true, ticketNumber: true },
+    select: { id: true, ticketNumber: true, customerId: true },
   });
   if (!ticket) return actionError('That conversation could not be found.');
 
   const now = new Date();
+  const messageId = ulid();
 
   await prisma.$transaction([
     prisma.supportMessage.create({
       data: {
-        id: ulid(),
+        id: messageId,
         ticketId: ticket.id,
         authorRole: 'ADMIN',
         authorAdminId: adminIdOf(actor),
@@ -352,6 +354,17 @@ export async function postAdminReply(actor: Actor, input: unknown): Promise<Acti
     entityType: 'SupportTicket',
     entityId: ticket.id,
     diff: { ticketNumber: ticket.ticketNumber },
+  });
+
+  // The app's inbox and a push; the customer's phone opens the chat.
+  pushInBackground({
+    customerId: ticket.customerId,
+    kind: 'SUPPORT',
+    titleEn: `BuildKart replied · ${ticket.ticketNumber}`,
+    titleHi: `BuildKart का जवाब · ${ticket.ticketNumber}`,
+    bodyEn: body.slice(0, 180),
+    href: `/support/${ticket.id}`,
+    dedupeKey: `push:support:${messageId}`,
   });
 
   return actionOk();

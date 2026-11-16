@@ -70,6 +70,7 @@ import type { PartialCodRules } from './payments.ts';
 import type { ImportIssueSeverity, ImportJobStatus } from './imports.ts';
 import type { ImportIssue, ParsedProduct } from './csv/index.ts';
 import type { PricingKind } from './delivery-pricing.ts';
+import type { AppNotificationKind, PriceAlertKind } from './app-notifications.ts';
 import type { EnquiryKind, EnquiryStatus } from './enquiries.ts';
 import type { MaterialBaseUnit, QuoteMaterial } from './material-estimator.ts';
 import type { PurchaseMeasurementDto } from './purchase-measurement.ts';
@@ -2464,6 +2465,18 @@ export type PrivacyRequestDto = PrivacyRequestRowDto & {
  */
 export type CustomerDataExportDto = {
   generatedAt: string;
+  /** Price and stock alerts the customer set in the app. */
+  priceAlerts: Array<{ product: string; kind: string; targetPrice: string | null; active: boolean; createdAt: string }>;
+  /** What the app's inbox held, newest first. */
+  appNotifications: Array<{ title: string; body: string; createdAt: string; read: boolean }>;
+  /** How many phones receive app notifications. Tokens are not exported. */
+  pushDevices: number;
+  /** The mobile app's saved lists, by name, with what is on each. */
+  savedLists: Array<{
+    name: string;
+    createdAt: string;
+    items: Array<{ product: string; sku: string | null; quantity: number }>;
+  }>;
   noticeVersion: string;
   shop: { name: string; grievanceOfficer: { name: string; email: string; phone: string } };
   profile: {
@@ -3604,4 +3617,131 @@ export type QuoteMaterialsFormDto = {
     live: boolean;
   }>;
   variants: Array<{ variantId: string; label: string; unitLabel: string | null }>;
+};
+
+// ---------------------------------------------------------------------------
+// The mobile app's extras: rates, sites, saved lists
+// ---------------------------------------------------------------------------
+
+/** A list price on one store day ("2026-11-16", Asia/Kolkata). */
+export type RatePointDto = {
+  day: string;
+  price: string;
+};
+
+/**
+ * One rate on the Rates board — a variant of a rate-volatile product (cement,
+ * sariya) with today's list price against the previous store day's.
+ *
+ * The list price, not a price at the customer's site: distance-priced lines
+ * add delivery by distance at checkout, which `pricingKind` says.
+ */
+export type StorefrontRateDto = {
+  variantId: string;
+  handle: string;
+  nameEn: string;
+  nameHi: string | null;
+  /** "12mm", or "4L / Red". Null when the product has no options. */
+  variantLabel: string | null;
+  imageKey: string | null;
+  unitLabelEn: string | null;
+  unitLabelHi: string | null;
+  categoryId: string | null;
+  categoryNameEn: string | null;
+  categoryNameHi: string | null;
+  price: string;
+  /** The price at the end of the previous store day. Null with no earlier price on record. */
+  previousPrice: string | null;
+  /** `price − previousPrice`, signed ("-5.00"). "0.00" when unchanged or unknown. */
+  change: string;
+  priceUpdatedAt: string | null;
+  pricingKind: PricingKind;
+  inStock: boolean;
+  /** One point per store day for the last 30, oldest first, ending today. */
+  series: RatePointDto[];
+};
+
+export type StorefrontRatesDto = {
+  rows: StorefrontRateDto[];
+  /** The latest price change among the rows: "updated 9:12 AM". */
+  updatedAt: string | null;
+};
+
+/** One rate's chart, for 7, 30 or 90 store days. */
+export type StorefrontRateHistoryDto = {
+  variantId: string;
+  days: number;
+  points: RatePointDto[];
+  low: string;
+  high: string;
+};
+
+/**
+ * A saved address as a site: what has been ordered to it. Orders are matched
+ * to the address by its pincode and pin — an order placed from a saved address
+ * carries both exactly — so no order row needs to point at the address book.
+ */
+export type MySiteDto = MyAddressDto & {
+  orderCount: number;
+  /** Placed this store month and not cancelled. */
+  monthSpend: string;
+  lastOrderAt: string | null;
+};
+
+export type SavedListSummaryDto = {
+  id: string;
+  name: string;
+  itemCount: number;
+  /** Every variant on the list, so a product page can show it is saved. */
+  variantIds: string[];
+  /** Photos of the first few lines, for the list card. */
+  previewImageKeys: Array<string | null>;
+  updatedAt: string;
+};
+
+/** One entry in the app's inbox, in both languages; the app picks. */
+export type AppNotificationDto = {
+  id: string;
+  kind: AppNotificationKind;
+  titleEn: string;
+  titleHi: string | null;
+  bodyEn: string;
+  bodyHi: string | null;
+  /** Where tapping it goes in the app. */
+  href: string | null;
+  readAt: string | null;
+  createdAt: string;
+};
+
+export type AppNotificationsPageDto = {
+  items: AppNotificationDto[];
+  nextCursor: string | null;
+  /** Across the whole inbox, for the bell's dot. */
+  unread: number;
+};
+
+/** A price or stock alert, with today's price beside the figure watched for. */
+export type PriceAlertDto = {
+  id: string;
+  variantId: string;
+  kind: PriceAlertKind;
+  targetPrice: string | null;
+  isActive: boolean;
+  createdAt: string;
+  handle: string;
+  nameEn: string;
+  nameHi: string | null;
+  variantLabel: string | null;
+  imageKey: string | null;
+  unitLabelEn: string | null;
+  unitLabelHi: string | null;
+  price: string;
+  inStock: boolean;
+};
+
+export type SavedListDto = {
+  id: string;
+  name: string;
+  items: Array<{ variantId: string; quantity: number }>;
+  updatedAt: string;
 };

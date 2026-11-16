@@ -414,6 +414,23 @@ export const updateProfileSchema = z.object({
 });
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 
+/**
+ * One rate's history, for the rate detail screen's chart. Three spans only:
+ * the screen offers exactly these, and an open-ended `days` would be a way to
+ * ask for the whole ledger.
+ */
+export const rateHistorySchema = z.object({
+  variantId: z.string().trim().min(1).max(64),
+  days: z.union([z.literal(7), z.literal(30), z.literal(90)]).default(30),
+});
+export type RateHistoryInput = z.infer<typeof rateHistorySchema>;
+
+/** The orders that went to one of the customer's own addresses. */
+export const mySiteOrdersSchema = z.object({
+  addressId: z.string().trim().min(1).max(64),
+});
+export type MySiteOrdersInput = z.infer<typeof mySiteOrdersSchema>;
+
 export const myAddressSchema = z.object({
   /** Absent when adding, present when editing. */
   id: z.string().trim().max(64).optional(),

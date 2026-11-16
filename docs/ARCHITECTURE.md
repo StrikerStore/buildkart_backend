@@ -527,6 +527,32 @@ own:
 request is refused. `APP_CHECK_MODE=monitor` lets failed checks through with a log line —
 for the first beta builds only.
 
+**The app's own extras (contract 0.42).** Read from what the shop already records, so no
+existing write path changed:
+
+- **`storefront.rates` / `rateHistory`** — every variant of a rate-volatile product with
+  today's list price, the previous store day's and a daily series, rebuilt from the
+  `PriceHistory` ledger (`core/src/read/rates.ts`; the day arithmetic is `dailyCloses`,
+  unit-tested). Public.
+- **`storefront.mySites` / `mySiteOrders`** — the address book as sites, each with its
+  orders matched by pincode and pin (`sameSpot` in `read/my-orders.ts`). An order placed from
+  a saved address copies the pin exactly, so no order row needs an address id.
+- **Saved lists** — `SavedList` and `SavedListItem` (migration `20261116000000_saved_lists`,
+  two new tables, nothing else). Ids and quantities only; the app prices a list with
+  `priceCart` when it shows one. `myLists`, `myList`, `createList`, `renameList`,
+  `deleteList`, `setListItem`, every one filtered by the actor's own customer id.
+- **`QUOTE`** joins `SUPPORT_TOPICS`: the app's "photo of my material list" is a support
+  chat, answered from the inbox like any other.
+- **App notifications** — `PushDevice`, `AppNotification` and `PriceAlert` (migration
+  `20261116010000_app_notifications`, three new tables). `notify()` in `notify/dispatch.ts`
+  also writes an inbox entry and pushes it through Expo for a customer's own order events
+  (`notify/push-copy.ts` holds the bilingual words) — beside the WhatsApp send, never in its
+  way. An admin support reply does the same. Alerts are checked by the **`app-alerts`** job
+  every ten minutes against the price and stock already kept (`alertVerdict`, unit-tested),
+  so no price or stock write path changed. Procedures: `registerDevice`, `unregisterDevice`,
+  `myNotifications`, `markNotificationsRead`, `myAlerts`, `saveAlert`, `deleteAlert`.
+  Optional `EXPO_ACCESS_TOKEN` signs the push requests when Expo push security is on.
+
 *The rule from here on:* once the app is in the stores, **anything reachable through
 `MobileRouter` changes additively.** An installed app cannot be recompiled. A changed
 input is a new procedure; the old one stays until `appConfig`'s minimum has passed every
