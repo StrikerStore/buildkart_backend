@@ -322,6 +322,8 @@ export async function prepareCustomerOrder(
       // Never set from the storefront. The list price stands.
       unitPriceOverride: undefined,
     })),
+    // Counter-only, like the override: a customer buys from the catalogue.
+    customLines: undefined,
     deliveryCharge: priced.deliveryCharge,
     /*
      * Frozen alongside the charge, so the order can always say how it was

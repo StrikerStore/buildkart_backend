@@ -143,6 +143,15 @@ export async function writeOrder(
 ): Promise<ActionResult<PlacedOrderDto>> {
   const adminId = adminIdOf(actor);
 
+  /*
+   * Items typed at the counter. `?? []` rather than trusting the type: a
+   * payment session frozen before the field existed is read back unparsed.
+   */
+  const customLines = data.customLines ?? [];
+  if (data.lines.length + customLines.length === 0) {
+    return actionError('Add at least one item.');
+  }
+
   // --- what the catalogue says these lines cost ---------------------------
   const variantIds = data.lines.map((line) => line.variantId);
   const variants = await prisma.productVariant.findMany({
@@ -204,9 +213,9 @@ export async function writeOrder(
       merged.set(line.variantId, { ...line });
     }
   }
-  const lines = [...merged.values()];
+  const catalogLines = [...merged.values()];
 
-  for (const line of lines) {
+  for (const line of catalogLines) {
     const variant = byId.get(line.variantId)!;
     if (!canFulfil(variant, line.quantity)) {
       return actionError(
@@ -272,6 +281,38 @@ export async function writeOrder(
     distanceAddition: plan.lines.get(variant.id)?.addition ?? '0.00',
   }));
 
+  /*
+   * A custom line is priced by the same engine, under a key no variant id can
+   * take (cuids have no colon), with its typed rate as the list price — so it
+   * reaches no rung, counts as no override, and is taxed and shares the
+   * discount exactly as a catalogue line would. After the catalogue lines,
+   * which is the order the counter screen previews them in.
+   */
+  const customKey = (index: number) => `custom:${index}`;
+  customLines.forEach((line, index) => {
+    catalog.push({
+      variantId: customKey(index),
+      price: line.unitPrice,
+      tiers: [],
+      taxPercent: line.taxPercent,
+      taxInclusive: true,
+      taxable: true,
+      distanceAddition: '0.00',
+    });
+  });
+  const lines = [
+    ...catalogLines,
+    ...customLines.map((line, index) => ({ variantId: customKey(index), quantity: line.quantity })),
+  ];
+  const customByKey = new Map(customLines.map((line, index) => [customKey(index), line]));
+
+  /*
+   * The shop's delivery rule applies when something in the order is not
+   * already delivered-in: a flat-priced product, or a custom item, which is
+   * goods like any other.
+   */
+  const deliveryNeeded = plan.delivery.needed || customLines.length > 0;
+
   let pricing;
   let deliveryBreakdown: DeliveryBreakdown | null = null;
   try {
@@ -285,7 +326,7 @@ export async function writeOrder(
     let deliveryCharge = data.deliveryCharge;
     if (deliveryCharge !== undefined) {
       deliveryBreakdown = data.deliveryBreakdown ?? null;
-    } else if (area?.isActive && plan.delivery.needed) {
+    } else if (area?.isActive && deliveryNeeded) {
       const probe = priceOrder(lines, catalog, {});
       const fee = deliveryFeeFor({
         cartTotal: subtractMoney(probe.subtotal, data.discountTotal ?? '0.00'),
@@ -445,6 +486,41 @@ export async function writeOrder(
         placedAt: now,
         items: {
           create: pricing.lines.map((line) => {
+            const custom = customByKey.get(line.variantId);
+            if (custom) {
+              // No product to point at — the snapshot is the whole record, as
+              // it already is for an item whose product was later deleted.
+              return {
+                productId: null,
+                variantId: null,
+                variantSnapshot: {
+                  nameEn: custom.name,
+                  nameHi: null,
+                  sku: null,
+                  optionValues: [],
+                  unitLabelEn: custom.unitLabel ?? null,
+                  unitLabelHi: null,
+                  handle: null,
+                  hsnCode: null,
+                },
+                unitPrice: line.unitPrice,
+                wasBulkPrice: false,
+                listUnitPrice: line.listUnitPrice,
+                tierBasis: null,
+                tierMinQuantity: null,
+                tierMinAmount: null,
+                quantity: line.quantity,
+                lineTotal: line.lineTotal,
+                taxPercent: line.taxPercent,
+                taxInclusive: line.taxInclusive,
+                discountShare: line.discountShare,
+                taxableAmount: line.taxableAmount,
+                taxAmount: line.taxAmount,
+                distanceAddition: null,
+                distanceKm: null,
+                distanceWarehouseCode: null,
+              };
+            }
             const variant = byId.get(line.variantId)!;
             const planned = plan.lines.get(line.variantId);
             // What the distance added and from where, for a distance-priced
@@ -535,8 +611,9 @@ export async function writeOrder(
     // Stock leaves the shelf the moment an order is placed — the same rule the
     // cancel path relies on to know what to put back.
     for (const line of pricing.lines) {
-      const variant = byId.get(line.variantId)!;
-      if (!variant.inventoryTracked) continue;
+      // A custom item was never on a shelf.
+      const variant = byId.get(line.variantId);
+      if (!variant || !variant.inventoryTracked) continue;
 
       await tx.productVariant.update({
         where: { id: line.variantId },
@@ -704,6 +781,7 @@ export async function writeOrder(
       grandTotal: pricing.grandTotal,
       taxTotal: pricing.taxTotal,
       lines: pricing.lines.length,
+      customLines: customLines.length,
       bulkPricingApplied: pricing.bulkPricingApplied,
       overrides: pricing.lines.filter((line) => line.wasOverridden).length,
       paid: Boolean(data.payment || options.gatewayPayment),

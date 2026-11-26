@@ -467,3 +467,81 @@ test('a discount is allocated across lines before tax is taken', async () => {
   assert.equal(item.taxAmount.toString(), '162');
   assert.equal(order!.grandTotal.toString(), '1062');
 });
+
+// ---------------------------------------------------------------------------
+// Custom items typed at the counter
+// ---------------------------------------------------------------------------
+
+test('a custom item is priced at its typed rate, stored without a product, and moves no stock', async () => {
+  const { variant } = await seedProduct({ handle: 'cement-ppc', price: '400.00', stockQty: 20 });
+  const actor = await ownerActor();
+
+  const result = await core.createOrder(actor, {
+    customer: { phone: '9826000010', name: 'Rajesh' },
+    address,
+    lines: [{ variantId: variant.id, quantity: 2 }],
+    customLines: [{ name: 'Binding wire, 5 kg coil', quantity: 3, unitPrice: '250', unitLabel: 'coil' }],
+    status: 'PLACED',
+    paymentMethod: 'COD',
+  });
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.data.grandTotal, '1550.00', '2 × 400 + 3 × 250');
+
+  const items = await prisma.orderItem.findMany({
+    where: { orderId: result.data.orderId },
+    orderBy: { lineTotal: 'desc' },
+  });
+  assert.equal(items.length, 2);
+  const custom = items.find((item) => item.variantId === null)!;
+  assert.ok(custom, 'the custom line has no variant');
+  assert.equal(custom.productId, null);
+  assert.equal(custom.quantity, 3);
+  assert.equal(custom.unitPrice.toString(), '250');
+  assert.equal(custom.lineTotal.toString(), '750');
+  assert.equal(custom.wasBulkPrice, false);
+  const snapshot = custom.variantSnapshot as Record<string, unknown>;
+  assert.equal(snapshot.nameEn, 'Binding wire, 5 kg coil');
+  assert.equal(snapshot.unitLabelEn, 'coil');
+
+  const after = await prisma.productVariant.findUniqueOrThrow({ where: { id: variant.id } });
+  assert.equal(after.stockQty, 18, 'only the catalogue line left the shelf');
+  const adjustments = await prisma.inventoryAdjustment.count({ where: { orderId: result.data.orderId } });
+  assert.equal(adjustments, 1, 'no stock movement for the custom line');
+});
+
+test('an order can be all custom items, and their GST sits inside the rate', async () => {
+  const actor = await ownerActor();
+
+  const result = await core.createOrder(actor, {
+    customer: { phone: '9826000011' },
+    address,
+    lines: [],
+    customLines: [{ name: 'Cutting charge', quantity: 1, unitPrice: '118', taxPercent: 18 }],
+    status: 'PLACED',
+    paymentMethod: 'COD',
+  });
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.data.grandTotal, '118.00', 'an inclusive rate does not move the total');
+
+  const order = await prisma.order.findUnique({
+    where: { id: result.data.orderId },
+    include: { items: true },
+  });
+  assert.equal(order!.taxTotal.toString(), '18');
+  assert.equal(order!.items[0]!.taxableAmount.toString(), '100');
+  assert.equal(order!.items[0]!.taxInclusive, true);
+});
+
+test('an order with no items of either kind is refused', async () => {
+  const actor = await ownerActor();
+  const result = await core.createOrder(actor, {
+    customer: { phone: '9826000012' },
+    address,
+    lines: [],
+    customLines: [],
+    status: 'PLACED',
+    paymentMethod: 'COD',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(await prisma.order.count(), 0);
+});

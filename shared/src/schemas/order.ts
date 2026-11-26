@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { indianMobileError, normalizeIndianMobile } from '../phone.ts';
 import { MONEY_PATTERN } from '../money.ts';
 import { optionalText } from './common.ts';
+import { taxPercentField } from './tax.ts';
 import { orderAttributionSchema } from '../attribution.ts';
 import { isValidGstin, normalizeGstin } from '../gstin.ts';
 import { ORDER_STATUSES, PAYMENT_METHODS, PAYMENT_STATUSES } from '../orders.ts';
@@ -379,6 +380,29 @@ export const orderLineSchema = z.object({
 });
 export type OrderLineDraft = z.infer<typeof orderLineSchema>;
 
+/**
+ * Something sold at the counter that is not in the catalogue — a one-off size,
+ * a part bought in for one customer, a labour charge.
+ *
+ * Its own array rather than a variant of `orderLineSchema`, so every reader of
+ * `lines` can keep relying on a variant id, and so the storefront — which never
+ * builds this field — has no way to say it. The rate is the price: there is no
+ * list price to override, no ladder, and no stock to take off a shelf.
+ */
+export const customOrderLineSchema = z.object({
+  name: z.string().trim().min(1, 'Name the item').max(191),
+  quantity: z.coerce.number().int().min(1).max(10_000),
+  unitPrice: z.string().trim().regex(MONEY_PATTERN, 'Enter a rate like 150 or 150.50'),
+  /** "bag", "ft", "load" — printed beside the quantity, as a product's unit is. */
+  unitLabel: optionalText(32),
+  /**
+   * GST inside the rate, as on every counter-typed price — the same bounds as
+   * a product's rate. Absent or blank is nil-rated.
+   */
+  taxPercent: taxPercentField.optional().transform((v) => v ?? 0),
+});
+export type CustomOrderLineDraft = z.infer<typeof customOrderLineSchema>;
+
 /** See `createOrderSchema.deliveryBreakdown` and `Order.deliveryBreakdown`. */
 export const deliveryBreakdownSchema = z.object({
   slabBase: money,
@@ -456,7 +480,15 @@ export const createOrderSchema = z.object({
   /** Adds it to the customer's address book for next time. */
   saveAddress: z.boolean().default(true),
 
-  lines: z.array(orderLineSchema).min(1, 'Add at least one item').max(100),
+  /** Catalogue items. May be empty when the order is all custom lines — `writeOrder` checks the two together. */
+  lines: z.array(orderLineSchema).max(100),
+
+  /**
+   * Items typed by hand at the counter. Admin only: `placeCustomerOrder` never
+   * sets it. Optional rather than defaulted, because a payment session frozen
+   * before this field existed is read back without being re-parsed.
+   */
+  customLines: z.array(customOrderLineSchema).max(50).optional(),
 
   deliveryCharge: optionalMoney,
   /**
